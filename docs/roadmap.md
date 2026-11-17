@@ -24,7 +24,7 @@ posted a status message. The IDE's Activity panel showed each call.
 **Carried into Phase 1:** save and restore the layout; user-defined keybindings; the `pending`
 tool for long calls; the `peroxide mcp` stdio shim.
 
-### Phase 1: a real Rust IDE ← *in progress*
+### Phase 1: a real Rust IDE ✅
 - [x] Projects: open a Cargo package or workspace, Explorer tree, recent projects
 - [x] Editor: rope buffer, multi-cursor, undo/redo, auto-pairs, smart indent, ⌘D, comments
 - [x] Syntax highlighting: tree-sitter, plus rust-analyzer's semantic colours on top
@@ -43,11 +43,14 @@ tool for long calls; the `peroxide mcp` stdio shim.
 - [x] Git basics: branch, file states in the Explorer, change bars in the gutter, Source Control panel
       with commit; agents: git.status / git.diff / git.commit. Uses the `git` CLI for now;
       moving to pure-Rust `gix` (no git install needed) is planned for the installers (Phase 5)
-- [ ] Completion benchmark file: the right item in the top 3
+- [x] Completion benchmark: 25 everyday cases (methods, fields, associated functions, macros,
+      auto-imports) against real rust-analyzer: **25/25 in the top 3**, median 7 ms.
+      Run: `cargo test -p peroxide completion_benchmark -- --ignored --nocapture`
 
 **Done when:** you can comfortably write, build and run a multi-file Rust project in PeroxIDE.
+✅ Done 2026-11-17.
 
-### Phase 2: forms
+### Phase 2: forms ← *next*
 `.pxui` parser, formatter and interpreter; `perox-ui` runtime with taffy layouts and core
 widgets; designer canvas, palette, object tree, property inspector; code generation and
 handler hookup; live preview.

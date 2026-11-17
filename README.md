@@ -9,7 +9,7 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phase 1 (a real Rust IDE) in progress.** Open a Cargo project, edit with
+> Status: **Phase 1 (a real Rust IDE) is done; Phase 2 (forms) is next.** Open a Cargo project, edit with
 > rust-analyzer completion, hover, go to definition and live errors; build, run and test.
 > Claude Code can drive all of it over MCP ([docs/mcp.md](docs/mcp.md)).
 > See [docs/roadmap.md](docs/roadmap.md).

@@ -108,7 +108,7 @@ pub fn fuzzy_score(pattern: &str, candidate: &str) -> Option<i32> {
             }
             let mut s = 1;
             if c[j] == pc {
-                s += 1;
+                s += 2; // matching case shows intent: `Str` means `String`, not `str`
             }
             if boundary(j) {
                 s += 8;
@@ -136,11 +136,13 @@ pub fn fuzzy_score(pattern: &str, candidate: &str) -> Option<i32> {
         prev_row = row;
     }
     let best = prev_row.into_iter().max().filter(|s| *s > NEG)?;
-    // Exact prefix (case-insensitive) is what people expect first.
+    // Exact prefix (case-insensitive) is what people expect first; among prefixes, the
+    // closest (fewest extra characters) wins: `fr` → `from` before `from_raw_parts`.
     let prefix = candidate
         .to_lowercase()
         .starts_with(&pattern.to_lowercase());
-    Some(best + if prefix { 20 } else { 0 })
+    let extra = (c.len() - p.len()).min(12) as i32;
+    Some(best + if prefix { 20 - extra / 3 } else { 0 })
 }
 
 /// Recently accepted completions float up.
@@ -208,6 +210,13 @@ impl Popup {
                 let mut s = score + recency.bonus(&it.label);
                 if it.deprecated {
                     s -= 15;
+                }
+                // Names already in scope beat ones that need an import; platform intrinsics
+                // (`core::arch`) are almost never what's meant.
+                if let Some(detail) = &it.label_detail
+                    && detail.contains("(use ")
+                {
+                    s -= if detail.contains("::arch::") { 40 } else { 6 };
                 }
                 Some((s, i))
             })
@@ -327,6 +336,27 @@ mod tests {
         r.record("last");
         p.filter("l", &r);
         assert_eq!(p.current().unwrap().label, "last");
+    }
+
+    #[test]
+    fn in_scope_beats_auto_import_and_intrinsics_sink() {
+        let mut vec_macro = item("vec![…]", "ffffff00");
+        vec_macro.filter_text = "vec!".into();
+        let mut intrinsic = item("veor_s8(…)", "fffffff0");
+        intrinsic.filter_text = "veor_s8".into();
+        intrinsic.label_detail = Some(" (use core::arch::aarch64::veor_s8)".into());
+        let mut p = Popup::new(vec![intrinsic, vec_macro], 0, false);
+        p.filter("ve", &Recency::default());
+        assert_eq!(p.current().unwrap().label, "vec![…]");
+    }
+
+    #[test]
+    fn closest_prefix_wins() {
+        assert_eq!(
+            order(&["from_raw_parts", "from_utf16_lossy", "from"], "fr")[0],
+            "from"
+        );
+        assert_eq!(order(&["iter_mut", "iter"], "it")[0], "iter");
     }
 
     #[test]

@@ -1109,6 +1109,143 @@ mod tests {
         assert_eq!(&s.label[s.active.clone().unwrap()], "value: T");
     }
 
+    /// The completion quality benchmark: real rust-analyzer, PeroxIDE's conversion and
+    /// ranking; the expected item must be in the top 3. Slow (indexes std), so ignored:
+    /// `cargo test -p peroxide completion_benchmark -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn completion_benchmark() {
+        use std::time::{Duration, Instant};
+        let Some(ra) = perox_build::tools::rust_analyzer() else {
+            eprintln!("rust-analyzer not installed; skipping");
+            return;
+        };
+        let fixture = "use std::collections::HashMap;\n\nstruct Point {\n    x: f64,\n    y: f64,\n}\n\nimpl Point {\n    fn norm(&self) -> f64 {\n        (self.x * self.x + self.y * self.y).sqrt()\n    }\n    fn scale(&mut self, k: f64) {\n        self.x *= k;\n        self.y *= k;\n    }\n}\n\nfn main() {\n    let mut v: Vec<i32> = Vec::new();\n    let s = String::from(\"hi\");\n    let mut m: HashMap<String, i32> = HashMap::new();\n    let mut p = Point { x: 1.0, y: 2.0 };\n    let o: Option<i32> = Some(1);\n    CASE\n}\n";
+        let cases: &[(&str, &str)] = &[
+            ("v.pu", "push"),
+            ("v.le", "len"),
+            ("v.it", "iter"),
+            ("v.sort_u", "sort_unstable"),
+            ("s.to_up", "to_uppercase"),
+            ("s.as_s", "as_str"),
+            ("s.len", "len"),
+            ("m.ins", "insert"),
+            ("m.get", "get"),
+            ("m.cont", "contains_key"),
+            ("p.no", "norm"),
+            ("p.sc", "scale"),
+            ("p.x", "x"),
+            ("o.unw", "unwrap"),
+            ("o.is_s", "is_some"),
+            ("o.ma", "map"),
+            ("Vec::wi", "with_capacity"),
+            ("String::fr", "from"),
+            ("HashMap::ne", "new"),
+            ("let q = Opt", "Option"),
+            ("pri", "println!"),
+            ("let w = ve", "vec!"),
+            ("HashSe", "HashSet"),
+            ("BTreeM", "BTreeMap"),
+            ("Arc", "Arc"),
+        ];
+        let dir = std::env::temp_dir().join(format!("perox-bench-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"bench\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        let file = dir.join("src/main.rs");
+        let initial = fixture.replace("CASE", "");
+        std::fs::write(&file, &initial).unwrap();
+        let (ra, events) =
+            perox_lsp::rust_analyzer::start(&ra, &dir, &perox_build::tools::env(), || {}).unwrap();
+        let uri = uri::from_path(&file);
+        ra.client.notify("textDocument/didOpen", json!({ "textDocument": { "uri": uri, "languageId": "rust", "version": 0, "text": initial } }));
+        let wait = |id: i64| -> Value {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if let Ok(Event::Response { id: got, result }) =
+                    events.recv_timeout(Duration::from_millis(100))
+                    && got == id
+                {
+                    return result.unwrap_or(Value::Null);
+                }
+            }
+            Value::Null
+        };
+        let mut version = 0;
+        let mut failures = Vec::new();
+        let mut times = Vec::new();
+        for (typed, want) in cases {
+            let text = fixture.replace("CASE", typed);
+            let mut ed = EditorState::new(&text, Lang::Rust);
+            let line = fixture.lines().position(|l| l.contains("CASE")).unwrap();
+            let col = text.lines().nth(line).unwrap().chars().count();
+            let at = ed.core.doc.char_of(Pos { line, col });
+            ed.core.set_cursor(at, false);
+            let mut top: Vec<String> = Vec::new();
+            // Auto-import items appear once std is indexed: retry for a while.
+            let deadline = Instant::now() + Duration::from_secs(120);
+            loop {
+                version += 1;
+                ra.client.notify("textDocument/didChange", json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }));
+                let sent = Instant::now();
+                let id = ra.client.request("textDocument/completion", json!({
+                    "textDocument": { "uri": uri }, "position": { "line": line, "character": col }, "context": { "triggerKind": 1 }
+                }));
+                let v = wait(id);
+                times.push(sent.elapsed().as_secs_f32() * 1000.0);
+                let items = v["items"]
+                    .as_array()
+                    .or(v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let converted: Vec<Item> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, it)| convert_item(&ed, it, i, at, true))
+                    .collect();
+                let (_, word) = ed.core.word_before_cursor();
+                let mut popup = Popup::new(converted, at, false);
+                popup.filter(&word, &Recency::default());
+                top = popup
+                    .shown
+                    .iter()
+                    .take(3)
+                    .map(|i| popup.items[*i].label.clone())
+                    .collect();
+                // Compare the name part of labels like `push(…)`, `vec![…]`, `HashSet (use …)`.
+                let hit = top
+                    .iter()
+                    .any(|l| l.split(['(', '[', ' ']).next() == Some(*want));
+                if hit || Instant::now() > deadline {
+                    if !hit {
+                        failures.push(format!("{typed:>12} → want {want}, top 3: {top:?}"));
+                    }
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            eprintln!("{typed:>12}  {:<14} {top:?}", want);
+        }
+        times.sort_by(f32::total_cmp);
+        eprintln!(
+            "\n{}/{} in the top 3; completion median {:.0} ms, p90 {:.0} ms",
+            cases.len() - failures.len(),
+            cases.len(),
+            times[times.len() / 2],
+            times[times.len() * 9 / 10]
+        );
+        ra.client.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            failures.is_empty(),
+            "not in the top 3:\n{}",
+            failures.join("\n")
+        );
+    }
+
     #[test]
     fn utf16_columns() {
         assert_eq!(utf16_to_col("a😀b", 3), 2);
