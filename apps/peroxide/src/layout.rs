@@ -24,6 +24,7 @@ pub enum Pane {
     Activity,
     References,
     Terminal,
+    SourceControl,
 }
 
 /// Explorer on the left; editors above, Problems / Output / Activity below.
@@ -73,6 +74,7 @@ pub fn show_pane(tree: &mut Tree<Pane>, pane: Pane) {
                         | Pane::Activity
                         | Pane::References
                         | Pane::Terminal
+                        | Pane::SourceControl
                 )
             };
             let sibling = if bottom(&pane) {
@@ -121,6 +123,8 @@ pub struct PaneUi<'a> {
     pub recent: &'a [std::path::PathBuf],
     pub references: &'a [(std::path::PathBuf, usize, usize, String)],
     pub terminal: Option<&'a mut perox_terminal::Terminal>,
+    pub git: &'a crate::git::Git,
+    pub commit_message: &'a mut String,
     pub active_doc: Option<DocId>,
     /// Commands to run after drawing.
     pub actions: Vec<(&'static str, Value)>,
@@ -159,6 +163,10 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                 .as_ref()
                 .map_or("Terminal".to_owned(), |t| t.title.clone())
                 .into(),
+            Pane::SourceControl => match self.git.status.files.len() {
+                0 => "Source Control".into(),
+                n => format!("Source Control ({n})").into(),
+            },
         }
     }
 
@@ -221,6 +229,7 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                         Pane::Output => self.output(ui),
                         Pane::Activity => activity(ui, self.activity),
                         Pane::References => self.references_ui(ui),
+                        Pane::SourceControl => self.source_control(ui),
                         Pane::Editor(_) | Pane::Terminal => {}
                     }
                 });
@@ -285,11 +294,20 @@ impl PaneUi<'_> {
             }
             None => {
                 let is_active = active == Some(node.path.as_path());
+                let state = self.git.state_of(&node.path);
                 let icon = crate::icons::for_file(&node.path);
                 if ui
                     .add(egui::Button::selectable(
                         is_active,
-                        egui::Atoms::new((icon.image(ui), node.name.as_str())),
+                        egui::Atoms::new((
+                            icon.image(ui),
+                            match state {
+                                Some(st) => {
+                                    egui::RichText::new(node.name.as_str()).color(git_color(ui, st))
+                                }
+                                None => egui::RichText::new(node.name.as_str()),
+                            },
+                        )),
                     ))
                     .clicked()
                 {
@@ -437,6 +455,72 @@ impl PaneUi<'_> {
             });
     }
 
+    fn source_control(&mut self, ui: &mut egui::Ui) {
+        if self.git.root.is_none() {
+            ui.weak("This project isn't in a git repository (or git isn't installed).");
+            return;
+        }
+        let st = &self.git.status;
+        ui.horizontal(|ui| {
+            ui.add(perox_icons::Icon::GitBranch.image(ui));
+            ui.strong(&st.branch);
+            if st.ahead + st.behind > 0 {
+                ui.weak(format!("{} ahead, {} behind", st.ahead, st.behind));
+            }
+        });
+        ui.add(
+            egui::TextEdit::multiline(self.commit_message)
+                .hint_text("Commit message")
+                .desired_rows(2)
+                .desired_width(f32::INFINITY),
+        );
+        let can = !st.files.is_empty() && !self.commit_message.trim().is_empty();
+        if ui
+            .add_enabled(
+                can,
+                egui::Button::image_and_text(
+                    perox_icons::Icon::GitCommitHorizontal.image(ui),
+                    "Commit All",
+                ),
+            )
+            .on_hover_text("Saves all files, stages every change and commits")
+            .clicked()
+        {
+            self.actions.push((
+                "git.commit",
+                json!({ "message": self.commit_message.clone() }),
+            ));
+        }
+        ui.separator();
+        if st.files.is_empty() {
+            ui.weak("No changes.");
+            return;
+        }
+        let root = self.git.root.clone().unwrap_or_default();
+        egui::ScrollArea::vertical()
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                for (path, state) in &st.files {
+                    let shown = path
+                        .strip_prefix(&root)
+                        .unwrap_or(path)
+                        .display()
+                        .to_string();
+                    let resp = ui
+                        .horizontal(|ui| {
+                            ui.add(crate::icons::for_file(path).image(ui));
+                            let r = ui.add(egui::Label::new(&shown).sense(egui::Sense::click()));
+                            ui.colored_label(git_color(ui, *state), state.letter());
+                            r
+                        })
+                        .inner;
+                    if resp.clicked() && path.is_file() {
+                        self.actions.push(("file.open", json!({ "path": path })));
+                    }
+                }
+            });
+    }
+
     fn references_ui(&mut self, ui: &mut egui::Ui) {
         if self.references.is_empty() {
             ui.weak("No references. Put the cursor on a name and press ⇧F12.");
@@ -536,4 +620,19 @@ fn activity(ui: &mut egui::Ui, log: &Activity) {
                 });
             }
         });
+}
+
+/// Colour for a file's git state (Explorer, Source Control).
+fn git_color(ui: &egui::Ui, state: crate::git::FileState) -> egui::Color32 {
+    use crate::git::FileState::*;
+    let dark = ui.visuals().dark_mode;
+    let c = |d: u32, l: u32| {
+        let h = if dark { d } else { l };
+        egui::Color32::from_rgb((h >> 16) as u8, (h >> 8) as u8, h as u8)
+    };
+    match state {
+        Modified | Renamed => c(0xe2c08d, 0x9a6700),
+        Added | Untracked => c(0x73c991, 0x1a7f37),
+        Deleted | Conflicted => c(0xf85149, 0xcf222e),
+    }
 }

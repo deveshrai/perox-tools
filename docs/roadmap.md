@@ -40,7 +40,9 @@ tool for long calls; the `peroxide mcp` stdio shim.
 - [x] Inlay hints (types, parameter names); decorations follow edits without flicker
 - [x] Reload files changed on disk (never over unsaved edits); Explorer refreshes; open files restored per project
 - [x] Integrated terminal (⌃`), shell in the project with the pinned toolchain; agents: terminal.run / terminal.read
-- [ ] Git basics
+- [x] Git basics: branch, file states in the Explorer, change bars in the gutter, Source Control panel
+      with commit; agents: git.status / git.diff / git.commit. Uses the `git` CLI for now;
+      moving to pure-Rust `gix` (no git install needed) is planned for the installers (Phase 5)
 - [ ] Completion benchmark file: the right item in the top 3
 
 **Done when:** you can comfortably write, build and run a multi-file Rust project in PeroxIDE.

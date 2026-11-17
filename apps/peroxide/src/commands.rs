@@ -40,6 +40,12 @@ pub struct AppState {
     pub rename: Option<String>,
     pub watcher: Option<crate::watcher::Watcher>,
     pub terminal: Option<perox_terminal::Terminal>,
+    pub git: crate::git::Git,
+    /// The Source Control panel's commit message.
+    pub commit_message: String,
+    /// (document version, git refresh count) the gutter marks were computed for.
+    pub marks_for: std::collections::HashMap<DocId, (i32, u64)>,
+    pub git_generation: u64,
     pub project: Option<Project>,
     /// The Explorer's file tree.
     pub tree: Option<Node>,
@@ -82,6 +88,10 @@ impl AppState {
             rename: None,
             watcher: None,
             terminal: None,
+            git: Default::default(),
+            commit_message: String::new(),
+            marks_for: Default::default(),
+            git_generation: 0,
         }
     }
 }
@@ -147,6 +157,41 @@ impl AppState {
         }
         if changes.structure {
             self.refresh_tree();
+        }
+        self.git.refresh(&self.ctx);
+    }
+
+    /// Takes finished git refreshes and keeps every open file's gutter marks current.
+    pub fn update_git(&mut self) {
+        if self.git.poll() {
+            self.git_generation += 1;
+        }
+        if self.git.root.is_none() {
+            return;
+        }
+        let ids: Vec<DocId> = self.docs.list.iter().map(|d| d.id).collect();
+        for id in ids {
+            let Some(doc) = self.docs.get(id) else {
+                continue;
+            };
+            let key = (doc.editor.core.doc.version(), self.git_generation);
+            if self.marks_for.get(&id) == Some(&key) {
+                continue;
+            }
+            let path = doc.path.clone();
+            let current = doc.editor.core.text();
+            let untracked = self.git.state_of(&path) == Some(crate::git::FileState::Untracked);
+            let marks = match self.git.base(&path) {
+                Some(base) => crate::git::line_marks(base, &current),
+                None if untracked => (0..current.lines().count())
+                    .map(|l| (l, perox_editor::LineMark::Added))
+                    .collect(),
+                None => Vec::new(),
+            };
+            if let Some(doc) = self.docs.get_mut(id) {
+                doc.editor.deco.line_marks = marks;
+            }
+            self.marks_for.insert(id, key);
         }
     }
 

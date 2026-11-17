@@ -307,6 +307,7 @@ impl PeroxApp {
             ui.menu_button("View", |ui| {
                 item(ui, actions, "view.command_palette");
                 item(ui, actions, "terminal.show");
+                item(ui, actions, "view.source_control");
                 item(ui, actions, "view.reset_layout");
             });
             ui.menu_button("Build", |ui| {
@@ -401,6 +402,7 @@ impl eframe::App for PeroxApp {
 
         // Files changed by other programs, before anyone reads them.
         self.state.apply_disk_changes();
+        self.state.update_git();
         // Agent calls next: they wait on a reply.
         while let Ok(call) = self.calls.try_recv() {
             let result = self.run(&call.id, call.args, call.origin);
@@ -447,6 +449,17 @@ impl eframe::App for PeroxApp {
                         ui.weak(&self.state.lsp.status);
                         ui.separator();
                     }
+                    if !self.state.git.status.branch.is_empty() {
+                        let branch = egui::Button::image_and_text(
+                            Icon::GitBranch.image(ui),
+                            self.state.git.status.branch.as_str(),
+                        )
+                        .frame(false);
+                        if ui.add(branch).on_hover_text("Source Control").clicked() {
+                            actions.push("view.source_control");
+                        }
+                        ui.separator();
+                    }
                     if let Some(doc) = self.state.active_doc.and_then(|id| self.state.docs.get(id))
                     {
                         let p = doc
@@ -482,6 +495,8 @@ impl eframe::App for PeroxApp {
                 recent: &s.settings.recent_projects,
                 references: &s.references,
                 terminal: s.terminal.as_mut(),
+                git: &s.git,
+                commit_message: &mut s.commit_message,
                 active_doc: s.active_doc,
                 actions: Vec::new(),
                 requests: Vec::new(),
@@ -601,6 +616,9 @@ impl eframe::App for PeroxApp {
                     layout::show_pane(&mut self.tree, Pane::References)
                 }
                 LayoutRequest::ShowTerminal => layout::show_pane(&mut self.tree, Pane::Terminal),
+                LayoutRequest::ShowSourceControl => {
+                    layout::show_pane(&mut self.tree, Pane::SourceControl)
+                }
             }
         }
         if std::mem::take(&mut self.state.reset_layout) {

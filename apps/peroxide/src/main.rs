@@ -3,6 +3,7 @@
 mod app;
 mod commands;
 mod docs;
+mod git;
 mod icons;
 mod ide;
 mod keymap;

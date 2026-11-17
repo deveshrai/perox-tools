@@ -58,7 +58,7 @@ Commands so far, by area: `project.*` (open, info, files), `file.*` (open, read,
 save, close), `editor.*` (replace, type, completions, accept_completion, cursor, goto_line,
 references, rename, code_actions, apply_code_action, format), `build.*`
 (check, build, run, test, clippy, stop, status, output), `problems.list`, `lsp.*`,
-`terminal.run`, `terminal.read`, `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
+`terminal.run`, `terminal.read`, `git.*` (status, diff, commit), `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
 Lines and columns are 1-based. Each new IDE feature adds commands, and agents can use them
 straight away
 ([ADR 0002](adr/0002-command-bus.md)). Commands that only make sense with a person present,

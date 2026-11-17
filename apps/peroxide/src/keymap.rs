@@ -11,6 +11,7 @@ pub const BINDINGS: &[(KeyboardShortcut, &str)] = &[
     (KeyboardShortcut::new(CMD_SHIFT, Key::P), "view.command_palette"),
     (KeyboardShortcut::new(CMD_SHIFT, Key::T), "build.test"),
     (KeyboardShortcut::new(CMD_SHIFT, Key::K), "build.check"),
+    (KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::G), "view.source_control"),
     (KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::S), "file.save_all"),
     (KeyboardShortcut::new(Modifiers::SHIFT.plus(Modifiers::ALT), Key::F), "editor.format"),
     (KeyboardShortcut::new(Modifiers::SHIFT, Key::F5), "build.stop"),

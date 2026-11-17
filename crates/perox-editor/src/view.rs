@@ -58,6 +58,17 @@ pub struct Decorations {
     pub signature: Option<Signature>,
     /// Inlay hints (types, parameter names), sorted by position.
     pub inlays: Vec<Inlay>,
+    /// Version-control changes by line, for the gutter.
+    pub line_marks: Vec<(usize, LineMark)>,
+}
+
+/// How a line differs from the last commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineMark {
+    Added,
+    Modified,
+    /// Lines were deleted just above this one.
+    DeletedAbove,
 }
 
 /// Text drawn inline that isn't part of the document, like `: Vec<u8>` after a binding.
@@ -782,6 +793,31 @@ fn paint(
             m.font.clone(),
             color,
         );
+        if let Some((_, mark)) = st.deco.line_marks.iter().find(|(ml, _)| *ml == l) {
+            let x = gx + m.gutter_w - 11.0;
+            let y = line_y(l);
+            match mark {
+                LineMark::Added => painter.rect_filled(
+                    Rect::from_min_size(Pos2::new(x, y), Vec2::new(3.0, m.line_h)),
+                    0.0,
+                    theme.vcs_added,
+                ),
+                LineMark::Modified => painter.rect_filled(
+                    Rect::from_min_size(Pos2::new(x, y), Vec2::new(3.0, m.line_h)),
+                    0.0,
+                    theme.vcs_modified,
+                ),
+                LineMark::DeletedAbove => painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        Pos2::new(x - 1.0, y - 3.0),
+                        Pos2::new(x + 5.0, y),
+                        Pos2::new(x - 1.0, y + 3.0),
+                    ],
+                    theme.vcs_deleted,
+                    Stroke::NONE,
+                )),
+            };
+        }
         if let Some(sev) = worst {
             painter.circle_filled(
                 Pos2::new(gx + 6.0, line_y(l) + m.line_h / 2.0),

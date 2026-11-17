@@ -27,6 +27,7 @@ serde_json.workspace = true
 directories.workspace = true
 chrono.workspace = true
 notify.workspace = true
+similar.workspace = true
 
 [lints]
 workspace = true

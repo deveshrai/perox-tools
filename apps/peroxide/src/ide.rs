@@ -21,6 +21,7 @@ pub enum LayoutRequest {
     ShowOutput,
     ShowReferences,
     ShowTerminal,
+    ShowSourceControl,
 }
 
 /// The current cargo job and what it printed.
@@ -170,6 +171,8 @@ pub fn open_project(s: &mut AppState, path: &Path) -> Result<Value, CommandError
     s.save_session(); // the project being left
     s.settings.remember_project(&project.root);
     s.watcher = crate::watcher::Watcher::new(&project.root, s.ctx.clone());
+    s.git = crate::git::Git::open(&project.root);
+    s.git.refresh(&s.ctx);
     let session = s
         .settings
         .sessions
@@ -215,6 +218,7 @@ fn start_build(s: &mut AppState, kind: Kind) -> Result<Value, CommandError> {
     for id in dirty {
         s.docs.save(id).map_err(err)?;
         s.lsp.did_save(id, &s.docs);
+        s.git.refresh(&s.ctx);
     }
     if let Some(job) = &mut s.build.job {
         job.stop();
@@ -548,6 +552,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 }
                 let path = s.docs.save(id).map_err(err)?;
                 s.lsp.did_save(id, &s.docs);
+                    s.git.refresh(&s.ctx);
                 s.status = format!("Saved {}", rel(s, &path));
                 Ok(json!({ "saved": rel(s, &path) }))
             },
@@ -560,6 +565,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 for id in dirty {
                     let p = s.docs.save(id).map_err(err)?;
                     s.lsp.did_save(id, &s.docs);
+                    s.git.refresh(&s.ctx);
                     saved.push(rel(s, &p));
                 }
                 s.status = format!("Saved {} file(s)", saved.len());
@@ -677,6 +683,58 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             |s, _| {
                 let t = s.terminal.as_ref().ok_or_else(|| err("The terminal isn't open."))?;
                 Ok(json!(t.screen_text()))
+            },
+        ),
+        (
+            CommandSpec::new("view.source_control", "Source Control", Access::Read).ui_only(),
+            |s, _| {
+                s.git.refresh(&s.ctx);
+                s.layout_requests.push(LayoutRequest::ShowSourceControl);
+                Ok(Value::Null)
+            },
+        ),
+        (
+            CommandSpec::new("git.status", "Git Status", Access::Read)
+                .description("The project's git branch, commits ahead/behind, and changed files with their state (modified, added, deleted, renamed, untracked, conflicted)."),
+            |s, _| {
+                if s.git.root.is_none() {
+                    return Err(err("The project isn't in a git repository (or git isn't installed)."));
+                }
+                let st = &s.git.status;
+                Ok(json!({
+                    "branch": st.branch, "ahead": st.ahead, "behind": st.behind,
+                    "files": st.files.iter().map(|(p, f)| json!({ "path": rel(s, p), "state": format!("{f:?}").to_lowercase() })).collect::<Vec<_>>()
+                }))
+            },
+        ),
+        (
+            CommandSpec::new("git.diff", "Git Diff", Access::Read)
+                .description("Unified diff of the working tree against the last commit: one file, or everything. Only saved changes count.")
+                .params(json!({ "type": "object", "properties": { "path": { "type": "string" } } })),
+            |s, inv| {
+                let path = match inv.args.get("path") {
+                    Some(_) => Some(resolve(s, inv, "path")?),
+                    None => None,
+                };
+                Ok(json!(s.git.diff(path.as_deref()).map_err(err)?))
+            },
+        ),
+        (
+            CommandSpec::new("git.commit", "Commit All Changes", Access::Execute)
+                .description("Saves all files, stages every change and commits with the message.")
+                .params(json!({ "type": "object", "required": ["message"], "properties": { "message": { "type": "string" } } })),
+            |s, inv| {
+                let message = inv.str_arg("message")?.to_owned();
+                let dirty: Vec<DocId> = s.docs.list.iter().filter(|d| d.is_dirty()).map(|d| d.id).collect();
+                for id in dirty {
+                    s.docs.save(id).map_err(err)?;
+                    s.lsp.did_save(id, &s.docs);
+                }
+                let summary = s.git.commit(&message, true).map_err(err)?;
+                s.commit_message.clear();
+                s.git.refresh(&s.ctx);
+                s.status = summary.clone();
+                Ok(json!({ "committed": summary }))
             },
         ),
         (

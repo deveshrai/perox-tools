@@ -19,6 +19,9 @@ pub struct Theme {
     pub find_current: Color32,
     pub inlay: Color32,
     pub inlay_bg: Color32,
+    pub vcs_added: Color32,
+    pub vcs_modified: Color32,
+    pub vcs_deleted: Color32,
     dark: bool,
 }
 
@@ -41,6 +44,9 @@ impl Theme {
                 find_current: Color32::from_rgba_unmultiplied(81, 92, 106, 220),
                 inlay: rgb(0x8b949e),
                 inlay_bg: Color32::from_white_alpha(10),
+                vcs_added: rgb(0x2ea043),
+                vcs_modified: rgb(0x0078d4),
+                vcs_deleted: rgb(0xf85149),
                 dark: true,
             }
         } else {
@@ -56,6 +62,9 @@ impl Theme {
                 find_current: Color32::from_rgba_unmultiplied(168, 172, 148, 200),
                 inlay: rgb(0x6e7781),
                 inlay_bg: Color32::from_black_alpha(10),
+                vcs_added: rgb(0x1a7f37),
+                vcs_modified: rgb(0x0969da),
+                vcs_deleted: rgb(0xcf222e),
                 dark: false,
             }
         }
