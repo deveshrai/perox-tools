@@ -21,6 +21,14 @@ Qt's. Edit properties and events in the inspector. Every change is a small edit 
 
 ![The PeroxIDE form designer](docs/screenshots/designer.png)
 
+**Free placement, like VB or Qt without a layout.** Use a `Panel`, or set a window,
+group box or tab to `layout: free`. Then drop widgets anywhere on the snap grid, move
+them, and resize them with handles. **Break layout** turns a layout into free placement
+without moving anything. **Lay out vertically / horizontally / in a grid** goes back,
+ordering widgets by where they sit.
+
+![Free placement in the designer](docs/screenshots/free-placement.png)
+
 **The code-behind, with rust-analyzer.** The designer generates typed accessors
 (`ui.result()`) and a handlers trait. Completion, inlay hints and hover work on them like
 any Rust code. "Go to handler" in the inspector adds the method for you.

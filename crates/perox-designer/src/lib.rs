@@ -10,6 +10,7 @@
 
 pub mod catalog;
 pub mod drop;
+pub mod free;
 
 use std::collections::HashMap;
 
@@ -59,8 +60,16 @@ pub struct Designer {
     /// Window size while the corner handle is being dragged.
     resize: Option<Vec2>,
     resize_from: Option<Vec2>,
-    /// A number being dragged in the inspector: shown live, written on release.
-    live: Option<(Vec<usize>, String, Value)>,
+    /// Values being dragged (inspector numbers, widget resizing): shown live, written
+    /// on release.
+    live: Vec<(Vec<usize>, String, Value)>,
+    /// Where in the widget the pointer grabbed it (free placement keeps that offset).
+    grab: Vec2,
+    /// A widget being resized by its handles: path, which sides move, start rect
+    /// (relative to the parent's content box).
+    widget_resize: Option<(Vec<usize>, [i8; 2], Rect)>,
+    /// Snap free placement to the grid. On unless turned off.
+    snap_off: bool,
     /// Inspector text fields while they're being edited.
     buffers: HashMap<String, String>,
     palette_filter: String,
@@ -77,6 +86,8 @@ pub struct DrawnLayout {
     pub elements: Vec<(Vec<usize>, Rect)>,
     pub palette: Vec<(&'static str, Rect)>,
     pub window: Option<Rect>,
+    /// Content boxes, same order as `elements`.
+    pub contents: Vec<Rect>,
 }
 
 impl Designer {
@@ -261,6 +272,55 @@ impl Designer {
             {
                 self.delete_selected(source, actions);
             }
+            ui.separator();
+            let sel = self.selected.clone().unwrap_or_default();
+            let sel_el = self.form.file().at(&sel);
+            let free_sel = sel_el.is_some_and(perox_ui::is_free);
+            let can_break = sel_el.is_some_and(|e| {
+                (matches!(e.kind.as_str(), "VBox" | "HBox" | "Grid") && !sel.is_empty())
+                    || (matches!(e.kind.as_str(), "Window" | "GroupBox" | "Tab")
+                        && !perox_ui::is_free(e))
+            });
+            if ui
+                .add_enabled_ui(can_break, |ui| {
+                    icon_button(
+                        ui,
+                        Icon::Ungroup,
+                        "Break layout: place the children freely, where they are",
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                self.relayout(source, None, actions);
+            }
+            for (dir, icon, tip) in [
+                (free::Direction::Vertical, Icon::Rows3, "Lay out vertically"),
+                (
+                    free::Direction::Horizontal,
+                    Icon::Columns3,
+                    "Lay out horizontally",
+                ),
+                (free::Direction::Grid, Icon::Grid3x3, "Lay out in a grid"),
+            ] {
+                if ui
+                    .add_enabled_ui(free_sel, |ui| icon_button(ui, icon, tip))
+                    .inner
+                    .clicked()
+                {
+                    self.relayout(source, Some(dir), actions);
+                }
+            }
+            let snap = egui::Button::image(Icon::Magnet.image(ui))
+                .selected(!self.snap_off)
+                .frame(false);
+            if ui
+                .add(snap)
+                .on_hover_text("Snap free placement to the grid (8 pt)")
+                .clicked()
+            {
+                self.snap_off = !self.snap_off;
+            }
             if let Some(e) = &self.error {
                 ui.separator();
                 ui.add(perox_icons::Icon::TriangleAlert.colored(ui.visuals().warn_fg_color));
@@ -306,6 +366,7 @@ impl Designer {
         if delete {
             self.delete_selected(source, actions);
         }
+        self.nudge(ui, source, actions);
         if escape && let Some(sel) = &mut self.selected {
             sel.pop();
         }
@@ -315,6 +376,41 @@ impl Designer {
         if redo {
             actions.push(Action::Redo);
         }
+    }
+
+    /// Arrow keys move a freely placed widget 1 pt (a grid step with Shift).
+    fn nudge(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
+        let Some(path) = self.selected.clone().filter(|p| self.in_free_parent(p)) else {
+            return;
+        };
+        let mut d = Vec2::ZERO;
+        ui.input_mut(|i| {
+            for (key, dir) in [
+                (egui::Key::ArrowLeft, vec2(-1.0, 0.0)),
+                (egui::Key::ArrowRight, vec2(1.0, 0.0)),
+                (egui::Key::ArrowUp, vec2(0.0, -1.0)),
+                (egui::Key::ArrowDown, vec2(0.0, 1.0)),
+            ] {
+                if i.consume_key(egui::Modifiers::NONE, key) {
+                    d += dir;
+                }
+                if i.consume_key(egui::Modifiers::SHIFT, key) {
+                    d += dir * perox_ui::GRID;
+                }
+            }
+        });
+        if d == Vec2::ZERO {
+            return;
+        }
+        let Some(el) = self.form.file().at(&path) else {
+            return;
+        };
+        let x = el.num_prop("x").unwrap_or(0.0) as f32 + d.x;
+        let y = el.num_prop("y").unwrap_or(0.0) as f32 + d.y;
+        let mut work = source.to_owned();
+        let result =
+            free::set_position(&mut work, &path, Pos2::new(x.max(0.0), y.max(0.0))).map(|()| work);
+        self.apply_text(actions, source, result);
     }
 
     fn drag_preview(&self, ui: &egui::Ui) {
@@ -364,11 +460,11 @@ impl Designer {
         // Runtime values in the designer: only the live inspector value and which tab
         // page is showing (the one holding the selection).
         self.form.reset();
-        if let Some((path, name, value)) = &self.live
-            && let Some(el) = self.form.file().at(path)
-        {
-            let key = perox_ui::key(el, path);
-            self.form.set(&key, name, value.clone());
+        for (path, name, value) in &self.live {
+            if let Some(el) = self.form.file().at(path) {
+                let key = perox_ui::key(el, path);
+                self.form.set(&key, name, value.clone());
+            }
         }
         if let Some(sel) = self.selected.clone() {
             for depth in 0..sel.len() {
@@ -408,16 +504,22 @@ impl Designer {
             child.set_clip_rect(content.intersect(ui.clip_rect()));
             let out = self.form.show_design(&mut child, self.selected.as_deref());
             self.layout.elements = out.rects.clone();
+            self.layout.contents = out.contents.clone();
             self.layout.window = Some(window);
             if let Some(p) = out.clicked {
                 self.selected = Some(p);
                 self.error = None;
             }
             if let Some(p) = out.drag_started.filter(|p| !p.is_empty()) {
+                let origin = ui.input(|i| i.pointer.press_origin());
+                if let (Some(o), Some(r)) = (origin, self.drawn_rect(&p)) {
+                    self.grab = o - r.min;
+                }
                 self.selected = Some(p.clone());
                 DragAndDrop::set_payload(ui.ctx(), Drag::Move(p));
             }
             self.drop_onto(ui, content, &out.rects, source, actions);
+            self.resize_widget(ui, source, actions);
             self.resize_handle(ui, window, size, source, actions);
         });
     }
@@ -452,6 +554,10 @@ impl Designer {
             return;
         };
         let accent = ui.visuals().selection.bg_fill;
+        if target.free {
+            self.drop_free(ui, pointer, &kind, moving, &target, source, actions);
+            return;
+        }
         ui.painter()
             .line_segment(target.line, Stroke::new(3.0, accent));
         if let Some(r) = rects
@@ -476,13 +582,266 @@ impl Designer {
                 if drop::is_noop(&from, &target.parent, target.index) {
                     return;
                 }
-                if self.apply(
-                    actions,
+                // Out of a free container: its position means nothing in a layout.
+                let new_path = drop::moved_path(&from, &target.parent, target.index);
+                let mut work = source.to_owned();
+                let result = free::step(
+                    &mut work,
                     edit::move_widget(source, &from, &target.parent, target.index),
-                ) {
-                    self.selected = Some(drop::moved_path(&from, &target.parent, target.index));
+                )
+                .and_then(|()| free::strip(&mut work, &new_path, &["x", "y"]))
+                .map(|()| work);
+                if self.apply_text(actions, source, result) {
+                    self.selected = Some(new_path);
                 }
             }
+        }
+    }
+
+    fn drawn_rect(&self, path: &[usize]) -> Option<Rect> {
+        self.layout
+            .elements
+            .iter()
+            .find(|(p, _)| p == path)
+            .map(|(_, r)| *r)
+    }
+
+    fn drawn_content(&self, path: &[usize]) -> Option<Rect> {
+        let i = self.layout.elements.iter().position(|(p, _)| p == path)?;
+        self.layout.contents.get(i).copied()
+    }
+
+    /// Apply a multi-step result (the final text) as one edit.
+    fn apply_text(
+        &mut self,
+        actions: &mut Vec<Action>,
+        source: &str,
+        result: Result<String, EditError>,
+    ) -> bool {
+        let edits = result.map(|new| edit::diff(source, &new));
+        self.apply(actions, edits)
+    }
+
+    fn snap(&self, v: f32) -> f32 {
+        free::snap(v, !self.snap_off)
+    }
+
+    /// Is the element at `path` placed freely (its parent has no layout)?
+    fn in_free_parent(&self, path: &[usize]) -> bool {
+        let Some((_, parent)) = path.split_last() else {
+            return false;
+        };
+        self.form.file().at(parent).is_some_and(perox_ui::is_free)
+    }
+
+    /// Dropping into a free container: a ghost where it will land, then `x`, `y`.
+    #[allow(clippy::too_many_arguments)]
+    fn drop_free(
+        &mut self,
+        ui: &mut egui::Ui,
+        pointer: Pos2,
+        kind: &str,
+        moving: Option<Vec<usize>>,
+        target: &drop::Target,
+        source: &str,
+        actions: &mut Vec<Action>,
+    ) {
+        let Some(content) = self.drawn_content(&target.parent) else {
+            return;
+        };
+        let size = match &moving {
+            Some(p) => self.drawn_rect(p).map_or(vec2(80.0, 24.0), |r| r.size()),
+            None => catalog::free_default_size(kind)
+                .map_or(vec2(80.0, 24.0), |(w, h)| vec2(w as f32, h as f32)),
+        };
+        let grab = if moving.is_some() {
+            self.grab
+        } else {
+            Vec2::ZERO
+        };
+        let rel = pointer - grab - content.min;
+        let at = Pos2::new(self.snap(rel.x), self.snap(rel.y));
+        let accent = ui.visuals().selection.bg_fill;
+        let ghost = Rect::from_min_size(content.min + at.to_vec2(), size);
+        ui.painter().rect(
+            ghost,
+            2.0,
+            accent.gamma_multiply(0.15),
+            Stroke::new(1.5, accent),
+            StrokeKind::Inside,
+        );
+        ui.painter().text(
+            ghost.left_top() + vec2(0.0, -2.0),
+            egui::Align2::LEFT_BOTTOM,
+            format!("{}, {}", at.x, at.y),
+            egui::TextStyle::Small.resolve(ui.style()),
+            accent,
+        );
+        if !ui.input(|i| i.pointer.any_released()) {
+            return;
+        }
+        DragAndDrop::clear_payload(ui.ctx());
+        let parent = target.parent.clone();
+        match moving {
+            None => {
+                let file = self.form.file();
+                let id = catalog::wants_id(kind).then(|| unique_id(file, &catalog::snake(kind)));
+                let mut props = catalog::defaults(kind);
+                props.push(("x".into(), Value::Num(at.x as f64)));
+                props.push(("y".into(), Value::Num(at.y as f64)));
+                if let Some((w, h)) = catalog::free_default_size(kind) {
+                    props.push(("width".into(), Value::Num(w)));
+                    props.push(("height".into(), Value::Num(h)));
+                }
+                let count = file.at(&parent).map_or(0, |p| p.children.len());
+                if self.apply(
+                    actions,
+                    edit::add_widget(source, &parent, usize::MAX, kind, id.as_deref(), &props),
+                ) {
+                    let mut path = parent;
+                    path.push(count);
+                    self.selected = Some(path);
+                }
+            }
+            Some(from) => {
+                let same_parent = from
+                    .split_last()
+                    .is_some_and(|(_, p)| p == parent.as_slice());
+                let mut work = source.to_owned();
+                let new_path = if same_parent {
+                    from.clone()
+                } else {
+                    drop::moved_path(&from, &parent, target.index)
+                };
+                let result = (|| {
+                    if !same_parent {
+                        free::step(
+                            &mut work,
+                            edit::move_widget(source, &from, &parent, target.index),
+                        )?;
+                        free::strip(
+                            &mut work,
+                            &new_path,
+                            &["row", "column", "row_span", "column_span", "stretch"],
+                        )?;
+                    }
+                    free::set_position(&mut work, &new_path, at)?;
+                    Ok(work)
+                })();
+                if self.apply_text(actions, source, result) {
+                    self.selected = Some(new_path);
+                }
+            }
+        }
+    }
+
+    /// Eight handles around a freely placed selection; dragging one resizes it.
+    fn resize_widget(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
+        let Some(path) = self.selected.clone().filter(|p| self.in_free_parent(p)) else {
+            return;
+        };
+        let (Some(rect), Some(parent_content)) = (
+            self.drawn_rect(&path),
+            path.split_last().and_then(|(_, p)| self.drawn_content(p)),
+        ) else {
+            return;
+        };
+        let accent = ui.visuals().selection.bg_fill;
+        for sx in [-1i8, 0, 1] {
+            for sy in [-1i8, 0, 1] {
+                if sx == 0 && sy == 0 {
+                    continue;
+                }
+                let at = Pos2::new(
+                    [rect.left(), rect.center().x, rect.right()][(sx + 1) as usize],
+                    [rect.top(), rect.center().y, rect.bottom()][(sy + 1) as usize],
+                );
+                let handle = Rect::from_center_size(at, Vec2::splat(7.0));
+                let id = ui.scope_id().with(("resize_widget", sx, sy));
+                let r = ui.interact(handle.expand(2.0), id, Sense::drag());
+                ui.painter().rect(
+                    handle,
+                    1.0,
+                    ui.visuals().panel_fill,
+                    Stroke::new(1.0, accent),
+                    StrokeKind::Inside,
+                );
+                if r.hovered() || r.dragged() {
+                    ui.ctx().set_cursor_icon(match (sx, sy) {
+                        (0, _) => egui::CursorIcon::ResizeVertical,
+                        (_, 0) => egui::CursorIcon::ResizeHorizontal,
+                        (-1, -1) | (1, 1) => egui::CursorIcon::ResizeNwSe,
+                        _ => egui::CursorIcon::ResizeNeSw,
+                    });
+                }
+                if r.drag_started() {
+                    let start = rect.translate(-parent_content.min.to_vec2());
+                    self.widget_resize = Some((path.clone(), [sx, sy], start));
+                }
+                if r.dragged()
+                    && let Some((p, [sx, sy], start)) = self.widget_resize.clone()
+                    && let (Some(o), Some(now)) = (
+                        ui.input(|i| i.pointer.press_origin()),
+                        r.interact_pointer_pos(),
+                    )
+                {
+                    let d = now - o;
+                    let mut nr = start;
+                    if sx < 0 {
+                        nr.min.x = self.snap(start.min.x + d.x).min(start.max.x - 8.0);
+                    } else if sx > 0 {
+                        nr.max.x = self.snap(start.max.x + d.x).max(start.min.x + 8.0);
+                    }
+                    if sy < 0 {
+                        nr.min.y = self.snap(start.min.y + d.y).min(start.max.y - 8.0);
+                    } else if sy > 0 {
+                        nr.max.y = self.snap(start.max.y + d.y).max(start.min.y + 8.0);
+                    }
+                    self.live = vec![
+                        (p.clone(), "x".into(), Value::Num(nr.min.x as f64)),
+                        (p.clone(), "y".into(), Value::Num(nr.min.y as f64)),
+                        (p.clone(), "width".into(), Value::Num(nr.width() as f64)),
+                        (p, "height".into(), Value::Num(nr.height() as f64)),
+                    ];
+                }
+                if r.drag_stopped()
+                    && let Some((p, _, _)) = self.widget_resize.take()
+                {
+                    let get = |name: &str| {
+                        self.live
+                            .iter()
+                            .find(|(_, n, _)| n == name)
+                            .and_then(|(_, _, v)| v.as_f64())
+                            .unwrap_or(0.0) as f32
+                    };
+                    let nr = Rect::from_min_size(
+                        Pos2::new(get("x"), get("y")),
+                        vec2(get("width"), get("height")),
+                    );
+                    self.live.clear();
+                    let mut work = source.to_owned();
+                    let result = free::set_geometry(&mut work, &p, nr).map(|()| work);
+                    self.apply_text(actions, source, result);
+                }
+            }
+        }
+    }
+
+    /// Break Layout, or Lay Out Vertically / Horizontally / in a Grid, on the selection.
+    fn relayout(&mut self, source: &str, dir: Option<free::Direction>, actions: &mut Vec<Action>) {
+        let path = self.selected.clone().unwrap_or_default();
+        let rects = self.layout.elements.clone();
+        let contents = self.layout.contents.clone();
+        let drawn = free::Drawn {
+            rects: &rects,
+            contents: &contents,
+        };
+        let result = match dir {
+            None => free::break_layout(source, drawn, &path),
+            Some(d) => free::lay_out(source, drawn, &path, d),
+        };
+        if self.apply_text(actions, source, result) {
+            self.selected = Some(path);
         }
     }
 
@@ -596,13 +955,18 @@ impl Designer {
             .show(ui, |ui| {
                 self.prop_grid(ui, "props", &el, &path, &known, source, actions)
             });
-        let mut layout: Vec<PropSpec> = catalog::COMMON.to_vec();
+        let free_child = self.in_free_parent(&path);
+        let mut layout: Vec<PropSpec> = Vec::new();
+        if free_child {
+            layout.extend_from_slice(catalog::FREE_CHILD);
+        }
+        layout.extend_from_slice(catalog::COMMON);
         if parent_is_grid {
             layout.extend_from_slice(catalog::GRID_CHILD);
         }
         if !path.is_empty() {
             egui::CollapsingHeader::new("Size and layout")
-                .default_open(false)
+                .default_open(free_child)
                 .show(ui, |ui| {
                     self.prop_grid(ui, "layout", &el, &path, &layout, source, actions)
                 });
@@ -666,8 +1030,25 @@ impl Designer {
                     r.on_hover_text(spec.help);
                 }
                 let new = self.value_editor(ui, path, spec, value.as_ref());
-                if let Some(v) = new {
-                    self.apply(actions, edit::set_property(source, path, &spec.name, &v));
+                match new {
+                    // Switching a container between stack and free converts its
+                    // children too, like Break Layout / Lay Out.
+                    Some(Value::Ident(mode)) if spec.name == "layout" => {
+                        let was_free = el.str_prop("layout") == Some("free");
+                        let dir = match (mode.as_str(), was_free) {
+                            ("free", false) => Some(None),
+                            ("stack", true) => Some(Some(free::Direction::Vertical)),
+                            _ => None,
+                        };
+                        if let Some(dir) = dir {
+                            self.selected = Some(path.to_vec());
+                            self.relayout(source, dir, actions);
+                        }
+                    }
+                    Some(v) => {
+                        self.apply(actions, edit::set_property(source, path, &spec.name, &v));
+                    }
+                    None => {}
                 }
                 if value.is_some()
                     && small_icon_button(ui, Icon::X, "Reset to the default").clicked()
@@ -695,16 +1076,16 @@ impl Designer {
             PropKind::Number => {
                 let live = self
                     .live
-                    .as_ref()
-                    .filter(|(p, n, _)| p == path && *n == spec.name)
+                    .iter()
+                    .find(|(p, n, _)| p == path && *n == spec.name)
                     .and_then(|(_, _, v)| v.as_f64());
                 let mut n = live.or(value.and_then(Value::as_f64)).unwrap_or(0.0);
                 let r = ui.add(egui::DragValue::new(&mut n).speed(0.5));
                 if r.dragged() && r.changed() {
-                    self.live = Some((path.to_vec(), spec.name.to_string(), Value::Num(n)));
+                    self.live = vec![(path.to_vec(), spec.name.to_string(), Value::Num(n))];
                     None
                 } else if r.drag_stopped() {
-                    self.live = None;
+                    self.live.clear();
                     Some(Value::Num(n))
                 } else if r.changed() {
                     Some(Value::Num(n))

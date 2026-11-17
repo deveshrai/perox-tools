@@ -65,8 +65,17 @@ pub(crate) fn selected(el: &Element, values: &Values, key: &str) -> Option<usize
 pub(crate) fn is_container(kind: &str) -> bool {
     matches!(
         kind,
-        "Window" | "VBox" | "HBox" | "Grid" | "GroupBox" | "Tabs" | "Tab"
+        "Window" | "VBox" | "HBox" | "Grid" | "GroupBox" | "Tabs" | "Tab" | "Panel"
     )
+}
+
+/// A container without a layout: children are placed at `x`, `y` (like Qt widgets
+/// without a layout, or a VB form). `Panel` always; `Window`, `GroupBox` and `Tab`
+/// with `layout: free`.
+pub fn is_free(el: &Element) -> bool {
+    el.kind == "Panel"
+        || (matches!(el.kind.as_str(), "Window" | "GroupBox" | "Tab")
+            && el.str_prop("layout") == Some("free"))
 }
 
 /// The font a label uses, from `font_size`, `monospace` and `heading`.
@@ -101,6 +110,8 @@ pub(crate) struct Entry {
     pub part: Part,
     /// Relative to the form origin; filled after layout.
     pub rect: Rect,
+    /// `rect` inside border and padding: where children (and `x: 0`) start.
+    pub content: Rect,
 }
 
 #[derive(Debug)]
@@ -132,6 +143,15 @@ impl Built {
             .iter()
             .filter(|e| e.part == Part::Element)
             .map(|e| (e.path.clone(), e.rect.translate(origin.to_vec2())))
+            .collect()
+    }
+
+    /// Content boxes, in the same order as [`Built::element_rects`].
+    pub fn content_rects(&self, origin: egui::Pos2) -> Vec<Rect> {
+        self.entries
+            .iter()
+            .filter(|e| e.part == Part::Element)
+            .map(|e| e.content.translate(origin.to_vec2()))
             .collect()
     }
 }
@@ -215,14 +235,25 @@ pub(crate) fn build(
 
     // Absolute rects, parents first.
     let mut rects: Vec<Rect> = Vec::with_capacity(b.entries.len());
+    let mut contents: Vec<Rect> = Vec::with_capacity(b.entries.len());
     for e in &b.entries {
         let l = b.tree.layout(e.node).copied().unwrap_or_default();
         let parent = e.parent.map_or(egui::Pos2::ZERO, |p| rects[p].min);
         let min = parent + vec2(l.location.x, l.location.y);
-        rects.push(Rect::from_min_size(min, vec2(l.size.width, l.size.height)));
+        let rect = Rect::from_min_size(min, vec2(l.size.width, l.size.height));
+        rects.push(rect);
+        contents.push(Rect::from_min_max(
+            rect.min + vec2(l.border.left + l.padding.left, l.border.top + l.padding.top),
+            rect.max
+                - vec2(
+                    l.border.right + l.padding.right,
+                    l.border.bottom + l.padding.bottom,
+                ),
+        ));
     }
-    for (e, r) in b.entries.iter_mut().zip(rects) {
+    for ((e, r), c) in b.entries.iter_mut().zip(rects).zip(contents) {
         e.rect = r;
+        e.content = c;
     }
     let root_size = b.entries.first().map_or(Vec2::ZERO, |e| e.rect.size());
     Built {
@@ -237,6 +268,9 @@ enum Flow {
     Column,
     Row,
     Grid,
+    /// No layout: children sit at `x`, `y`. Carries the container's padding, which
+    /// absolute positions are offset by.
+    Free(f32, f32),
 }
 
 impl Builder<'_> {
@@ -261,7 +295,10 @@ impl Builder<'_> {
             let multi_line = el.kind == "TextEdit"
                 && (flag(el, self.values, &key, "multiline") == Some(true)
                     || num(el, self.values, &key, "rows").is_some_and(|r| r > 1.0));
-            let layout = matches!(el.kind.as_str(), "VBox" | "HBox" | "Grid" | "Tabs");
+            let layout = matches!(
+                el.kind.as_str(),
+                "VBox" | "HBox" | "Grid" | "Tabs" | "Panel"
+            );
             if (fills && layout)
                 || matches!(el.kind.as_str(), "Tabs" | "Tab" | "ListView")
                 || multi_line
@@ -284,6 +321,7 @@ impl Builder<'_> {
                 parent,
                 part: Part::Element,
                 rect: Rect::NOTHING,
+                content: Rect::NOTHING,
             });
             let mut children = Vec::new();
             if el.kind == "Tabs" {
@@ -307,6 +345,21 @@ impl Builder<'_> {
                     children.extend(self.element(child, path, Some(index), Some((flow, fills))));
                     path.pop();
                 }
+            }
+            if let Flow::Free(px, py) = flow {
+                // Absolute children don't size their parent; make room for them.
+                let (w, h) = self.free_extent(el, path, &children);
+                let grow = |d: LengthPercentageAuto, n: f32| {
+                    if d == LengthPercentageAuto::auto() {
+                        length(n)
+                    } else {
+                        d
+                    }
+                };
+                style.min_size = Size {
+                    width: grow(style.min_size.width, w + 2.0 * px),
+                    height: grow(style.min_size.height, h + py + px),
+                };
             }
             if self.design && children.is_empty() {
                 let min = |d: LengthPercentageAuto, n: f32| {
@@ -334,6 +387,7 @@ impl Builder<'_> {
                 parent,
                 part: Part::Element,
                 rect: Rect::NOTHING,
+                content: Rect::NOTHING,
             });
             node
         };
@@ -373,6 +427,7 @@ impl Builder<'_> {
             parent: Some(parent),
             part: Part::TabHeader,
             rect: Rect::NOTHING,
+            content: Rect::NOTHING,
         });
         Some(node)
     }
@@ -403,6 +458,16 @@ impl Builder<'_> {
             s.flex_basis = length(0.0);
         }
         s.flex_shrink = 1.0;
+        if let Some((Flow::Free(px, py), _)) = parent_flow {
+            let at = |name: &str| num(el, v, key, name).unwrap_or(0.0);
+            s.position = Position::Absolute;
+            s.inset = taffy::Rect {
+                left: length(px + at("x")),
+                top: length(py + at("y")),
+                right: LengthPercentageAuto::auto(),
+                bottom: LengthPercentageAuto::auto(),
+            };
+        }
         if let Some((Flow::Grid, _)) = parent_flow {
             let at = |name: &str| num(el, v, key, name).map(|n| n.max(0.0) as i16);
             let span_of = |name: &str| num(el, v, key, name).map_or(1, |n| n.max(1.0) as u16);
@@ -427,7 +492,9 @@ impl Builder<'_> {
         let v = self.values;
         let sp = &self.style.spacing;
         let spacing = num(el, v, key, "spacing").unwrap_or(6.0);
+        let free = is_free(el);
         let default_margin = match el.kind.as_str() {
+            _ if free && el.kind != "GroupBox" => 0.0,
             "Window" => 10.0,
             "GroupBox" | "Tab" => 8.0,
             _ => 0.0,
@@ -455,7 +522,15 @@ impl Builder<'_> {
             height: length(spacing),
         };
         let _ = sp;
-        let flow = if el.kind == "HBox" {
+        let title = if el.kind == "GroupBox" {
+            self.text_size("Ag", &TextStyle::Body.resolve(self.style)).y + 2.0
+        } else {
+            0.0
+        };
+        let pad_top = margin + title;
+        let flow = if free {
+            Flow::Free(margin, pad_top)
+        } else if el.kind == "HBox" {
             Flow::Row
         } else if el.kind == "Grid" {
             Flow::Grid
@@ -470,7 +545,7 @@ impl Builder<'_> {
                 // Spare height goes below the rows, not between them.
                 s.align_content = AlignContent::START;
             }
-            Flow::Row | Flow::Column => {
+            Flow::Row | Flow::Column | Flow::Free(..) => {
                 s.display = Display::Flex;
                 s.flex_direction = if flow == Flow::Row {
                     FlexDirection::Row
@@ -503,6 +578,31 @@ impl Builder<'_> {
         self.painter
             .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
             .size()
+    }
+
+    /// The bottom-right corner of a free container's children: `x + width`, `y + height`,
+    /// using natural sizes where no size is set.
+    fn free_extent(&self, el: &Element, path: &[usize], children: &[NodeId]) -> (f32, f32) {
+        let v = self.values;
+        let mut nodes = children.iter();
+        let (mut w, mut h) = (0.0f32, 0.0f32);
+        for (i, child) in el.children.iter().enumerate() {
+            let mut p = path.to_vec();
+            p.push(i);
+            let key = crate::key(child, &p);
+            if flag(child, v, &key, "visible") == Some(false) {
+                continue;
+            }
+            let natural = nodes
+                .next()
+                .and_then(|n| self.tree.get_node_context(*n))
+                .map_or(Vec2::ZERO, |leaf| leaf.natural);
+            let cw = num(child, v, &key, "width").unwrap_or(natural.x);
+            let ch = num(child, v, &key, "height").unwrap_or(natural.y);
+            w = w.max(num(child, v, &key, "x").unwrap_or(0.0) + cw);
+            h = h.max(num(child, v, &key, "y").unwrap_or(0.0) + ch);
+        }
+        (w, h)
     }
 
     /// A leaf's natural size, plus per-kind style tweaks.

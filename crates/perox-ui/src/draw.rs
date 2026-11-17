@@ -74,6 +74,9 @@ pub(crate) fn draw(
         }
         if is_container(&el.kind) {
             container(ui, el, rect, design);
+            if design && crate::layout::is_free(el) {
+                grid_dots(ui, e.content.translate(origin.to_vec2()));
+            }
             continue;
         }
         let response = leaf(ui, file, el, &e.key, &e.path, rect, values, design, events);
@@ -134,7 +137,15 @@ fn container(ui: &mut egui::Ui, el: &Element, rect: Rect, design: bool) {
                 ui.painter().galley(at, galley, visuals.text_color());
             }
         }
-        "VBox" | "HBox" | "Grid" if design => {
+        "Panel" if el.prop("frame").and_then(Value::as_bool) == Some(true) => {
+            ui.painter().rect_stroke(
+                rect,
+                2.0,
+                visuals.widgets.noninteractive.bg_stroke,
+                StrokeKind::Inside,
+            );
+        }
+        "VBox" | "HBox" | "Grid" | "Panel" if design => {
             // Layouts are invisible at runtime; the designer shows them faintly.
             ui.painter().rect_stroke(
                 rect,
@@ -430,6 +441,33 @@ fn placeholder(ui: &mut egui::Ui, rect: Rect, label: &str) -> egui::Response {
         v.weak_text_color(),
     );
     ui.allocate_rect(rect, egui::Sense::hover())
+}
+
+/// The designer's snap grid inside a free container.
+fn grid_dots(ui: &mut egui::Ui, content: Rect) {
+    let clip = ui.clip_rect().intersect(content);
+    if clip.width() <= 0.0 || clip.height() <= 0.0 {
+        return;
+    }
+    let color = ui.visuals().weak_text_color().gamma_multiply(0.35);
+    let step = crate::GRID;
+    let mut shapes = Vec::new();
+    let mut y = content.top();
+    while y <= content.bottom() {
+        let mut x = content.left();
+        while x <= content.right() {
+            if clip.contains(egui::pos2(x, y)) {
+                shapes.push(egui::Shape::rect_filled(
+                    Rect::from_center_size(egui::pos2(x, y), egui::vec2(1.0, 1.0)),
+                    0.0,
+                    color,
+                ));
+            }
+            x += step;
+        }
+        y += step;
+    }
+    ui.painter().extend(shapes);
 }
 
 /// Spacers are invisible; the designer draws a spring so you can find them.

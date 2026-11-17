@@ -245,6 +245,50 @@ pub fn set_handler(
     }])
 }
 
+/// Changes an element's kind (`VBox` → `Panel`), keeping its id, members and formatting.
+pub fn set_kind(src: &str, path: &[usize], kind: &str) -> Result<Vec<TextEdit>, EditError> {
+    if !is_valid_name(kind) {
+        return Err(EditError::InvalidName(kind.into()));
+    }
+    let file = parse(src);
+    let el = element(&file, path)?;
+    Ok(vec![TextEdit {
+        range: el.kind_span.clone(),
+        text: kind.into(),
+    }])
+}
+
+/// One edit that turns `old` into `new`: the changed middle, between the common prefix
+/// and suffix. For multi-step designer operations computed on a working copy.
+pub fn diff(old: &str, new: &str) -> Vec<TextEdit> {
+    if old == new {
+        return Vec::new();
+    }
+    let mut start = old
+        .bytes()
+        .zip(new.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
+        start -= 1;
+    }
+    let max_suffix = old.len().min(new.len()) - start;
+    let mut suffix = old
+        .bytes()
+        .rev()
+        .zip(new.bytes().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
+        suffix -= 1;
+    }
+    vec![TextEdit {
+        range: start..old.len() - suffix,
+        text: new[start..new.len() - suffix].to_owned(),
+    }]
+}
+
 /// Unwires an event.
 pub fn remove_handler(src: &str, path: &[usize], event: &str) -> Result<Vec<TextEdit>, EditError> {
     let file = parse(src);
@@ -597,5 +641,24 @@ mod tests {
             !out2.contains("clicked") && out2.contains("Button b"),
             "{out2}"
         );
+    }
+
+    #[test]
+    fn set_kind_and_diff() {
+        let src = "Window w {\n    VBox box {\n        Label {}\n    }\n}\n";
+        let out = apply(src, &set_kind(src, &[0], "Panel").unwrap());
+        assert_eq!(
+            out,
+            "Window w {\n    Panel box {\n        Label {}\n    }\n}\n"
+        );
+        let d = diff(src, &out);
+        assert_eq!(d.len(), 1);
+        assert_eq!(apply(src, &d), out);
+        assert!(d[0].text.len() < 8, "{d:?}");
+        assert!(diff(src, src).is_empty());
+        let a = "héllo wörld";
+        let b = "héllo wörlds";
+        assert_eq!(apply(a, &diff(a, b)), b);
+        assert_eq!(apply(b, &diff(b, a)), a);
     }
 }

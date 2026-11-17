@@ -396,6 +396,29 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.break_layout", "Break Layout", Access::Edit)
+                .description("Qt-style Break Layout: a VBox/HBox/Grid becomes a free Panel, or a Window/GroupBox/Tab gets `layout: free` (taking over its single layout's children). Every widget keeps its place, now as x, y, width, height. The form must be showing in the designer.")
+                .params(path_schema(json!({ "widget": { "type": "string", "description": "Container id or path (# is the window)" } }))),
+            |s, inv| relayout_command(s, inv, None),
+        ),
+        (
+            CommandSpec::new("designer.lay_out", "Lay Out", Access::Edit)
+                .description("Puts a free container's children into a layout, ordered by where they sit: direction vertical, horizontal or grid. A Panel becomes the layout; a free Window/GroupBox/Tab gets a new layout inside. The form must be showing in the designer.")
+                .params(path_schema(json!({
+                    "widget": { "type": "string" },
+                    "direction": { "type": "string", "enum": ["vertical", "horizontal", "grid"] }
+                }))),
+            |s, inv| {
+                let dir = match inv.str_arg("direction")? {
+                    "vertical" => perox_designer::free::Direction::Vertical,
+                    "horizontal" => perox_designer::free::Direction::Horizontal,
+                    "grid" => perox_designer::free::Direction::Grid,
+                    other => return Err(err(format!("Unknown direction `{other}`."))),
+                };
+                relayout_command(s, inv, Some(dir))
+            },
+        ),
+        (
             CommandSpec::new("designer.select", "Select Widget", Access::Read)
                 .description("Shows a form in the designer with a widget selected (for screenshots and pointing things out).")
                 .params(path_schema(json!({ "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }) }))),
@@ -1007,6 +1030,41 @@ pub fn apply_workspace_edit(s: &mut AppState, edit: &Value) -> usize {
         n += 1;
     }
     n
+}
+
+/// Break Layout / Lay Out from an agent, using where the designer last drew things.
+fn relayout_command(
+    s: &mut AppState,
+    inv: &Invocation,
+    dir: Option<perox_designer::free::Direction>,
+) -> Result<Value, CommandError> {
+    let (id, text) = form_text(s, inv)?;
+    let file = perox_forms::parse(&text);
+    let path = widget_path(&file, inv.str_arg("widget")?)?;
+    let doc = s
+        .docs
+        .get_mut(id)
+        .ok_or_else(|| err("The form isn't open."))?;
+    let designer = doc
+        .designer
+        .as_ref()
+        .filter(|_| doc.design_view)
+        .ok_or_else(|| err("Show the form in the designer first (designer.select)."))?;
+    let drawn = perox_designer::free::Drawn {
+        rects: &designer.layout.elements,
+        contents: &designer.layout.contents,
+    };
+    if drawn.rects.is_empty() {
+        return Err(err("The designer hasn't drawn this form yet; try again."));
+    }
+    let result = match dir {
+        None => perox_designer::free::break_layout(&text, drawn, &path),
+        Some(d) => perox_designer::free::lay_out(&text, drawn, &path, d),
+    }
+    .map_err(|e| err(e.to_string()))?;
+    let edits = perox_forms::edit::diff(&text, &result);
+    apply_form_edits(s, id, edits);
+    Ok(json!({ "ok": true }))
 }
 
 /// Opens a `.pxui` file (keeping the current view) and returns it with its text.

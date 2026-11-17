@@ -66,8 +66,9 @@ hand-edit the `.pxui`, and run it.
 | Designer: palette drag-drop, move, resize, object tree, inspector, events | ✅ |
 | Go to handler (adds the method to the code-behind) | ✅ |
 | `designer.*` MCP commands for agents | ✅ |
+| Free placement (`Panel`, `layout: free`): snap grid, move, resize handles, nudge, Break layout / Lay out | ✅ |
 | File → New GUI App (template with form, code-behind, `build.rs`) | ✅ |
-| `.pxui` formatter, multi-select, copy/paste of widgets, live preview window | follow-ups |
+| `.pxui` formatter, multi-select, copy/paste, align/distribute, inspector shows defaults, live preview window | follow-ups |
 
 ### Phase 3: pro tooling ← *next*
 Debugger (lldb-dap on macOS/Linux; on Windows, lldb-dap or cppvsdbg, decided by ADR), test

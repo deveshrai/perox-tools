@@ -24,6 +24,12 @@ Usually you don't call this directly: the generated `MainWindow` wrapper and
 | `Grid` | CSS grid, filled row by row | `columns: [0, 1]` (0 = fit, n = share of the rest) |
 | `GroupBox` | top to bottom, framed | `title` |
 | `Tabs` → `Tab` | one page at a time | `Tab { title }`, `Tabs { selected }` |
+| `Panel` | **no layout**: children at `x`, `y` | `frame`, `margin` (0) |
+
+`Window`, `GroupBox` and `Tab` take `layout: free` to place their children freely too.
+In a free container, each child takes `x` and `y` (from the content box's top-left)
+and optional `width` and `height`; without them, it gets its natural size. A free
+container inside a layout is as big as its children need.
 
 Every element accepts `width`, `height`, `min_width`, `max_width`, `min_height`,
 `max_height`, `fixed_size: 200 x 30`, `stretch: n`, `visible`, `enabled`, `tooltip`, and

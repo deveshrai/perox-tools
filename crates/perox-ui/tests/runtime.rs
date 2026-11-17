@@ -227,3 +227,47 @@ fn designer_selects_the_deepest_element_and_widgets_stay_inert() {
     assert_eq!(out.clicked, Some(vec![0, 0, 0]));
     assert_eq!(out.hovered, Some(vec![0, 0, 0]));
 }
+
+#[test]
+fn free_containers_place_children_at_x_y() {
+    let mut h = Harness::new(
+        "Window w {\n layout: free\n Button a { text: \"A\"; x: 20; y: 30; width: 100 }\n Label b { text: \"B\"; x: 200; y: 8 }\n}",
+    );
+    h.frame(vec![]);
+    let a = h.rect("a");
+    assert_eq!(a.min, Pos2::new(20.0, 30.0), "{a:?}");
+    assert!((a.width() - 100.0).abs() < 0.5);
+    let b = h.rect("b");
+    assert_eq!(b.min, Pos2::new(200.0, 8.0));
+    // Clicks still work on freely placed widgets.
+    let e = h.click(a.center());
+    assert_eq!(e.first().map(|e| e.event), Some("clicked"));
+}
+
+#[test]
+fn a_panel_in_a_layout_is_as_big_as_its_children() {
+    let mut h = Harness::new(
+        "Window w {\n margin: 0\n VBox {\n Panel p {\n Button a { x: 10; y: 50; width: 80; height: 30 }\n }\n Button after {}\n }\n}",
+    );
+    h.frame(vec![]);
+    let p = h.rect("p");
+    let a = h.rect("a");
+    assert_eq!(a.min, p.min + vec2(10.0, 50.0));
+    let after = h.rect("after");
+    assert!(
+        after.top() >= p.top() + 80.0,
+        "panel reserves its children's height: {p:?} {after:?}"
+    );
+}
+
+#[test]
+fn free_group_box_offsets_children_below_its_title() {
+    let mut h = Harness::new(
+        "Window w {\n layout: free\n GroupBox g { title: \"G\"; layout: free; x: 0; y: 0; width: 200; height: 120\n Button a { x: 0; y: 0 }\n }\n}",
+    );
+    h.frame(vec![]);
+    let g = h.rect("g");
+    let a = h.rect("a");
+    assert!(a.top() > g.top() + 10.0, "below the title: {g:?} {a:?}");
+    assert!(a.left() > g.left(), "inside the frame");
+}

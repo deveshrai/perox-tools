@@ -13,6 +13,9 @@ pub struct Target {
     pub index: usize,
     /// The insertion marker, in screen points.
     pub line: [Pos2; 2],
+    /// The parent has no layout: the widget goes where it's dropped (the caller works
+    /// out `x`, `y`), and `index` is the end.
+    pub free: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -58,6 +61,14 @@ pub fn target(
         }
     }
     let el = file.at(&parent)?;
+    if perox_ui::is_free(el) {
+        return Some(Target {
+            index: el.children.len(),
+            parent,
+            line: [pointer, pointer],
+            free: true,
+        });
+    }
     let rect_of = |p: &[usize]| rects.iter().find(|(q, _)| q == p).map(|(_, r)| *r);
     let parent_rect = rect_of(&parent)?;
     // Visible children (a hidden tab page has no rect), minus the one being moved.
@@ -94,6 +105,7 @@ pub fn target(
         parent,
         index,
         line,
+        free: false,
     })
 }
 
@@ -187,6 +199,19 @@ mod tests {
     fn tab_pages_only_go_into_tabs() {
         let f = file();
         assert!(target(&f, &rects(), pos2(50.0, 12.0), "Tab", None).is_none());
+    }
+
+    #[test]
+    fn free_containers_take_drops_anywhere() {
+        let f = perox_forms::parse("Window w {\n layout: free\n Button a {}\n}");
+        let rects = vec![
+            (vec![], r(0.0, 0.0, 300.0, 300.0)),
+            (vec![0], r(10.0, 10.0, 80.0, 24.0)),
+        ];
+        // Over the button: still the window (buttons don't take children).
+        let t = target(&f, &rects, pos2(20.0, 20.0), "Label", None).unwrap();
+        assert!(t.free);
+        assert_eq!((t.parent, t.index), (vec![], 1));
     }
 
     #[test]

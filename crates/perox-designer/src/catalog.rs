@@ -56,7 +56,19 @@ const BOX: &[PropSpec] = &[
     p("justify", JUSTIFY, "Where spare space goes along the axis"),
 ];
 
+const LAYOUT_MODE: PropKind = Choice(&["stack", "free"]);
+
 pub const KINDS: &[Kind] = &[
+    Kind {
+        name: "Panel",
+        icon: Icon::SquareDashed,
+        layout: true,
+        props: &[
+            p("frame", Bool, "Draw a border"),
+            p("margin", Number, "Space inside the edges (0)"),
+        ],
+        events: &[],
+    },
     Kind {
         name: "VBox",
         icon: Icon::Rows3,
@@ -91,6 +103,11 @@ pub const KINDS: &[Kind] = &[
         icon: Icon::Group,
         layout: true,
         props: &[
+            p(
+                "layout",
+                LAYOUT_MODE,
+                "free: place children anywhere (x, y)",
+            ),
             p("title", Text, "Shown in the frame"),
             p("spacing", Number, "Gap between children (6)"),
             p("margin", Number, "Space inside the frame (8)"),
@@ -109,6 +126,11 @@ pub const KINDS: &[Kind] = &[
         icon: Icon::AppWindow,
         layout: true,
         props: &[
+            p(
+                "layout",
+                LAYOUT_MODE,
+                "free: place children anywhere (x, y)",
+            ),
             p("title", Text, "The tab's label"),
             p("spacing", Number, "Gap between children (6)"),
             p("margin", Number, "Space inside the page (8)"),
@@ -266,6 +288,11 @@ pub const WINDOW: Kind = Kind {
     icon: Icon::AppWindow,
     layout: true,
     props: &[
+        p(
+            "layout",
+            LAYOUT_MODE,
+            "free: place children anywhere (x, y)",
+        ),
         p("title", Text, "Title bar text"),
         p("size", Size, "Initial size"),
         p("min_size", Size, ""),
@@ -288,6 +315,12 @@ pub const COMMON: &[PropSpec] = &[
     p("visible", Bool, "(true)"),
     p("enabled", Bool, "(true)"),
     p("tooltip", Text, ""),
+];
+
+/// Position of a child of a free container.
+pub const FREE_CHILD: &[PropSpec] = &[
+    p("x", Number, "From the container's left"),
+    p("y", Number, "From the container's top"),
 ];
 
 /// Extra properties for a child of a `Grid`.
@@ -313,7 +346,7 @@ pub fn icon(name: &str) -> Icon {
 pub fn accepts(parent: &str, child: &str) -> bool {
     match parent {
         "Tabs" => child == "Tab",
-        "Window" | "VBox" | "HBox" | "Grid" | "GroupBox" | "Tab" => child != "Tab",
+        "Window" | "VBox" | "HBox" | "Grid" | "GroupBox" | "Tab" | "Panel" => child != "Tab",
         _ => false,
     }
 }
@@ -346,6 +379,17 @@ pub fn defaults(kind: &str) -> Vec<(String, Value)> {
     }
 }
 
+/// Starting size for a container dropped into a free area (it has no children to size
+/// it yet).
+pub fn free_default_size(kind: &str) -> Option<(f64, f64)> {
+    match kind {
+        "Panel" | "GroupBox" | "VBox" | "HBox" | "Grid" => Some((200.0, 120.0)),
+        "Tabs" => Some((280.0, 180.0)),
+        "ListView" => Some((160.0, 120.0)),
+        _ => None,
+    }
+}
+
 /// `TextEdit` → `text_edit`.
 pub fn snake(kind: &str) -> String {
     let mut out = String::new();
@@ -367,6 +411,6 @@ pub fn snake(kind: &str) -> String {
 pub fn wants_id(kind: &str) -> bool {
     !matches!(
         kind,
-        "VBox" | "HBox" | "Grid" | "GroupBox" | "Tab" | "Label" | "Separator" | "Spacer"
+        "VBox" | "HBox" | "Grid" | "GroupBox" | "Tab" | "Panel" | "Label" | "Separator" | "Spacer"
     )
 }

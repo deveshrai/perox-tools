@@ -16,7 +16,11 @@ use std::collections::HashMap;
 use perox_forms::{Element, File, Value};
 
 pub use eframe::{self, egui};
+pub use layout::is_free;
 pub use perox_forms;
+
+/// The designer's snap grid, in points.
+pub const GRID: f32 = 8.0;
 pub use perox_forms::Value as PropValue;
 
 /// Something happened to a widget: a click, a change, Enter in a text box.
@@ -38,6 +42,9 @@ pub struct DesignOutput {
     /// Every laid-out element (containers too), in drawing order: parents before
     /// children. Rects are in screen points.
     pub rects: Vec<(Vec<usize>, egui::Rect)>,
+    /// Each element's content box (inside border and padding), in the same order as
+    /// `rects`. In a free container, `x: 0, y: 0` is the content box's corner.
+    pub contents: Vec<egui::Rect>,
     /// The element under a primary click, deepest first.
     pub clicked: Option<Vec<usize>>,
     /// The element under the pointer.
@@ -52,6 +59,7 @@ impl Default for DesignOutput {
     fn default() -> Self {
         Self {
             rects: Vec::new(),
+            contents: Vec::new(),
             clicked: None,
             hovered: None,
             drag_started: None,
@@ -199,6 +207,7 @@ impl Form {
         );
         out.form_rect = rect;
         out.rects = built.element_rects(rect.min);
+        out.contents = built.content_rects(rect.min);
 
         // On top of every widget, so widgets never see the pointer.
         let response = ui.interact(

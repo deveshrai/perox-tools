@@ -162,3 +162,113 @@ fn resizing_the_window_writes_its_size() {
     h.drag(corner, corner + vec2(100.0, 50.0));
     assert!(h.src.contains("size: 500 x 350"), "{}", h.src);
 }
+
+const FREE: &str = "Window main {\n    title: \"T\"\n    size: 400 x 300\n    layout: free\n\n    Button a { text: \"A\"; x: 16; y: 16 }\n}\n";
+
+fn content_origin(h: &Harness, path: &[usize]) -> Pos2 {
+    let i = h
+        .designer
+        .layout
+        .elements
+        .iter()
+        .position(|(p, _)| p == path)
+        .unwrap();
+    h.designer.layout.contents[i].min
+}
+
+#[test]
+fn drop_into_a_free_window_places_at_the_pointer_snapped() {
+    let mut h = Harness::new(FREE);
+    let origin = content_origin(&h, &[]);
+    let from = h.palette("Label").center();
+    h.drag(from, origin + vec2(101.0, 61.0));
+    let f = perox_forms::parse(&h.src);
+    let l = f.at(&[1]).unwrap();
+    assert_eq!(l.kind, "Label", "{}", h.src);
+    assert_eq!(
+        (l.num_prop("x"), l.num_prop("y")),
+        (Some(104.0), Some(64.0)),
+        "{}",
+        h.src
+    );
+}
+
+#[test]
+fn dragging_in_a_free_window_moves_by_the_drag() {
+    let mut h = Harness::new(FREE);
+    let a = h.rect(&[0]);
+    let from = a.center();
+    h.drag(from, from + vec2(40.0, 24.0));
+    let f = perox_forms::parse(&h.src);
+    let b = f.at(&[0]).unwrap();
+    assert_eq!(
+        (b.num_prop("x"), b.num_prop("y")),
+        (Some(56.0), Some(40.0)),
+        "{}",
+        h.src
+    );
+    assert_eq!(h.designer.selected, Some(vec![0]));
+}
+
+#[test]
+fn resize_handles_write_geometry() {
+    let mut h = Harness::new(FREE);
+    let a = h.rect(&[0]);
+    h.click(a.center());
+    let corner = a.right_bottom();
+    h.drag(corner, corner + vec2(50.0, 20.0));
+    let f = perox_forms::parse(&h.src);
+    let b = f.at(&[0]).unwrap();
+    assert_eq!(
+        (b.num_prop("x"), b.num_prop("y")),
+        (Some(16.0), Some(16.0)),
+        "{}",
+        h.src
+    );
+    let w = b.num_prop("width").unwrap();
+    assert!(
+        w > f64::from(a.width()) + 40.0 && w % 8.0 == 0.0,
+        "snapped right edge: {}",
+        h.src
+    );
+}
+
+#[test]
+fn arrow_keys_nudge() {
+    let mut h = Harness::new(FREE);
+    let a = h.rect(&[0]);
+    h.click(a.center());
+    h.key(egui::Key::ArrowRight);
+    h.key(egui::Key::ArrowDown);
+    assert!(
+        h.src.contains("x: 17") && h.src.contains("y: 17"),
+        "{}",
+        h.src
+    );
+}
+
+#[test]
+fn break_layout_keeps_widgets_where_they_are() {
+    let mut h = Harness::new(FORM);
+    let b_before = h.rect(&[0, 1]);
+    let rects = h.designer.layout.elements.clone();
+    let contents = h.designer.layout.contents.clone();
+    h.src = perox_designer::free::break_layout(
+        &h.src,
+        perox_designer::free::Drawn {
+            rects: &rects,
+            contents: &contents,
+        },
+        &[0],
+    )
+    .unwrap();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    assert!(h.src.contains("Panel"), "{}", h.src);
+    let b_after = h.rect(&[0, 1]);
+    assert!(
+        (b_before.min - b_after.min).length() < 1.0,
+        "{b_before:?} {b_after:?}\n{}",
+        h.src
+    );
+}
