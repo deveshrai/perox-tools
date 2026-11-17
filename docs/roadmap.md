@@ -8,18 +8,23 @@ Each phase ends with a usable build and a short demo note in `docs/`.
 
 ## Milestone 1: desktop
 
-### Phase 0: foundation ← *we are here*
+### Phase 0: foundation ✅
 - [x] Workspace, pinned toolchain, CI on macOS/Linux/Windows
 - [x] Licenses, CLA draft, README, ARCHITECTURE, ADRs 0001–0008
 - [x] Command bus with access levels (`perox-core`), app shell with menus wired to it
 - [x] Toolchain Set 2026.11 pinned, set check on every OS ([ADR 0009](adr/0009-toolchain-set-2026-11.md))
-- [ ] Docking layout (egui_tiles), command palette, keybindings, settings storage
-- [ ] MCP server skeleton: Streamable HTTP, token, `tools/list` and `tools/call` over the bus,
-      Tools › MCP Server toggle
+- [x] Docking layout (egui_tiles), command palette, keybindings, settings storage
+- [x] MCP server: Streamable HTTP, token, sessions, four tools over the bus,
+      Tools › MCP Server toggle, settings page ([docs/mcp.md](mcp.md))
 
 **Done when:** Claude Code connects to a running PeroxIDE and calls `app.info`.
+✅ Done 2026-11-17: a headless Claude Code session listed the commands, ran `app.info` and
+posted a status message. The IDE's Activity panel showed each call.
 
-### Phase 1: a real Rust IDE
+**Carried into Phase 1:** save and restore the layout; user-defined keybindings; the `pending`
+tool for long calls; the `peroxide mcp` stdio shim.
+
+### Phase 1: a real Rust IDE ← *next*
 Project model (Cargo workspaces, `[package.metadata.peroxide]`), file tree, custom code
 editor (rope, tree-sitter, multi-cursor, folding), rust-analyzer (completion, go to
 definition, references, rename, diagnostics), cargo build/run/test with a problems panel,

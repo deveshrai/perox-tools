@@ -3838,6 +3838,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "perox-mcp"
+version = "0.1.0"
+dependencies = [
+ "perox-core",
+ "rand 0.10.4",
+ "serde_json",
+]
+
+[[package]]
 name = "perox-set-check"
 version = "0.1.0"
 dependencies = [
@@ -3888,8 +3897,13 @@ dependencies = [
 name = "peroxide"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "directories",
  "eframe",
+ "egui_tiles",
  "perox-core",
+ "perox-mcp",
+ "serde",
  "serde_json",
 ]
 

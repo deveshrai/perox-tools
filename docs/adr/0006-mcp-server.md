@@ -21,13 +21,17 @@ We will copy that design.
 
 - Transport: **Streamable HTTP** (`POST /mcp`, JSON responses, `Mcp-Session-Id`), plus a
   `peroxide mcp` **stdio shim** that forwards to the running IDE.
-- Tools = `CommandBus::agent_specs()` ([0002](0002-command-bus.md)), plus `pending` for
-  long calls (build, package): a long call returns "still running, call `pending`", is never
-  re-run, and never runs twice.
+- **Four tools, not one per command:** `list_commands`, `describe_command`, `execute`, `batch`.
+  They reach every command in `CommandBus::agent_specs()` ([0002](0002-command-bus.md)).
+  Hundreds of per-command tools would flood the agent's context, and MCP tool names can't
+  contain the dots our ids use. SolidCraft uses the same shape.
+- Long calls (build, package) will get a `pending` tool: a long call returns "still running,
+  call `pending`", is never re-run, and never runs twice. Until then a call waits up to 2 minutes.
 - Security: off by default; a 64-character bearer token compared in constant time;
   `127.0.0.1` unless the user picks **Another device**; file access limited to the open
   project; agent edits go on the normal undo stack.
 
 ## Consequences
-- Every new command is automatically an MCP tool. Description quality matters.
+- Every new command is automatically usable by agents. Description quality matters.
+- User guide: [docs/mcp.md](../mcp.md).
 - LAN mode is plain HTTP. We say so in the UI and docs, same as SolidCraft.

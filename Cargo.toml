@@ -14,10 +14,16 @@ publish = false
 
 [workspace.dependencies]
 perox-core = { path = "crates/perox-core" }
+perox-mcp = { path = "crates/perox-mcp" }
 eframe = "=0.37.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 thiserror = "=2.0.21"
+# Same versions as the Toolchain Set (toolchain-set/check/Cargo.toml).
+egui_tiles = "=0.18.0"
+rand = "=0.10.4"
+directories = "=6.0.0"
+chrono = "=0.4.45"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

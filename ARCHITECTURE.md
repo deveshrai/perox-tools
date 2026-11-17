@@ -44,7 +44,7 @@ One page. The decisions behind each part are in [docs/adr](docs/adr/).
 
 | Crate | What it does | License |
 |---|---|---|
-| ✅ `apps/peroxide` | The executable: window, docking, menus; wires everything to the bus | GPL |
+| ✅ `apps/peroxide` | The executable: docking (egui_tiles), menus, palette, settings, MCP host; wires everything to the bus | GPL |
 | ✅ `perox-core` | Command bus, access levels. Later: project model, documents, undo | GPL |
 | ⏳ `perox-editor` | Code editor widget: rope, tree-sitter, multi-cursor, folding | GPL |
 | ⏳ `perox-lsp`, `perox-dap` | rust-analyzer and lldb-dap clients | GPL |
@@ -53,11 +53,15 @@ One page. The decisions behind each part are in [docs/adr](docs/adr/).
 | ⏳ `perox-ui` | **Runtime inside user apps**: widgets, taffy layouts, themes | MIT/Apache |
 | ⏳ `perox-designer` | Canvas, inspector, palette, layout tools | GPL |
 | ⏳ `perox-preview` | Out-of-process form renderer | GPL |
-| ⏳ `perox-mcp` | MCP server (Streamable HTTP) and the `peroxide mcp` stdio shim | GPL |
+| ✅ `perox-mcp` | MCP server: Streamable HTTP, token, sessions, four tools over the bus. Later: `peroxide mcp` stdio shim | GPL |
 | ⏳ `perox-package` | .app/DMG bundles, signing, notarization; later APK/MSI/AppImage | GPL |
 | ⏳ `perox-android` | Android host: activity glue, running the toolchain on-device | GPL |
 
 ## Where to start reading code
 
-`crates/perox-core/src/command.rs` first, then `apps/peroxide/src/commands.rs`,
-which shows how the shell registers commands, and `app.rs`, which shows menus calling them.
+1. `crates/perox-core/src/command.rs`: the command bus.
+2. `apps/peroxide/src/commands.rs`: the app's commands and the state they change.
+3. `apps/peroxide/src/app.rs`: one frame. Agent calls are drained, shortcuts and menus collect
+   command ids, and everything runs through `PeroxApp::run`, which logs it to Activity.
+4. `crates/perox-mcp` and `apps/peroxide/src/mcp_host.rs`: how agent calls reach the bus
+   ([docs/mcp.md](docs/mcp.md#how-it-works)).

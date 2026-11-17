@@ -9,12 +9,12 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// What a command may do. Agents are granted a maximum level; a command whose
 /// level is above it is refused. Ordered: `Read < Edit < Execute`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Access {
     /// Looks at state, changes nothing (list files, read diagnostics).

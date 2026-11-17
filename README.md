@@ -9,8 +9,9 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phase 0 — foundation.** There's a window, menus and the command bus.
-> See [docs/roadmap.md](docs/roadmap.md).
+> Status: **Phase 0 (foundation) is done.** Docking layout, command palette, settings, and a
+> built-in MCP server that Claude Code can drive ([docs/mcp.md](docs/mcp.md)). Next is Phase 1,
+> a real Rust IDE. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Build and run
 
@@ -34,6 +35,7 @@ The toolchain is pinned in `rust-toolchain.toml`. Each platform also needs:
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit together; one page. |
 | [docs/adr/](docs/adr/) | Why things are the way they are: one page per decision. |
 | [docs/roadmap.md](docs/roadmap.md) | What's being built, in which order, and what "done" means for each phase. |
+| [docs/mcp.md](docs/mcp.md) | Connecting Claude Code (or any MCP client) to PeroxIDE. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to work on the code, plus the CLA. |
 
 ## Repository layout
@@ -41,6 +43,7 @@ The toolchain is pinned in `rust-toolchain.toml`. Each platform also needs:
 ```
 apps/peroxide/      the IDE executable (GPL-3.0-or-later)
 crates/perox-core/  the command bus (GPL-3.0-or-later)
+crates/perox-mcp/   the MCP server (GPL-3.0-or-later)
 docs/               ADRs, roadmap, spikes
 toolchain-set/      the pinned toolchain + bundled crates, and the check that proves them
 ```

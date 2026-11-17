@@ -2,6 +2,12 @@
 
 mod app;
 mod commands;
+mod keymap;
+mod layout;
+mod mcp_host;
+mod mcp_page;
+mod palette;
+mod settings;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -14,6 +20,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "PeroxIDE",
         options,
-        Box::new(|_cc| Ok(Box::new(app::PeroxApp::new()))),
+        Box::new(|cc| Ok(Box::new(app::PeroxApp::new(&cc.egui_ctx)))),
     )
 }
