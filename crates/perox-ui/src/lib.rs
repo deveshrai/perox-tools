@@ -42,6 +42,8 @@ pub struct DesignOutput {
     pub clicked: Option<Vec<usize>>,
     /// The element under the pointer.
     pub hovered: Option<Vec<usize>>,
+    /// The element a drag started on (the designer moves it).
+    pub drag_started: Option<Vec<usize>>,
     /// The whole form's rect.
     pub form_rect: egui::Rect,
 }
@@ -52,6 +54,7 @@ impl Default for DesignOutput {
             rects: Vec::new(),
             clicked: None,
             hovered: None,
+            drag_started: None,
             form_rect: egui::Rect::NOTHING,
         }
     }
@@ -156,7 +159,7 @@ impl Form {
             return events;
         };
         let viewport = ui.available_rect_before_wrap();
-        let built = layout::build(ui, root, &self.values, viewport.size());
+        let built = layout::build(ui, root, &self.values, viewport.size(), false);
         let content = built.content_size().max(viewport.size());
         let (rect, _) = ui.allocate_exact_size(content, egui::Sense::hover());
         draw::draw(
@@ -181,7 +184,7 @@ impl Form {
             return out;
         };
         let viewport = ui.available_rect_before_wrap();
-        let built = layout::build(ui, root, &self.values, viewport.size());
+        let built = layout::build(ui, root, &self.values, viewport.size(), true);
         let size = built.root_size().max(egui::vec2(40.0, 40.0));
         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
         let mut ignored = Vec::new();
@@ -201,7 +204,7 @@ impl Form {
         let response = ui.interact(
             rect,
             ui.scope_id().with("design_overlay"),
-            egui::Sense::click(),
+            egui::Sense::click_and_drag(),
         );
         let pointer = response.hover_pos();
         let deepest = |p: egui::Pos2| {
@@ -214,6 +217,10 @@ impl Form {
         out.hovered = pointer.and_then(deepest);
         if response.clicked() {
             out.clicked = response.interact_pointer_pos().and_then(deepest);
+        }
+        if response.drag_started() {
+            let origin = ui.input(|i| i.pointer.press_origin());
+            out.drag_started = origin.and_then(deepest);
         }
         let painter = ui.painter();
         let accent = ui.visuals().selection.bg_fill;

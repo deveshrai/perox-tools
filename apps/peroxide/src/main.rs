@@ -1,6 +1,7 @@
 //! PeroxIDE application shell.
 
 mod app;
+mod code_behind;
 mod commands;
 mod docs;
 mod git;

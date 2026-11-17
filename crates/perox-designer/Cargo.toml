@@ -1,0 +1,18 @@
+[package]
+name = "perox-designer"
+description = "PeroxIDE's form designer: canvas, widget palette, object tree, property inspector. Every change is a minimal edit to the .pxui text."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+eframe.workspace = true
+perox-forms.workspace = true
+perox-icons.workspace = true
+perox-ui.workspace = true
+
+[lints]
+workspace = true

@@ -622,6 +622,23 @@ impl Parser {
     }
 }
 
+/// Parses one value written as `.pxui` source: `"text"`, `12`, `640 x 480`, `#ff8800`,
+/// `[1, 2]`, `true`, `center`.
+pub fn parse_value(src: &str) -> Option<Value> {
+    if src.contains(['\n', '{', '}', ';']) {
+        return None;
+    }
+    let file = parse(&format!("X {{ v: {src}\n}}"));
+    if !file.errors.is_empty() {
+        return None;
+    }
+    let root = file.root()?;
+    if root.props.len() != 1 || !root.handlers.is_empty() || !root.children.is_empty() {
+        return None;
+    }
+    root.prop("v").cloned()
+}
+
 /// Parses `.pxui` source. Always returns what it could understand plus the errors.
 pub fn parse(src: &str) -> File {
     let (toks, mut errors) = lex(src);
@@ -743,6 +760,19 @@ Window main_window {
         assert_eq!(s.handlers[0].method, "moved");
         let f = parse("Label { text: \"a\" 12 }");
         assert_eq!(f.errors.len(), 1, "{:?}", f.errors);
+    }
+
+    #[test]
+    fn parses_single_values() {
+        assert_eq!(parse_value("\"hi\""), Some(Value::Str("hi".into())));
+        assert_eq!(parse_value("3 x 4"), Some(Value::Size(3.0, 4.0)));
+        assert_eq!(parse_value("center"), Some(Value::Ident("center".into())));
+        assert_eq!(
+            parse_value("[0, 1]"),
+            Some(Value::List(vec![Value::Num(0.0), Value::Num(1.0)]))
+        );
+        assert_eq!(parse_value("\"a\" b: 1"), None);
+        assert_eq!(parse_value("} X {"), None);
     }
 
     #[test]

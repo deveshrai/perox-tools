@@ -245,6 +245,19 @@ pub fn set_handler(
     }])
 }
 
+/// Unwires an event.
+pub fn remove_handler(src: &str, path: &[usize], event: &str) -> Result<Vec<TextEdit>, EditError> {
+    let file = parse(src);
+    let el = element(&file, path)?;
+    Ok(el
+        .handlers
+        .iter()
+        .find(|h| h.event == event)
+        .map(|h| delete_member(src, h.span.clone()))
+        .into_iter()
+        .collect())
+}
+
 /// Names (or renames) a widget; `None` removes the name.
 pub fn set_id(src: &str, path: &[usize], id: Option<&str>) -> Result<Vec<TextEdit>, EditError> {
     if let Some(n) = id
@@ -567,5 +580,22 @@ mod tests {
             set_id(SRC, &[0], Some("9x")),
             Err(EditError::InvalidName(_))
         ));
+    }
+
+    #[test]
+    fn removes_members_that_share_a_line() {
+        let src = "Window w {\n    Button b { text: \"B\" bold: true; on clicked: go }\n}\n";
+        let out = apply(src, &remove_property(src, &[0], "bold").unwrap());
+        assert_eq!(parse(&out).errors, vec![]);
+        assert!(
+            !out.contains("bold") && out.contains("text: \"B\""),
+            "{out}"
+        );
+        let out2 = apply(&out, &remove_handler(&out, &[0], "clicked").unwrap());
+        assert_eq!(parse(&out2).errors, vec![]);
+        assert!(
+            !out2.contains("clicked") && out2.contains("Button b"),
+            "{out2}"
+        );
     }
 }

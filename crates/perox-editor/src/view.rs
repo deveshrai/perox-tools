@@ -289,6 +289,40 @@ impl EditorState {
         self.sync();
     }
 
+    /// Applies edits given as byte ranges into the current text (the form designer's
+    /// edits), as one undo step.
+    pub fn apply_byte_edits(&mut self, edits: &[(std::ops::Range<usize>, String)]) {
+        if edits.is_empty() {
+            return;
+        }
+        let rope = self.core.doc.rope();
+        let len = rope.len_bytes();
+        let changes: Vec<crate::text::Change> = edits
+            .iter()
+            .map(|(r, text)| {
+                let a = rope.byte_to_char(r.start.min(len));
+                let b = rope.byte_to_char(r.end.min(len));
+                crate::text::Change::replace(a..b.max(a), text.clone())
+            })
+            .collect();
+        let mut sorted = changes;
+        sorted.sort_by_key(|c| c.range.start);
+        let after = self.core.sels.map(&sorted);
+        self.core.apply(sorted, after, crate::text::EditKind::Other);
+        self.core.doc.seal_undo();
+        self.sync();
+    }
+
+    pub fn undo(&mut self) {
+        self.core.undo();
+        self.sync();
+    }
+
+    pub fn redo(&mut self) {
+        self.core.redo();
+        self.sync();
+    }
+
     /// Replaces the text (e.g. reloaded from disk), as one undoable edit.
     pub fn set_text(&mut self, text: &str) {
         let sels = self.core.sels.clone();

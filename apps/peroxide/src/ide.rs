@@ -256,6 +256,162 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         CommandSpec::new(id, title, Access::Execute).description(desc)
     };
     let commands: Vec<(CommandSpec, Handler)> = vec![
+        // ── form designer ──
+        (
+            CommandSpec::new("designer.open_handler", "Go to Event Handler", Access::Edit)
+                .description("Shows an event handler in the form's code-behind (the `impl <Form>Handlers for …` block), adding an empty method if it's missing.")
+                .params(json!({
+                    "type": "object",
+                    "properties": {
+                        "form": { "type": "string", "description": "Generated form type, e.g. MainWindow" },
+                        "method": { "type": "string" }
+                    },
+                    "required": ["form", "method"]
+                })),
+            |s, inv| {
+                let form = inv.str_arg("form")?.to_owned();
+                let method = inv.str_arg("method")?.to_owned();
+                open_handler(s, &form, &method)
+            },
+        ),
+        (
+            CommandSpec::new("designer.tree", "Form Tree", Access::Read)
+                .description("A .pxui form as a tree: each widget's kind, id, path (#0.1), properties (as .pxui source) and event handlers. Also lists syntax errors.")
+                .params(path_schema(json!({}))),
+            |s, inv| {
+                let (_, text) = form_text(s, inv)?;
+                let file = perox_forms::parse(&text);
+                let errors: Vec<_> = file.errors.iter().map(|e| e.message.clone()).collect();
+                Ok(json!({ "root": file.root().map(|r| form_json(r, &mut Vec::new())), "errors": errors }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.add_widget", "Add Widget", Access::Edit)
+                .description("Adds a widget to a form (in the editor, unsaved). Kinds: VBox HBox Grid GroupBox Tabs Tab Label Button TextEdit CheckBox RadioButton ComboBox Slider SpinBox ProgressBar ListView Image Separator Spacer. Property values are .pxui source: \"\\\"Hello\\\"\", \"12\", \"true\", \"640 x 480\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
+                .params(path_schema(json!({
+                    "parent": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "index": { "type": "integer", "minimum": 0, "description": "Child position; default: last" },
+                    "kind": { "type": "string" },
+                    "id": { "type": "string" },
+                    "props": { "type": "object", "additionalProperties": { "type": "string" } }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let file = perox_forms::parse(&text);
+                let parent = widget_path(&file, inv.str_arg("parent")?)?;
+                let index = opt_usize(inv, "index").unwrap_or(usize::MAX);
+                let mut props = Vec::new();
+                for (k, v) in inv.args["props"].as_object().into_iter().flatten() {
+                    let src = v.as_str().ok_or_else(|| err(format!("`{k}` must be a string of .pxui source")))?;
+                    let value = perox_forms::parse_value(src).ok_or_else(|| err(format!("`{src}` isn't a valid value for `{k}`")))?;
+                    props.push((k.clone(), value));
+                }
+                let kind = inv.str_arg("kind")?;
+                let wid = inv.args["id"].as_str();
+                let edits = perox_forms::edit::add_widget(&text, &parent, index, kind, wid, &props).map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                let count = file.at(&parent).map_or(0, |p| p.children.len());
+                let mut path = parent;
+                path.push(index.min(count));
+                Ok(json!({ "added": path_key(&path) }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.set_property", "Set Widget Property", Access::Edit)
+                .description("Sets a widget property to a .pxui value (\"\\\"text\\\"\", \"12\", \"true\", \"640 x 480\", \"center\"), or removes it when value is null. Only that value's text changes.")
+                .params(path_schema(json!({
+                    "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "name": { "type": "string" },
+                    "value": { "type": ["string", "null"] }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let file = perox_forms::parse(&text);
+                let path = widget_path(&file, inv.str_arg("widget")?)?;
+                let name = inv.str_arg("name")?;
+                let edits = match inv.args["value"].as_str() {
+                    Some(src) => {
+                        let value = perox_forms::parse_value(src).ok_or_else(|| err(format!("`{src}` isn't a valid .pxui value")))?;
+                        perox_forms::edit::set_property(&text, &path, name, &value)
+                    }
+                    None => perox_forms::edit::remove_property(&text, &path, name),
+                }
+                .map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "ok": true }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.remove_widget", "Remove Widget", Access::Edit)
+                .description("Removes a widget (and its children) from a form.")
+                .params(path_schema(json!({ "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }) }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let file = perox_forms::parse(&text);
+                let path = widget_path(&file, inv.str_arg("widget")?)?;
+                let edits = perox_forms::edit::remove_widget(&text, &path).map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "removed": path_key(&path) }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.move_widget", "Move Widget", Access::Edit)
+                .description("Moves a widget to child position `index` of `parent` (positions as before the move).")
+                .params(path_schema(json!({
+                    "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "parent": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "index": { "type": "integer", "minimum": 0 }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let file = perox_forms::parse(&text);
+                let from = widget_path(&file, inv.str_arg("widget")?)?;
+                let parent = widget_path(&file, inv.str_arg("parent")?)?;
+                let index = opt_usize(inv, "index").unwrap_or(usize::MAX);
+                let edits = perox_forms::edit::move_widget(&text, &from, &parent, index).map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "ok": true }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.set_handler", "Set Event Handler", Access::Edit)
+                .description("Wires a widget event (clicked, changed, submitted, toggled, activated) to a handler method name, or unwires it when method is null. The method becomes part of the generated <Form>Handlers trait.")
+                .params(path_schema(json!({
+                    "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "event": { "type": "string" },
+                    "method": { "type": ["string", "null"] }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let file = perox_forms::parse(&text);
+                let path = widget_path(&file, inv.str_arg("widget")?)?;
+                let event = inv.str_arg("event")?;
+                let edits = match inv.args["method"].as_str() {
+                    Some(m) => perox_forms::edit::set_handler(&text, &path, event, m),
+                    None => perox_forms::edit::remove_handler(&text, &path, event),
+                }
+                .map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "ok": true }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.select", "Select Widget", Access::Read)
+                .description("Shows a form in the designer with a widget selected (for screenshots and pointing things out).")
+                .params(path_schema(json!({ "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }) }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let file = perox_forms::parse(&text);
+                let path = widget_path(&file, inv.str_arg("widget")?)?;
+                if let Some(doc) = s.docs.get_mut(id) {
+                    doc.design_view = true;
+                    if let Some(d) = doc.designer.as_mut() {
+                        d.selected = Some(path.clone());
+                    }
+                }
+                Ok(json!({ "selected": path_key(&path) }))
+            },
+        ),
         // ── projects ──
         (
             CommandSpec::new("project.open", "Open Project", Access::Edit)
@@ -830,6 +986,133 @@ pub fn apply_workspace_edit(s: &mut AppState, edit: &Value) -> usize {
         n += 1;
     }
     n
+}
+
+/// Opens a `.pxui` file (keeping the current view) and returns it with its text.
+fn form_text(s: &mut AppState, inv: &Invocation) -> Result<(DocId, String), CommandError> {
+    let path = resolve(s, inv, "path")?;
+    if !crate::docs::is_form(&path) {
+        return Err(err("Not a .pxui form."));
+    }
+    let id = open_file(s, &path, None, None)?;
+    let text = s
+        .docs
+        .get(id)
+        .map(|d| d.editor.core.text())
+        .unwrap_or_default();
+    Ok((id, text))
+}
+
+fn apply_form_edits(s: &mut AppState, id: DocId, edits: Vec<perox_forms::edit::TextEdit>) {
+    if let Some(doc) = s.docs.get_mut(id) {
+        let edits: Vec<_> = edits.into_iter().map(|e| (e.range, e.text)).collect();
+        doc.editor.apply_byte_edits(&edits);
+    }
+}
+
+/// `#0.1` for a path; `#` is the root.
+fn path_key(path: &[usize]) -> String {
+    let parts: Vec<String> = path.iter().map(usize::to_string).collect();
+    format!("#{}", parts.join("."))
+}
+
+/// A widget id or `#0.1` path.
+fn widget_path(file: &perox_forms::File, w: &str) -> Result<Vec<usize>, CommandError> {
+    let path = if let Some(rest) = w.strip_prefix('#') {
+        rest.split('.')
+            .filter(|p| !p.is_empty())
+            .map(|p| {
+                p.parse::<usize>()
+                    .map_err(|_| err(format!("`{w}` isn't a path like #0.1")))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        file.find(w)
+            .ok_or_else(|| err(format!("No widget named `{w}`.")))?
+    };
+    file.at(&path)
+        .ok_or_else(|| err(format!("Nothing at `{w}`.")))?;
+    Ok(path)
+}
+
+fn form_json(el: &perox_forms::Element, path: &mut Vec<usize>) -> Value {
+    let props: serde_json::Map<String, Value> = el
+        .props
+        .iter()
+        .map(|p| (p.name.clone(), Value::String(p.value.to_source())))
+        .collect();
+    let handlers: serde_json::Map<String, Value> = el
+        .handlers
+        .iter()
+        .map(|h| (h.event.clone(), Value::String(h.method.clone())))
+        .collect();
+    let mut children = Vec::new();
+    for (i, c) in el.children.iter().enumerate() {
+        path.push(i);
+        children.push(form_json(c, path));
+        path.pop();
+    }
+    json!({
+        "path": path_key(path),
+        "kind": el.kind,
+        "id": el.id,
+        "props": props,
+        "handlers": handlers,
+        "children": children,
+    })
+}
+
+/// Finds `impl <form>Handlers for …` in the project, opens it at `method`, adding the
+/// method if needed.
+fn open_handler(s: &mut AppState, form: &str, method: &str) -> Result<Value, CommandError> {
+    let trait_name = format!("{form}Handlers");
+    let text_of = |s: &AppState, p: &Path| match s.docs.by_path(p).and_then(|id| s.docs.get(id)) {
+        Some(d) => Some(d.editor.core.text()),
+        None => std::fs::read_to_string(p).ok(),
+    };
+    let root = s
+        .project
+        .as_ref()
+        .map(|p| p.root.clone())
+        .ok_or_else(|| err("No project is open."))?;
+    // `files` is relative to the project root.
+    let found = s
+        .files
+        .iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "rs"))
+        .map(|p| root.join(p))
+        .find_map(|p| {
+            let text = text_of(s, &p)?;
+            let body = crate::code_behind::find_impl(&text, &trait_name)?;
+            Some((p, text, body))
+        });
+    let Some((path, text, body)) = found else {
+        return Err(err(format!(
+            "No `impl {trait_name} for …` in this project. Add one to your code (see examples/word-counter), then try again."
+        )));
+    };
+    let line_of = |t: &str, off: usize| t[..off].matches('\n').count() + 1;
+    if let Some(at) = crate::code_behind::find_method(&text, body.clone(), method) {
+        open_file(s, &path, Some(line_of(&text, at)), None)?;
+        return Ok(json!({ "path": rel(s, &path), "line": line_of(&text, at), "added": false }));
+    }
+    let (at, insert, cursor) = crate::code_behind::new_method(&text, body, form, method);
+    let id = open_file(s, &path, None, None)?;
+    if let Some(doc) = s.docs.get_mut(id) {
+        doc.editor.apply_byte_edits(&[(at..at, insert.clone())]);
+        let target = at + cursor;
+        let mut new_text = text.clone();
+        new_text.insert_str(at, &insert);
+        let line = line_of(&new_text, target);
+        let col = new_text[..target]
+            .rsplit('\n')
+            .next()
+            .map_or(0, |l| l.chars().count());
+        doc.editor.goto(line - 1, col);
+        doc.editor.focus_requested = true;
+        return Ok(json!({ "path": rel(s, &path), "line": line, "added": true }));
+    }
+    Ok(json!({ "path": rel(s, &path), "added": true }))
 }
 
 /// The terminal, started in the project folder (or home) on first use.

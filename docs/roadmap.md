@@ -50,13 +50,24 @@ tool for long calls; the `peroxide mcp` stdio shim.
 **Done when:** you can comfortably write, build and run a multi-file Rust project in PeroxIDE.
 ✅ Done 2026-11-17.
 
-### Phase 2: forms ← *next*
+### Phase 2: forms ← *now*
 `.pxui` parser, formatter and interpreter; `perox-ui` runtime with taffy layouts and core
 widgets; designer canvas, palette, object tree, property inspector; code generation and
 handler hookup; live preview.
 
 **Done when:** you can drag out a window with laid-out widgets, wire a button to Rust code,
 hand-edit the `.pxui`, and run it.
+
+| Part | State |
+|---|---|
+| `.pxui` parser with spans, text-preserving edits | ✅ |
+| `perox-ui` runtime: 18 widgets, flex/grid layouts, events | ✅ |
+| Code generation, `build.rs` helper, `include_form!` | ✅ |
+| Designer: palette drag-drop, move, resize, object tree, inspector, events | ✅ |
+| Go to handler (adds the method to the code-behind) | ✅ |
+| `designer.*` MCP commands for agents | ✅ |
+| New Project → GUI app template | next |
+| `.pxui` formatter, multi-select, copy/paste of widgets | later in the phase |
 
 ### Phase 3: pro tooling
 Debugger (lldb-dap on macOS/Linux; on Windows, lldb-dap or cppvsdbg, decided by ADR), test

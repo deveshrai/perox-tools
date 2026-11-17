@@ -140,16 +140,25 @@ struct Builder<'a> {
     tree: TaffyTree<Leaf>,
     entries: Vec<Entry>,
     values: &'a Values,
+    /// Designer: empty layouts get a minimum size so you can drop into them.
+    design: bool,
     style: &'a egui::Style,
     painter: &'a egui::Painter,
 }
 
 /// Lay out `root` in `available` points. The root fills it; content may be larger.
-pub(crate) fn build(ui: &egui::Ui, root: &Element, values: &Values, available: Vec2) -> Built {
+pub(crate) fn build(
+    ui: &egui::Ui,
+    root: &Element,
+    values: &Values,
+    available: Vec2,
+    design: bool,
+) -> Built {
     let mut b = Builder {
         tree: TaffyTree::new(),
         entries: Vec::new(),
         values,
+        design,
         style: ui.style(),
         painter: ui.painter(),
     };
@@ -298,6 +307,19 @@ impl Builder<'_> {
                     children.extend(self.element(child, path, Some(index), Some((flow, fills))));
                     path.pop();
                 }
+            }
+            if self.design && children.is_empty() {
+                let min = |d: LengthPercentageAuto, n: f32| {
+                    if d == LengthPercentageAuto::auto() {
+                        length(n)
+                    } else {
+                        d
+                    }
+                };
+                style.min_size = Size {
+                    width: min(style.min_size.width, 48.0),
+                    height: min(style.min_size.height, 28.0),
+                };
             }
             let node = self.tree.new_with_children(style, &children).ok()?;
             self.entries[index].node = node;

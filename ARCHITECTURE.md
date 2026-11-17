@@ -55,7 +55,7 @@ One page. The decisions behind each part are in [docs/adr](docs/adr/).
 | ✅ `perox-icons` | Lucide SVG icons, tinted to the theme ([ADR 0010](docs/adr/0010-icons.md)) | MIT/Apache + ISC |
 | ✅ `perox-forms` | `.pxui` parser with exact spans, text-preserving designer edits, code generation + `build.rs` helper | MIT/Apache |
 | ✅ `perox-ui` | **Runtime inside user apps** and the designer canvas: widgets, taffy layouts, events | MIT/Apache |
-| ⏳ `perox-designer` | Canvas, inspector, palette, layout tools | GPL |
+| ✅ `perox-designer` | Form designer: canvas, palette, object tree, inspector. Gestures become `.pxui` text edits | GPL |
 | ⏳ `perox-preview` | Out-of-process form renderer | GPL |
 | ✅ `perox-mcp` | MCP server: Streamable HTTP, token, sessions, four tools over the bus. Later: `peroxide mcp` stdio shim | GPL |
 | ⏳ `perox-package` | .app/DMG bundles, signing, notarization; later APK/MSI/AppImage | GPL |

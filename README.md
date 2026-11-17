@@ -9,10 +9,34 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phase 1 (a real Rust IDE) is done; Phase 2 (forms) is next.** Open a Cargo project, edit with
-> rust-analyzer completion, hover, go to definition and live errors; build, run and test.
-> Claude Code can drive all of it over MCP ([docs/mcp.md](docs/mcp.md)).
-> See [docs/roadmap.md](docs/roadmap.md).
+> Status: **Phase 1 (a real Rust IDE) is done. Phase 2 (forms) is nearly done:** the form
+> designer, the `perox-ui` runtime and code generation work end to end. A "New GUI app"
+> template is next. See [docs/roadmap.md](docs/roadmap.md).
+
+## Screenshots
+
+**The form designer.** Drag widgets from the palette onto the form. Layouts work like
+Qt's. Edit properties and events in the inspector. Every change is a small edit to the
+`.pxui` text, so Undo, the Source view and git diffs all agree.
+
+![The PeroxIDE form designer](docs/screenshots/designer.png)
+
+**The code-behind, with rust-analyzer.** The designer generates typed accessors
+(`ui.result()`) and a handlers trait. Completion, inlay hints and hover work on them like
+any Rust code. "Go to handler" in the inspector adds the method for you.
+
+![Completion on generated form accessors](docs/screenshots/complete.png)
+
+**What runs.** The same runtime draws the designer canvas and your app, so what you
+design is what ships. Left: [examples/word-counter](examples/word-counter). Right:
+`cargo run -p perox-ui --example gallery`.
+
+<p>
+  <img src="docs/screenshots/word-counter-app.png" alt="The word counter example app" width="48%">
+  <img src="docs/screenshots/widget-gallery.png" alt="The perox-ui widget gallery" width="48%">
+</p>
+
+Claude Code can drive all of it, the designer included, over MCP ([docs/mcp.md](docs/mcp.md)).
 
 ## Build and run
 
@@ -50,6 +74,11 @@ crates/perox-editor/  the code editor (GPL-3.0-or-later)
 crates/perox-lsp/   the rust-analyzer client (GPL-3.0-or-later)
 crates/perox-project/ Cargo projects and the file tree (GPL-3.0-or-later)
 crates/perox-build/ running cargo (GPL-3.0-or-later)
+crates/perox-designer/ the form designer (GPL-3.0-or-later)
+crates/perox-forms/ the .pxui language and code generation (MIT OR Apache-2.0)
+crates/perox-ui/    the form runtime that ships in your app (MIT OR Apache-2.0)
+crates/perox-icons/, perox-terminal/  icons and the terminal
+examples/           apps built with PeroxIDE
 docs/               ADRs, roadmap, spikes
 toolchain-set/      the pinned toolchain + bundled crates, and the check that proves them
 ```

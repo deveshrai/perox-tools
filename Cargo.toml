@@ -23,6 +23,7 @@ perox-icons = { path = "crates/perox-icons" }
 perox-terminal = { path = "crates/perox-terminal" }
 perox-forms = { path = "crates/perox-forms" }
 perox-ui = { path = "crates/perox-ui" }
+perox-designer = { path = "crates/perox-designer" }
 eframe = "=0.37.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

@@ -4006,6 +4006,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "perox-designer"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "perox-forms",
+ "perox-icons",
+ "perox-ui",
+]
+
+[[package]]
 name = "perox-editor"
 version = "0.1.0"
 dependencies = [
@@ -4131,7 +4141,9 @@ dependencies = [
  "notify",
  "perox-build",
  "perox-core",
+ "perox-designer",
  "perox-editor",
+ "perox-forms",
  "perox-icons",
  "perox-lsp",
  "perox-mcp",

@@ -211,6 +211,11 @@ impl Popup {
                 if it.deprecated {
                     s -= 15;
                 }
+                // Postfix snippets (`ref`, `dbg`, `if`) only when you mean them: after
+                // `ui.r` you want `result()`, not `&ui`.
+                if it.kind == Kind::Snippet && it.filter_text != typed {
+                    s -= 4;
+                }
                 // Names already in scope beat ones that need an import; platform intrinsics
                 // (`core::arch`) are almost never what's meant.
                 if let Some(detail) = &it.label_detail
@@ -348,6 +353,19 @@ mod tests {
         let mut p = Popup::new(vec![intrinsic, vec_macro], 0, false);
         p.filter("ve", &Recency::default());
         assert_eq!(p.current().unwrap().label, "vec![…]");
+    }
+
+    #[test]
+    fn methods_beat_postfix_snippets_unless_typed_in_full() {
+        let mut snip = item("ref", "ffffff00");
+        snip.kind = Kind::Snippet;
+        let method = item("result()", "ffffff01");
+        let mut p = Popup::new(vec![snip.clone(), method.clone()], 0, false);
+        p.filter("r", &Recency::default());
+        assert_eq!(p.current().unwrap().label, "result()");
+        let mut p = Popup::new(vec![snip, method], 0, false);
+        p.filter("ref", &Recency::default());
+        assert_eq!(p.current().unwrap().label, "ref");
     }
 
     #[test]

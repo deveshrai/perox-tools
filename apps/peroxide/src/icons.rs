@@ -32,6 +32,11 @@ pub fn for_command(id: &str) -> Icon {
         "git.diff" => Icon::FileDiff,
         "git.commit" => Icon::GitCommitHorizontal,
         "help.about" | "app.info" => Icon::Info,
+        "designer.open_handler" => Icon::ArrowRight,
+        "designer.add_widget" => Icon::Plus,
+        "designer.remove_widget" => Icon::Trash2,
+        "designer.set_handler" => Icon::Zap,
+        _ if id.starts_with("designer.") => Icon::PencilRuler,
         _ if id.starts_with("mcp.") => Icon::Settings2,
         _ => Icon::ListChecks,
     }

@@ -6,6 +6,7 @@ use egui_tiles::{Container, SimplificationOptions, Tile, TileId, Tiles, Tree, Ui
 use perox_editor::Severity;
 use perox_editor::completion::Recency;
 use perox_editor::view::{self, Request};
+use perox_icons::Icon;
 use serde_json::{Value, json};
 
 use crate::commands::Activity;
@@ -207,6 +208,15 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
             },
             Pane::Editor(id) => {
                 let id = *id;
+                if let Some(doc) = self.docs.get_mut(id)
+                    && doc.designer.is_some()
+                {
+                    form_header(ui, doc);
+                    if doc.design_view {
+                        self.design(ui, id);
+                        return UiResponse::None;
+                    }
+                }
                 if let Some(doc) = self.docs.get_mut(id) {
                     let out = view::show(ui, &mut doc.editor, self.recency, ("editor", id.0));
                     for r in out.requests {
@@ -246,7 +256,69 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
     }
 }
 
+/// The Design / Source switch above a form.
+fn form_header(ui: &mut egui::Ui, doc: &mut crate::docs::OpenDoc) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (design, icon, label, tip) in [
+                    (true, Icon::PencilRuler, "Design", "Edit the form visually"),
+                    (false, Icon::Code, "Source", "Edit the .pxui text"),
+                ] {
+                    let b = egui::Button::selectable(
+                        doc.design_view == design,
+                        (icon.image(ui), label),
+                    );
+                    if ui.add(b).on_hover_text(tip).clicked() {
+                        doc.design_view = design;
+                        if !design {
+                            doc.editor.focus_requested = true;
+                        }
+                    }
+                }
+            });
+        });
+    ui.separator();
+}
+
 impl PaneUi<'_> {
+    /// The form designer for a `.pxui` document. Its edits go into the document.
+    fn design(&mut self, ui: &mut egui::Ui, id: DocId) {
+        let Some(doc) = self.docs.get_mut(id) else {
+            return;
+        };
+        let Some(designer) = doc.designer.as_mut() else {
+            return;
+        };
+        let source = doc.editor.core.text();
+        let stem = doc
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.any_pressed()) {
+            self.focused = Some(id);
+        }
+        let actions = designer.show(ui, &source, &stem);
+        for action in actions {
+            match action {
+                perox_designer::Action::Edit(edits) => {
+                    let edits: Vec<_> = edits.into_iter().map(|e| (e.range, e.text)).collect();
+                    doc.editor.apply_byte_edits(&edits);
+                }
+                perox_designer::Action::Undo => doc.editor.undo(),
+                perox_designer::Action::Redo => doc.editor.redo(),
+                perox_designer::Action::OpenHandler { form, method } => {
+                    self.actions.push((
+                        "designer.open_handler",
+                        json!({ "form": form, "method": method }),
+                    ));
+                }
+            }
+        }
+    }
+
     fn explorer(&mut self, ui: &mut egui::Ui) {
         let Some(tree) = self.tree else {
             ui.weak("No project open.");

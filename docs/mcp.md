@@ -58,7 +58,14 @@ Commands so far, by area: `project.*` (open, info, files), `file.*` (open, read,
 save, close), `editor.*` (replace, type, completions, accept_completion, cursor, goto_line,
 references, rename, code_actions, apply_code_action, format), `build.*`
 (check, build, run, test, clippy, stop, status, output), `problems.list`, `lsp.*`,
-`terminal.run`, `terminal.read`, `git.*` (status, diff, commit), `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
+`terminal.run`, `terminal.read`, `git.*` (status, diff, commit), `designer.*` (tree,
+add_widget, set_property, remove_widget, move_widget, set_handler, select, open_handler),
+`view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
+
+Designer commands edit the open `.pxui` document the same way the designer does. They
+take widgets by id or by path (`#0.1`; `#` is the window), and values as `.pxui` source.
+So text is `"\"Save\""`, and numbers, sizes and colours are `12`, `640 x 480` and `#ff8800`.
+Try `designer.tree`, then `designer.select` plus `view.screenshot` to see the result.
 Lines and columns are 1-based. Each new IDE feature adds commands, and agents can use them
 straight away
 ([ADR 0002](adr/0002-command-bus.md)). Commands that only make sense with a person present,
