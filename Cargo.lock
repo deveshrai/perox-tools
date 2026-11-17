@@ -7371,6 +7371,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "word-counter"
+version = "0.1.0"
+dependencies = [
+ "perox-forms",
+ "perox-ui",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

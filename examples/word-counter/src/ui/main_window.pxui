@@ -1,0 +1,20 @@
+// The main window. Open it in PeroxIDE's designer, or edit it by hand.
+Window main_window {
+    title: "Word Counter"
+    size: 480 x 320
+
+    VBox {
+        Label { text: "Paste or type some text:" }
+        TextEdit input {
+            rows: 6
+            placeholder: "Text to count"
+            on changed: input_changed
+        }
+        HBox {
+            CheckBox ignore_numbers { text: "Ignore numbers"; on toggled: input_changed }
+            Spacer {}
+            Button clear { text: "Clear"; on clicked: clear_clicked }
+        }
+        Label result { text: "0 words" bold: true }
+    }
+}

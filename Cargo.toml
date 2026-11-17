@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "toolchain-set/check"]
+members = ["crates/*", "apps/*", "examples/*", "toolchain-set/check"]
 # The set check is heavy; build it explicitly (`cargo build -p perox-set-check`).
-default-members = ["crates/*", "apps/*"]
+default-members = ["crates/*", "apps/*", "examples/*"]
 
 [workspace.package]
 version = "0.1.0"

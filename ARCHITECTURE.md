@@ -53,7 +53,7 @@ One page. The decisions behind each part are in [docs/adr](docs/adr/).
 | ✅ `perox-project` | Cargo projects and the file tree | GPL |
 | ✅ `perox-terminal` | Integrated terminal (alacritty_terminal + egui) | GPL |
 | ✅ `perox-icons` | Lucide SVG icons, tinted to the theme ([ADR 0010](docs/adr/0010-icons.md)) | MIT/Apache + ISC |
-| ⏳ `perox-forms` | `.pxui` parser (lossless syntax tree), formatter, code generation | MIT/Apache |
+| ✅ `perox-forms` | `.pxui` parser with exact spans, text-preserving designer edits, code generation + `build.rs` helper | MIT/Apache |
 | ✅ `perox-ui` | **Runtime inside user apps** and the designer canvas: widgets, taffy layouts, events | MIT/Apache |
 | ⏳ `perox-designer` | Canvas, inspector, palette, layout tools | GPL |
 | ⏳ `perox-preview` | Out-of-process form renderer | GPL |
