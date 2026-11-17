@@ -119,6 +119,7 @@ pub fn initialize_params(root: &Path) -> Value {
                 "references": {},
                 "rename": { "prepareSupport": false },
                 "formatting": {},
+                "inlayHint": { "resolveSupport": { "properties": [] } },
                 "codeAction": {
                     "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
                         "", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports"
@@ -153,6 +154,13 @@ pub fn initialize_params(root: &Path) -> Value {
             },
             "imports": { "granularity": { "group": "module" }, "prefix": "plain" },
             "semanticHighlighting": { "strings": { "enable": false } },
+            "inlayHints": {
+                "typeHints": { "enable": true, "hideClosureInitialization": true },
+                "parameterHints": { "enable": true },
+                "chainingHints": { "enable": true },
+                "closingBraceHints": { "enable": false },
+                "maxLength": 25
+            },
             // Off: rust-analyzer's experimental diagnostics report false errors (e.g. an
             // "unresolved import" on `std` in a crate that compiles). Type errors come from
             // the compiler check on save instead.

@@ -59,6 +59,10 @@ pub struct Edited {
     pub start_byte: usize,
     pub old_end_byte: usize,
     pub new_end_byte: usize,
+    /// Char offsets, in the same coordinates (for moving decorations through edits).
+    pub start_char: usize,
+    pub old_end_char: usize,
+    pub new_end_char: usize,
     /// tree-sitter points: (row, byte column).
     pub start_point: (usize, usize),
     pub old_end_point: (usize, usize),
@@ -344,6 +348,9 @@ impl Document {
             start_byte,
             old_end_byte,
             new_end_byte: start_byte + text.len(),
+            start_char: start,
+            old_end_char: end,
+            new_end_char: new_end,
             start_point,
             old_end_point,
             new_end_point: self.point_of(new_end),
@@ -392,6 +399,23 @@ pub fn map_pos(changes: &[Change], pos: usize, after_insert: bool) -> usize {
         delta += len - (e - s) as isize;
     }
     (pos as isize + delta).max(0) as usize
+}
+
+/// Moves a char position through applied edits (in order). `None` if the text it
+/// pointed into was replaced.
+pub fn map_through(edits: &[Edited], pos: usize) -> Option<usize> {
+    let mut p = pos;
+    for e in edits {
+        if p < e.start_char || (p == e.start_char && e.old_end_char > e.start_char) {
+            continue;
+        }
+        if p >= e.old_end_char {
+            p = p + e.new_end_char - e.old_end_char;
+        } else {
+            return None;
+        }
+    }
+    Some(p)
 }
 
 #[cfg(test)]
@@ -521,6 +545,27 @@ mod tests {
         assert!(d.is_dirty());
         d.redo().unwrap();
         assert!(!d.is_dirty());
+    }
+
+    #[test]
+    fn map_through_edits() {
+        let mut d = Document::new("let x = 1;");
+        let e = d.apply(
+            vec![Change::insert(4, "mut ")],
+            &sels(0),
+            sels(0),
+            EditKind::Other,
+        );
+        assert_eq!(map_through(&e, 5), Some(9), "after the insert: shifts");
+        assert_eq!(map_through(&e, 2), Some(2), "before: stays");
+        let e = d.apply(
+            vec![Change::replace(8..13, "y")],
+            &sels(0),
+            sels(0),
+            EditKind::Other,
+        );
+        assert_eq!(map_through(&e, 10), None, "inside replaced text: gone");
+        assert_eq!(map_through(&e, 13), Some(9));
     }
 
     #[test]

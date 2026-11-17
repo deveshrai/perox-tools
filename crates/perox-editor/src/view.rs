@@ -56,6 +56,17 @@ pub struct Decorations {
     /// Hover text for the char position it was requested at.
     pub hover: Option<(usize, String)>,
     pub signature: Option<Signature>,
+    /// Inlay hints (types, parameter names), sorted by position.
+    pub inlays: Vec<Inlay>,
+}
+
+/// Text drawn inline that isn't part of the document, like `: Vec<u8>` after a binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Inlay {
+    /// Char index the hint is drawn before.
+    pub at: usize,
+    /// What's drawn, padding included.
+    pub label: String,
 }
 
 /// A request for the language server.
@@ -187,10 +198,32 @@ impl EditorState {
         if let Some(s) = &mut self.syntax {
             s.update(&edits, self.core.doc.rope());
         }
-        // Positions in old decorations are stale: drop semantic colours and hover (the
-        // server sends fresh ones); shift diagnostics roughly by keeping them in place.
-        self.deco.semantic.clear();
-        self.deco.hover = None;
+        // Move decorations through the edits so nothing flickers or drifts while the
+        // server works on fresh ones. Anything inside replaced text is dropped.
+        use crate::text::map_through;
+        let d = &mut self.deco;
+        d.semantic.retain_mut(|(r, _)| {
+            match (map_through(&edits, r.start), map_through(&edits, r.end)) {
+                (Some(a), Some(b)) if a < b => {
+                    *r = a..b;
+                    true
+                }
+                _ => false,
+            }
+        });
+        d.inlays.retain_mut(|i| match map_through(&edits, i.at) {
+            Some(a) => {
+                i.at = a;
+                true
+            }
+            None => false,
+        });
+        for diag in &mut d.diagnostics {
+            let a = map_through(&edits, diag.range.start).unwrap_or(diag.range.start);
+            let b = map_through(&edits, diag.range.end).unwrap_or(a);
+            diag.range = a..b.max(a);
+        }
+        d.hover = None;
         self.lsp_edits.extend(edits);
     }
 
@@ -262,23 +295,61 @@ struct Metrics {
     gutter_w: f32,
 }
 
+/// Inlays on one line: (char column, width in cells).
+type LineInlays = Vec<(usize, usize)>;
+
+fn inlays_on(st: &EditorState, line: usize) -> LineInlays {
+    if st.deco.inlays.is_empty() {
+        return Vec::new();
+    }
+    let rope = st.core.doc.rope();
+    let start = rope.line_to_char(line);
+    let end = start + st.core.doc.line_len(line);
+    st.deco
+        .inlays
+        .iter()
+        .filter(|i| i.at >= start && i.at <= end)
+        .map(|i| (i.at - start, i.label.chars().count()))
+        .collect()
+}
+
+/// Display cell of `col`: tabs widened, inlays before it added. With `after_inlay`, an
+/// inlay exactly at `col` counts too (where the char itself is drawn); without, it doesn't
+/// (where the cursor sits).
+fn cell(line: &str, inlays: &[(usize, usize)], col: usize, after_inlay: bool) -> usize {
+    display_col(line, col)
+        + inlays
+            .iter()
+            .filter(|(c, _)| *c < col || (after_inlay && *c == col))
+            .map(|(_, w)| w)
+            .sum::<usize>()
+}
+
+/// The char column under display cell `dcol`; a click on an inlay lands where it's drawn.
+fn col_at_cell(line: &str, inlays: &[(usize, usize)], dcol: usize) -> usize {
+    let n = line.chars().count();
+    for col in 0..=n {
+        let left = cell(line, inlays, col, true);
+        if col == n {
+            return n;
+        }
+        let w = if line.chars().nth(col) == Some('\t') {
+            TAB_WIDTH
+        } else {
+            1
+        };
+        if dcol <= left + w / 2 && dcol < left + w || dcol < left {
+            return col;
+        }
+    }
+    n
+}
+
 fn display_col(line: &str, col: usize) -> usize {
     line.chars()
         .take(col)
         .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
         .sum()
-}
-
-fn col_from_display(line: &str, dcol: usize) -> usize {
-    let mut d = 0;
-    for (i, c) in line.chars().enumerate() {
-        let w = if c == '\t' { TAB_WIDTH } else { 1 };
-        if d + w / 2 >= dcol && w > 1 || d >= dcol {
-            return i;
-        }
-        d += w;
-    }
-    line.chars().count()
 }
 
 /// Shows the editor. Call once per frame for the visible editor.
@@ -343,7 +414,13 @@ pub fn show(
         let head = st.core.sels.primary().head;
         let pos = st.core.doc.pos_of(head);
         let y = pos.line as f32 * m.line_h;
-        let x = display_col(&st.core.doc.line_text(pos.line), pos.col) as f32 * m.char_w;
+        let x = cell(
+            &st.core.doc.line_text(pos.line),
+            &inlays_on(st, pos.line),
+            pos.col,
+            false,
+        ) as f32
+            * m.char_w;
         let mem_offset =
             egui::scroll_area::State::load(ui.ctx(), ui.make_persistent_id(id.with("scroll")))
                 .map(|s| s.clamped_offset())
@@ -383,7 +460,7 @@ pub fn show(
             let dcol = ((p.x - text_x) / m.char_w).round().max(0.0) as usize;
             st.core.doc.char_of(crate::text::Pos {
                 line,
-                col: col_from_display(&text, dcol),
+                col: col_at_cell(&text, &inlays_on(st, line), dcol),
             })
         };
 
@@ -411,7 +488,14 @@ pub fn show(
         let head = st.core.sels.primary().head;
         let hp = st.core.doc.pos_of(head);
         let cursor_pos = Pos2::new(
-            text_x + display_col(&st.core.doc.line_text(hp.line), hp.col) as f32 * m.char_w,
+            text_x
+                + cell(
+                    &st.core.doc.line_text(hp.line),
+                    &inlays_on(st, hp.line),
+                    hp.col,
+                    false,
+                ) as f32
+                    * m.char_w,
             origin.y + hp.line as f32 * m.line_h,
         );
         if has_focus {
@@ -486,7 +570,19 @@ fn paint(
     let rope = doc.rope();
     let text_x = origin.x + m.gutter_w;
     let line_y = |l: usize| origin.y + l as f32 * m.line_h;
-    let x_of = |text: &str, col: usize| text_x + display_col(text, col) as f32 * m.char_w;
+    let inlay_map: std::collections::HashMap<usize, LineInlays> = lines
+        .clone()
+        .map(|l| (l, inlays_on(st, l)))
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    let none: LineInlays = Vec::new();
+    let inl = |l: usize| inlay_map.get(&l).unwrap_or(&none);
+    // x of a char (drawn after any inlay at its column) and of a cursor (before it).
+    let char_x =
+        |l: usize, text: &str, col: usize| text_x + cell(text, inl(l), col, true) as f32 * m.char_w;
+    let cursor_x = |l: usize, text: &str, col: usize| {
+        text_x + cell(text, inl(l), col, false) as f32 * m.char_w
+    };
     let primary_line = doc.pos_of(st.core.sels.primary().head).line;
 
     // Current line.
@@ -514,8 +610,8 @@ fn paint(
             let y = line_y(l);
             painter.rect_filled(
                 Rect::from_min_max(
-                    Pos2::new(x_of(&text, c0), y),
-                    Pos2::new(x_of(&text, c1) + extra, y + m.line_h),
+                    Pos2::new(char_x(l, &text, c0), y),
+                    Pos2::new(cursor_x(l, &text, c1) + extra, y + m.line_h),
                 ),
                 2.0,
                 theme.selection,
@@ -537,8 +633,8 @@ fn paint(
                 let c1 = if l == b.line { b.col } else { doc.line_len(l) };
                 let y = line_y(l);
                 let rect = Rect::from_min_max(
-                    Pos2::new(x_of(&text, c0), y),
-                    Pos2::new(x_of(&text, c1), y + m.line_h),
+                    Pos2::new(char_x(l, &text, c0), y),
+                    Pos2::new(cursor_x(l, &text, c1), y + m.line_h),
                 );
                 painter.rect_filled(
                     rect,
@@ -559,7 +655,7 @@ fn paint(
             let pos = doc.pos_of(p);
             if lines.contains(&pos.line) {
                 let text = doc.line_text(pos.line);
-                let x = x_of(&text, pos.col);
+                let x = char_x(pos.line, &text, pos.col);
                 let y = line_y(pos.line);
                 painter.rect_stroke(
                     Rect::from_min_size(Pos2::new(x, y), Vec2::new(m.char_w, m.line_h)),
@@ -593,7 +689,18 @@ fn paint(
                 line_char,
                 text.chars().count(),
             );
-            let job = layout_line(&text, &sections, &m.font, theme);
+            let line_inlays: Vec<(usize, String)> = if st.deco.inlays.is_empty() {
+                Vec::new()
+            } else {
+                let end = line_char + text.chars().count();
+                st.deco
+                    .inlays
+                    .iter()
+                    .filter(|i| i.at >= line_char && i.at <= end)
+                    .map(|i| (i.at - line_char, i.label.clone()))
+                    .collect()
+            };
+            let job = layout_line(&text, &sections, &line_inlays, &m.font, theme);
             let galley = ui.fonts_mut(|f| f.layout_job(job));
             painter.galley(Pos2::new(text_x, line_y(l)), galley, theme.text);
         }
@@ -616,7 +723,13 @@ fn paint(
                 c1 = c0 + 1;
             }
             let y = line_y(l) + m.line_h - 2.0;
-            squiggle(painter, x_of(&text, c0), x_of(&text, c1), y, color);
+            squiggle(
+                painter,
+                char_x(l, &text, c0),
+                cursor_x(l, &text, c1),
+                y,
+                color,
+            );
         }
     }
 
@@ -626,7 +739,7 @@ fn paint(
             let p = doc.pos_of(sel.head);
             if lines.contains(&p.line) {
                 let text = doc.line_text(p.line);
-                let x = x_of(&text, p.col);
+                let x = cursor_x(p.line, &text, p.col);
                 painter.rect_filled(
                     Rect::from_min_size(
                         Pos2::new(x - 1.0, line_y(p.line)),
@@ -723,52 +836,55 @@ fn overlay_semantic(
     }
 }
 
+// `col` walks one past the last char too, to place inlays at the end of the line.
+#[allow(clippy::needless_range_loop)]
 fn layout_line(
     text: &str,
     sections: &[(Range<usize>, Hl)],
+    inlays: &[(usize, String)],
     font: &FontId,
     theme: &Theme,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
     let chars: Vec<char> = text.chars().collect();
-    let mut push = |s: &str, color: Color32, italic: bool| {
-        if s.is_empty() {
-            return;
-        }
-        let shown = s.replace('\t', &" ".repeat(TAB_WIDTH));
-        job.append(
-            &shown,
-            0.0,
-            TextFormat {
-                font_id: font.clone(),
-                color,
-                italics: italic,
-                ..Default::default()
-            },
-        );
-    };
-    let mut at = 0;
+    let mut style: Vec<Option<Hl>> = vec![None; chars.len()];
     for (r, hl) in sections {
-        if r.start > at {
-            push(
-                &chars[at..r.start].iter().collect::<String>(),
-                theme.text,
-                false,
-            );
+        let (a, b) = (r.start.min(chars.len()), r.end.min(chars.len()));
+        style[a..b.max(a)].fill(Some(*hl));
+    }
+    let fmt = |hl: Option<Hl>| TextFormat {
+        font_id: font.clone(),
+        color: hl.map_or(theme.text, |h| theme.color(h)),
+        italics: matches!(hl, Some(Hl::Comment | Hl::DocComment)),
+        ..Default::default()
+    };
+    let inlay_fmt = TextFormat {
+        font_id: font.clone(),
+        color: theme.inlay,
+        background: theme.inlay_bg,
+        ..Default::default()
+    };
+    let mut run = String::new();
+    let mut run_style: Option<Hl> = None;
+    let flush = |job: &mut LayoutJob, run: &mut String, st: Option<Hl>| {
+        if !run.is_empty() {
+            job.append(&run.replace('\t', &" ".repeat(TAB_WIDTH)), 0.0, fmt(st));
+            run.clear();
         }
-        let s: String = chars[r.start.min(chars.len())..r.end.min(chars.len())]
-            .iter()
-            .collect();
-        push(
-            &s,
-            theme.color(*hl),
-            matches!(hl, Hl::Comment | Hl::DocComment),
-        );
-        at = r.end;
+    };
+    for col in 0..=chars.len() {
+        for (_, label) in inlays.iter().filter(|(c, _)| *c == col) {
+            flush(&mut job, &mut run, run_style);
+            job.append(label, 0.0, inlay_fmt.clone());
+        }
+        let Some(&ch) = chars.get(col) else { break };
+        if style[col] != run_style {
+            flush(&mut job, &mut run, run_style);
+            run_style = style[col];
+        }
+        run.push(ch);
     }
-    if at < chars.len() {
-        push(&chars[at..].iter().collect::<String>(), theme.text, false);
-    }
+    flush(&mut job, &mut run, run_style);
     job
 }
 
@@ -1677,8 +1793,30 @@ mod tests {
     fn tabs_count_as_four_columns() {
         assert_eq!(display_col("\tab", 1), 4);
         assert_eq!(display_col("\tab", 3), 6);
-        assert_eq!(col_from_display("\tab", 5), 2);
-        assert_eq!(col_from_display("abc", 9), 3);
+        assert_eq!(col_at_cell("\tab", &[], 5), 2);
+        assert_eq!(col_at_cell("abc", &[], 9), 3);
+    }
+
+    #[test]
+    fn inlays_shift_chars_but_not_the_cursor_before_them() {
+        // `let x = 1;` with `: i32` (5 cells) drawn before col 5 (after `x`).
+        let line = "let x = 1;";
+        let inl = [(5, 5)];
+        assert_eq!(
+            cell(line, &inl, 5, false),
+            5,
+            "cursor right after x sits before the hint"
+        );
+        assert_eq!(
+            cell(line, &inl, 5, true),
+            10,
+            "the space after x is drawn after the hint"
+        );
+        assert_eq!(cell(line, &inl, 6, false), 11);
+        // Clicking on the hint puts the cursor where it's drawn; after it, on the next chars.
+        assert_eq!(col_at_cell(line, &inl, 7), 5);
+        assert_eq!(col_at_cell(line, &inl, 11), 6);
+        assert_eq!(col_at_cell(line, &inl, 2), 2);
     }
 
     #[test]

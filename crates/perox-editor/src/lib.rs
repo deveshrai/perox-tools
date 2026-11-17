@@ -14,4 +14,4 @@ pub mod view;
 pub use crate::core::EditorCore;
 pub use selection::{Selection, Selections};
 pub use text::{Change, Document, Edited, Pos};
-pub use view::{Decorations, Diagnostic, EditorState, Output, Request, Severity, Signature};
+pub use view::{Decorations, Diagnostic, EditorState, Inlay, Output, Request, Severity, Signature};

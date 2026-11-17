@@ -50,6 +50,10 @@ enum Pending {
         doc: DocId,
         version: i32,
     },
+    Inlays {
+        doc: DocId,
+        version: i32,
+    },
     References,
     Rename,
     CodeActions {
@@ -356,6 +360,8 @@ impl Lsp {
                 "textDocument/didSave",
                 json!({ "textDocument": { "uri": uri::from_path(&doc.path) } }),
             );
+            self.semantic_due
+                .insert(id, Instant::now() + Duration::from_millis(200));
         }
     }
 
@@ -553,6 +559,7 @@ impl Lsp {
                                 p,
                                 Pending::Completion { .. }
                                     | Pending::Semantic { .. }
+                                    | Pending::Inlays { .. }
                                     | Pending::Hover { .. }
                             ) {
                                 effects.push(Effect::Message(format!("rust-analyzer: {e}")));
@@ -642,7 +649,16 @@ impl Lsp {
                 }
             }
             "experimental/serverStatus" => {
+                let was = self.quiescent;
                 self.quiescent = params["quiescent"].as_bool().unwrap_or(true);
+                if self.quiescent && !was {
+                    // Finished (re)analysing: answers given while loading may have been
+                    // empty, so refresh colours and hints for every open file.
+                    let now = Instant::now();
+                    for id in self.opened.keys() {
+                        self.semantic_due.insert(*id, now);
+                    }
+                }
                 if params["health"].as_str() == Some("error")
                     && let Some(m) = params["message"].as_str()
                 {
@@ -757,6 +773,34 @@ impl Lsp {
                 let Some(d) = docs.get_mut(doc) else { return };
                 d.editor.deco.signature = signature(&v);
             }
+            Pending::Inlays { doc, version } => {
+                let Some(d) = docs.get_mut(doc) else { return };
+                if d.editor.core.doc.version() != version {
+                    return;
+                }
+                let mut inlays: Vec<perox_editor::Inlay> = v
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|h| {
+                        let label = match &h["label"] {
+                            Value::String(s) => s.clone(),
+                            Value::Array(parts) => {
+                                parts.iter().filter_map(|p| p["value"].as_str()).collect()
+                            }
+                            _ => String::new(),
+                        };
+                        let pad = |k: &str| if h[k] == true { " " } else { "" };
+                        perox_editor::Inlay {
+                            at: to_char(&d.editor, &h["position"], utf32),
+                            label: format!("{}{label}{}", pad("paddingLeft"), pad("paddingRight")),
+                        }
+                    })
+                    .filter(|i| !i.label.trim().is_empty())
+                    .collect();
+                inlays.sort_by_key(|i| i.at);
+                d.editor.deco.inlays = inlays;
+            }
             Pending::References => {
                 let locs = v
                     .as_array()
@@ -850,6 +894,21 @@ impl Lsp {
             let rid = ra.client.request(
                 "textDocument/semanticTokens/full",
                 json!({ "textDocument": { "uri": uri::from_path(&doc.path) } }),
+            );
+            let end = doc.editor.core.doc.len_chars();
+            let inlay_id = ra.client.request(
+                "textDocument/inlayHint",
+                json!({
+                    "textDocument": { "uri": uri::from_path(&doc.path) },
+                    "range": { "start": { "line": 0, "character": 0 }, "end": to_lsp(&doc.editor, end, ra.utf32) }
+                }),
+            );
+            self.pending.insert(
+                inlay_id,
+                Pending::Inlays {
+                    doc: id,
+                    version: doc.editor.core.doc.version(),
+                },
             );
             self.pending.insert(
                 rid,

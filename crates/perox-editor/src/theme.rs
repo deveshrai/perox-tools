@@ -17,6 +17,8 @@ pub struct Theme {
     pub bracket: Color32,
     pub find_match: Color32,
     pub find_current: Color32,
+    pub inlay: Color32,
+    pub inlay_bg: Color32,
     dark: bool,
 }
 
@@ -37,6 +39,8 @@ impl Theme {
                 bracket: rgb(0x888888),
                 find_match: Color32::from_rgba_unmultiplied(234, 92, 0, 70),
                 find_current: Color32::from_rgba_unmultiplied(81, 92, 106, 220),
+                inlay: rgb(0x8b949e),
+                inlay_bg: Color32::from_white_alpha(10),
                 dark: true,
             }
         } else {
@@ -50,6 +54,8 @@ impl Theme {
                 bracket: rgb(0x999999),
                 find_match: Color32::from_rgba_unmultiplied(234, 92, 0, 60),
                 find_current: Color32::from_rgba_unmultiplied(168, 172, 148, 200),
+                inlay: rgb(0x6e7781),
+                inlay_bg: Color32::from_black_alpha(10),
                 dark: false,
             }
         }
