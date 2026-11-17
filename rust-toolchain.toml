@@ -1,0 +1,5 @@
+# The toolchain used to develop PeroxIDE itself.
+# Bumped deliberately, together with the Toolchain Set (docs/adr/0005-toolchain-sets.md).
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
