@@ -1184,7 +1184,7 @@ mod tests {
             let col = text.lines().nth(line).unwrap().chars().count();
             let at = ed.core.doc.char_of(Pos { line, col });
             ed.core.set_cursor(at, false);
-            let mut top: Vec<String> = Vec::new();
+            let mut top: Vec<String>;
             // Auto-import items appear once std is indexed: retry for a while.
             let deadline = Instant::now() + Duration::from_secs(120);
             loop {
