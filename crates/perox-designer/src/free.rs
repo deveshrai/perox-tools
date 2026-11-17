@@ -191,7 +191,9 @@ pub fn break_layout(src: &str, drawn: Drawn<'_>, path: &[usize]) -> Result<Strin
 /// Spacers only mean something in a layout; free placement drops them (as Qt does).
 fn drop_spacers(work: &mut String, path: &[usize]) -> Result<(), EditError> {
     let file = perox_forms::parse(work);
-    let Some(el) = file.at(path) else { return Ok(()) };
+    let Some(el) = file.at(path) else {
+        return Ok(());
+    };
     let spacers: Vec<usize> = (0..el.children.len())
         .filter(|i| el.children[*i].kind == "Spacer")
         .collect();
