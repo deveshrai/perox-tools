@@ -33,8 +33,11 @@ tool for long calls; the `peroxide mcp` stdio shim.
 - [x] Hover, go to definition (F12 / ⌘-click), live diagnostics, Problems panel
 - [x] cargo check/build/run/test/clippy, Output panel, Stop
 - [x] Agents: project, file, editor, build and problem commands; screenshots
-- [ ] Find and replace, go to line, quick open (⌘P)
-- [ ] Rename, find references, code actions (quick fixes), format, inlay hints
+- [x] Find and replace (case, whole word, regex, replace all, matches to cursors), go to line, quick open (⌘P)
+- [x] Rename (all files), find references, quick fixes and refactorings (⌘.), format, format on save
+- [x] Icons: Lucide SVGs for every toolbar button and menu item ([ADR 0010](adr/0010-icons.md))
+- [x] Everything the IDE starts uses the pinned toolchain; quitting asks to save
+- [ ] Inlay hints
 - [ ] Reload files changed on disk; save and restore the layout
 - [ ] Integrated terminal; git basics
 - [ ] Completion benchmark file: the right item in the top 3

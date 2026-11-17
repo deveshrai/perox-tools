@@ -15,3 +15,4 @@ decision. Supersede it with a new one.
 | [0007](0007-android.md) | Android: the IDE runs on-device | Proposed (needs spike) |
 | [0008](0008-preview-host.md) | Designer previews run out of process | Accepted |
 | [0009](0009-toolchain-set-2026-11.md) | Toolchain Set 2026.11: basics vs add-ons | Accepted |
+| [0010](0010-icons.md) | Icons: Lucide SVGs, never emoji | Accepted |

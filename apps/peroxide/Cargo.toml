@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+perox-icons.workspace = true
 perox-core.workspace = true
 perox-mcp.workspace = true
 perox-editor.workspace = true
@@ -16,6 +17,7 @@ perox-lsp.workspace = true
 perox-project.workspace = true
 perox-build.workspace = true
 rfd.workspace = true
+egui_extras.workspace = true
 image.workspace = true
 eframe.workspace = true
 egui_tiles.workspace = true
@@ -26,3 +28,7 @@ chrono.workspace = true
 
 [lints]
 workspace = true
+
+# The same winit eframe uses; only to turn off its default macOS menu (see main.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = "=0.30.13"

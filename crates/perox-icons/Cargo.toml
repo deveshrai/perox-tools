@@ -1,0 +1,16 @@
+[package]
+name = "perox-icons"
+description = "PeroxIDE's icons: Lucide SVGs (pinned), embedded and tinted to the theme."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Code: MIT OR Apache-2.0. Icons: Lucide, ISC (icons/LICENSE-lucide).
+license = "(MIT OR Apache-2.0) AND ISC"
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+eframe.workspace = true
+
+[lints]
+workspace = true

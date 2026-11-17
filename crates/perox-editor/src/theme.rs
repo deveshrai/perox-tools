@@ -15,6 +15,8 @@ pub struct Theme {
     pub selection: Color32,
     pub cursor: Color32,
     pub bracket: Color32,
+    pub find_match: Color32,
+    pub find_current: Color32,
     dark: bool,
 }
 
@@ -33,6 +35,8 @@ impl Theme {
                 selection: Color32::from_rgba_unmultiplied(38, 79, 120, 200),
                 cursor: rgb(0xaeafad),
                 bracket: rgb(0x888888),
+                find_match: Color32::from_rgba_unmultiplied(234, 92, 0, 70),
+                find_current: Color32::from_rgba_unmultiplied(81, 92, 106, 220),
                 dark: true,
             }
         } else {
@@ -44,6 +48,8 @@ impl Theme {
                 selection: Color32::from_rgba_unmultiplied(173, 214, 255, 200),
                 cursor: rgb(0x1f2328),
                 bracket: rgb(0x999999),
+                find_match: Color32::from_rgba_unmultiplied(234, 92, 0, 60),
+                find_current: Color32::from_rgba_unmultiplied(168, 172, 148, 200),
                 dark: false,
             }
         }

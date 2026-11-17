@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use perox_build::{Job, Kind};
 use perox_core::{Access, CommandBus, CommandError, CommandSpec, Invocation, Origin};
-use perox_editor::{Change, Pos};
+use perox_editor::{Change, Pos, Request};
 use perox_project::Project;
 use serde_json::{Value, json};
 
@@ -19,6 +19,7 @@ pub enum LayoutRequest {
     ShowDoc(DocId),
     CloseDoc(DocId),
     ShowOutput,
+    ShowReferences,
 }
 
 /// The current cargo job and what it printed.
@@ -160,6 +161,7 @@ pub fn open_project(s: &mut AppState, path: &Path) -> Result<Value, CommandError
         .ok_or_else(|| err("cargo isn't installed (Toolchain Set missing)."))?;
     let project = Project::open(path, &cargo).map_err(err)?;
     s.tree = Some(project.file_tree(20_000));
+    s.files = project.files(50_000);
     s.lsp.start(&project.root);
     s.build.diagnostics.clear();
     let info = project_info(&project);
@@ -395,6 +397,112 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("editor.goto_line", "Go to Line", Access::Read)
+                .description("Moves the active editor's cursor to a 1-based line (and column) and scrolls there.")
+                .params(json!({ "type": "object", "required": ["line"], "properties": {
+                    "line": { "type": "integer", "minimum": 1 }, "column": { "type": "integer", "minimum": 1 }
+                }})),
+            |s, inv| {
+                let line = opt_usize(inv, "line").ok_or_else(|| CommandError::InvalidArgs("`line` is required".into()))?;
+                let doc = s.active_doc.and_then(|id| s.docs.get_mut(id)).ok_or_else(|| err("No editor is active."))?;
+                doc.editor.goto(line.saturating_sub(1), opt_usize(inv, "column").unwrap_or(1).saturating_sub(1));
+                doc.editor.focus_requested = true;
+                Ok(Value::Null)
+            },
+        ),
+        (
+            CommandSpec::new("editor.references", "Find All References", Access::Read)
+                .description("Finds every use of the symbol at the cursor. Results appear in the References panel a moment later; read them with editor.reference_list."),
+            |s, _| {
+                let (id, _, head) = active(s)?;
+                lsp_request(s, id, Request::References { at: head })?;
+                Ok(json!({ "requested": true }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.reference_list", "Reference List", Access::Read)
+                .description("Results of the last Find All References: file, line, column, and the line's text."),
+            |s, _| {
+                Ok(json!(s.references.iter().map(|(p, l, c, t)| json!({ "path": rel(s, p), "line": l, "column": c, "text": t })).collect::<Vec<_>>()))
+            },
+        ),
+        (CommandSpec::new("editor.rename_prompt", "Rename Symbol…", Access::Edit).ui_only(), |s, _| {
+            let (id, _, head) = active(s)?;
+            let doc = s.docs.get(id).expect("active");
+            let (a, b) = perox_editor::core::word_at(&doc.editor.core.doc, head);
+            s.rename = Some(doc.editor.core.doc.slice(a..b));
+            Ok(Value::Null)
+        }),
+        (
+            CommandSpec::new("editor.rename", "Rename Symbol", Access::Edit)
+                .description("Renames the symbol at the active editor's cursor everywhere it's used (all files). Changes are unsaved and undoable.")
+                .params(json!({ "type": "object", "required": ["new_name"], "properties": { "new_name": { "type": "string" } } })),
+            |s, inv| {
+                let (id, _, head) = active(s)?;
+                let new_name = inv.str_arg("new_name")?.trim().to_owned();
+                if new_name.is_empty() {
+                    return Err(CommandError::InvalidArgs("`new_name` is empty".into()));
+                }
+                lsp_request(s, id, Request::Rename { at: head, new_name })?;
+                Ok(json!({ "requested": true }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.code_actions", "Quick Fix…", Access::Read)
+                .description("Asks for quick fixes and refactorings at the cursor or selection. They appear as a menu a moment later; list them with editor.code_action_list and apply one with editor.apply_code_action."),
+            |s, _| {
+                let (id, range, _) = active(s)?;
+                lsp_request(s, id, Request::CodeActions { range })?;
+                Ok(json!({ "requested": true }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.code_action_list", "Code Action List", Access::Read)
+                .description("The quick fixes and refactorings currently offered (titles, by index)."),
+            |s, _| Ok(json!(s.code_actions.as_ref().map(|(_, items)| items.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>()).unwrap_or_default())),
+        ),
+        (
+            CommandSpec::new("editor.apply_code_action", "Apply Code Action", Access::Edit)
+                .description("Applies a quick fix or refactoring from editor.code_action_list by index.")
+                .params(json!({ "type": "object", "required": ["index"], "properties": { "index": { "type": "integer" } } })),
+            |s, inv| {
+                let i = opt_usize(inv, "index").ok_or_else(|| CommandError::InvalidArgs("`index` is required".into()))?;
+                let (_, items) = s.code_actions.take().ok_or_else(|| err("No code actions are offered right now."))?;
+                let (title, action) = items.into_iter().nth(i).ok_or_else(|| err("No such code action."))?;
+                let mut effects = Vec::new();
+                s.lsp.run_code_action(action, &mut effects);
+                for e in effects {
+                    match e {
+                        crate::lsp::Effect::WorkspaceEdit(v) => {
+                            apply_workspace_edit(s, &v);
+                        }
+                        crate::lsp::Effect::Message(m) => s.status = m,
+                        _ => {}
+                    }
+                }
+                Ok(json!({ "applied": title }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.format", "Format Document", Access::Edit)
+                .description("Formats the active file with rustfmt (through rust-analyzer). Undoable; not saved."),
+            |s, _| {
+                let (id, _, _) = active(s)?;
+                lsp_request(s, id, Request::Format)?;
+                Ok(json!({ "requested": true }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.toggle_format_on_save", "Format on Save", Access::Edit)
+                .description("Turns formatting Rust files on save on or off."),
+            |s, _| {
+                s.settings.format_on_save = !s.settings.format_on_save;
+                s.settings.save();
+                s.status = format!("Format on save {}", if s.settings.format_on_save { "on" } else { "off" });
+                Ok(json!({ "format_on_save": s.settings.format_on_save }))
+            },
+        ),
+        (
             CommandSpec::new("editor.cursor", "Cursor Position", Access::Read)
                 .description("The active editor's file, cursor line and column (1-based) and selected text."),
             |s, _| {
@@ -419,6 +527,10 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     }
                     None => s.active_doc.ok_or_else(|| err("No editor is active."))?,
                 };
+                let is_rust = s.docs.get(id).is_some_and(|d| d.path.extension().is_some_and(|e| e == "rs"));
+                if s.settings.format_on_save && is_rust && s.lsp.format_then_save(id, &s.docs) {
+                    return Ok(json!({ "saving": "after formatting" }));
+                }
                 let path = s.docs.save(id).map_err(err)?;
                 s.lsp.did_save(id, &s.docs);
                 s.status = format!("Saved {}", rel(s, &path));
@@ -526,6 +638,16 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("lsp.log", "rust-analyzer Log", Access::Read)
+                .description("The last lines rust-analyzer wrote to its log, and failed requests.")
+                .params(json!({ "type": "object", "properties": { "lines": { "type": "integer", "default": 50 } } })),
+            |s, inv| {
+                let n = opt_usize(inv, "lines").unwrap_or(50);
+                let log = &s.lsp.log;
+                Ok(json!(log[log.len().saturating_sub(n)..].join("\n")))
+            },
+        ),
+        (
             CommandSpec::new("lsp.restart", "Restart rust-analyzer", Access::Execute).description("Restarts the language server."),
             |s, _| {
                 let root = s.project.as_ref().map(|p| p.root.clone()).ok_or_else(|| err("No project is open."))?;
@@ -538,6 +660,76 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         bus.register(spec, h)
             .expect("ide command ids are valid and unique");
     }
+}
+
+/// The active document and its primary cursor (or selection).
+fn active(s: &AppState) -> Result<(DocId, std::ops::Range<usize>, usize), CommandError> {
+    let id = s.active_doc.ok_or_else(|| err("No editor is active."))?;
+    let doc = s.docs.get(id).ok_or_else(|| err("No editor is active."))?;
+    let sel = doc.editor.core.sels.primary();
+    Ok((id, sel.range(), sel.head))
+}
+
+fn lsp_request(s: &mut AppState, id: DocId, req: Request) -> Result<(), CommandError> {
+    if !s.lsp.status.contains("ready") && !s.lsp.status.contains("rust-analyzer") {
+        return Err(err("rust-analyzer isn't running for this project."));
+    }
+    s.lsp.request(id, &s.docs, &req);
+    Ok(())
+}
+
+/// Applies a WorkspaceEdit: opens each file it touches and edits it (undoable, unsaved).
+/// Returns how many files changed.
+pub fn apply_workspace_edit(s: &mut AppState, edit: &Value) -> usize {
+    let mut per_file: Vec<(PathBuf, Value)> = Vec::new();
+    if let Some(changes) = edit["changes"].as_object() {
+        for (uri, edits) in changes {
+            if let Some(p) = perox_lsp::uri::to_path(uri) {
+                per_file.push((p, edits.clone()));
+            }
+        }
+    }
+    for dc in edit["documentChanges"].as_array().into_iter().flatten() {
+        if let Some(p) = dc["textDocument"]["uri"]
+            .as_str()
+            .and_then(perox_lsp::uri::to_path)
+        {
+            per_file.push((p, dc["edits"].clone()));
+        }
+    }
+    let mut n = 0;
+    for (path, edits) in per_file {
+        let Ok((id, new)) = s.docs.open(&path) else {
+            continue;
+        };
+        if new {
+            s.lsp.did_open(id, &s.docs);
+            s.layout_requests.push(LayoutRequest::ShowDoc(id));
+        }
+        let Some(doc) = s.docs.get_mut(id) else {
+            continue;
+        };
+        let changes: Vec<Change> = edits
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|e| {
+                let at = |p: &Value| {
+                    doc.editor.core.doc.char_of(Pos {
+                        line: p["line"].as_u64().unwrap_or(0) as usize,
+                        col: p["character"].as_u64().unwrap_or(0) as usize,
+                    })
+                };
+                let (a, b) = (at(&e["range"]["start"]), at(&e["range"]["end"]));
+                Change::replace(a..b.max(a), e["newText"].as_str().unwrap_or_default())
+            })
+            .collect();
+        doc.editor.apply_extra_edits(changes);
+        let lsp_edits = doc.editor.take_lsp_edits();
+        s.lsp.did_change(id, &s.docs, &lsp_edits);
+        n += 1;
+    }
+    n
 }
 
 pub fn close_doc(s: &mut AppState, id: DocId, discard: bool) -> Result<Value, CommandError> {

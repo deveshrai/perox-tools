@@ -15,6 +15,8 @@ pub struct Settings {
     pub mcp: McpSettings,
     /// Most recent first.
     pub recent_projects: Vec<PathBuf>,
+    /// Run rustfmt (through rust-analyzer) when saving Rust files.
+    pub format_on_save: bool,
     /// Where these settings are saved. `None` (defaults, tests) never touches disk.
     #[serde(skip)]
     pub file: Option<PathBuf>,

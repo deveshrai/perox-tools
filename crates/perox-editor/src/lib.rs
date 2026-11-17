@@ -3,6 +3,7 @@
 
 pub mod completion;
 pub mod core;
+pub mod find;
 pub mod selection;
 pub mod snippet;
 pub mod syntax;

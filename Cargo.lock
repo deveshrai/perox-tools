@@ -3888,9 +3888,18 @@ name = "perox-editor"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "perox-icons",
+ "regex",
  "ropey",
  "tree-sitter",
  "tree-sitter-rust",
+]
+
+[[package]]
+name = "perox-icons"
+version = "0.1.0"
+dependencies = [
+ "eframe",
 ]
 
 [[package]]
@@ -3971,17 +3980,20 @@ dependencies = [
  "chrono",
  "directories",
  "eframe",
+ "egui_extras",
  "egui_tiles",
  "image",
  "perox-build",
  "perox-core",
  "perox-editor",
+ "perox-icons",
  "perox-lsp",
  "perox-mcp",
  "perox-project",
  "rfd",
  "serde",
  "serde_json",
+ "winit",
 ]
 
 [[package]]

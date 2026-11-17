@@ -75,10 +75,12 @@ impl Client {
         program: &Path,
         args: &[&str],
         cwd: &Path,
+        env: &[(String, String)],
         wake: impl Fn() + Send + Sync + 'static,
     ) -> std::io::Result<(Self, Receiver<Event>)> {
         let mut child = Command::new(program)
             .args(args)
+            .envs(env.iter().map(|(k, v)| (k, v)))
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

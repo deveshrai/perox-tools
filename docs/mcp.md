@@ -55,7 +55,8 @@ Agents get four tools that reach every IDE command they're allowed to use:
 | `batch` | Runs several in order; stops at the first failure unless told otherwise |
 
 Commands so far, by area: `project.*` (open, info, files), `file.*` (open, read, write,
-save, close), `editor.*` (replace, type, completions, accept_completion, cursor), `build.*`
+save, close), `editor.*` (replace, type, completions, accept_completion, cursor, goto_line,
+references, rename, code_actions, apply_code_action, format), `build.*`
 (check, build, run, test, clippy, stop, status, output), `problems.list`, `lsp.*`,
 `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
 Lines and columns are 1-based. Each new IDE feature adds commands, and agents can use them

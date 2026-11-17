@@ -22,6 +22,7 @@ pub enum Pane {
     Problems,
     Output,
     Activity,
+    References,
 }
 
 /// Explorer on the left; editors above, Problems / Output / Activity below.
@@ -62,10 +63,20 @@ pub fn show_pane(tree: &mut Tree<Pane>, pane: Pane) {
     let tile = match find_pane(tree, |p| *p == pane) {
         Some(t) => t,
         None => {
-            // Next to other editors (or Welcome), else next to anything in the centre.
-            let sibling = find_pane(tree, |p| matches!(p, Pane::Editor(_)))
-                .or_else(|| find_pane(tree, |p| *p == Pane::Welcome))
-                .or_else(|| find_pane(tree, |p| *p == Pane::Problems));
+            // Editors go next to editors (or Welcome); panels next to the other panels.
+            let bottom = |p: &Pane| {
+                matches!(
+                    p,
+                    Pane::Problems | Pane::Output | Pane::Activity | Pane::References
+                )
+            };
+            let sibling = if bottom(&pane) {
+                find_pane(tree, bottom)
+            } else {
+                find_pane(tree, |p| matches!(p, Pane::Editor(_)))
+                    .or_else(|| find_pane(tree, |p| *p == Pane::Welcome))
+            }
+            .or_else(|| find_pane(tree, |p| *p != Pane::Explorer));
             let new = tree.tiles.insert_pane(pane);
             match sibling.and_then(|s| tree.tiles.parent_of(s)) {
                 Some(parent) => {
@@ -103,6 +114,7 @@ pub struct PaneUi<'a> {
     pub tree: Option<&'a perox_project::Node>,
     pub project_root: Option<&'a std::path::Path>,
     pub recent: &'a [std::path::PathBuf],
+    pub references: &'a [(std::path::PathBuf, usize, usize, String)],
     pub active_doc: Option<DocId>,
     /// Commands to run after drawing.
     pub actions: Vec<(&'static str, Value)>,
@@ -135,6 +147,7 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
             }
             Pane::Output => "Output".into(),
             Pane::Activity => "Activity".into(),
+            Pane::References => format!("References ({})", self.references.len()).into(),
         }
     }
 
@@ -185,6 +198,7 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                         Pane::Problems => self.problems(ui),
                         Pane::Output => self.output(ui),
                         Pane::Activity => activity(ui, self.activity),
+                        Pane::References => self.references_ui(ui),
                         Pane::Editor(_) => {}
                     }
                 });
@@ -238,7 +252,8 @@ impl PaneUi<'_> {
                     default_open,
                 )
                 .show_header(ui, |ui| {
-                    ui.label(format!("📁 {}", node.name));
+                    ui.add(perox_icons::Icon::Folder.image(ui));
+                    ui.label(&node.name);
                 })
                 .body(|ui| {
                     for c in children {
@@ -248,15 +263,12 @@ impl PaneUi<'_> {
             }
             None => {
                 let is_active = active == Some(node.path.as_path());
-                let icon = match node.path.extension().and_then(|e| e.to_str()) {
-                    Some("rs") => "🦀",
-                    Some("toml") => "⚙",
-                    Some("pxui") => "🖼",
-                    Some("md") => "📝",
-                    _ => "📄",
-                };
+                let icon = crate::icons::for_file(&node.path);
                 if ui
-                    .selectable_label(is_active, format!("{icon} {}", node.name))
+                    .add(egui::Button::selectable(
+                        is_active,
+                        egui::Atoms::new((icon.image(ui), node.name.as_str())),
+                    ))
                     .clicked()
                 {
                     self.actions
@@ -376,14 +388,14 @@ impl PaneUi<'_> {
             .show(ui, |ui| {
                 for (sev, file, line, col, msg, source, path) in rows {
                     let icon = match sev {
-                        Severity::Error => "⛔",
-                        Severity::Warning => "⚠",
-                        _ => "ℹ",
+                        Severity::Error => perox_icons::Icon::CircleX,
+                        Severity::Warning => perox_icons::Icon::TriangleAlert,
+                        _ => perox_icons::Icon::Info,
                     };
                     let first = msg.lines().next().unwrap_or_default().to_owned();
                     let resp = ui
                         .horizontal(|ui| {
-                            ui.colored_label(theme.severity(sev), icon);
+                            ui.add(icon.colored(theme.severity(sev)));
                             let r = ui.add(
                                 egui::Label::new(first)
                                     .sense(egui::Sense::click())
@@ -403,23 +415,69 @@ impl PaneUi<'_> {
             });
     }
 
+    fn references_ui(&mut self, ui: &mut egui::Ui) {
+        if self.references.is_empty() {
+            ui.weak("No references. Put the cursor on a name and press ⇧F12.");
+            return;
+        }
+        let root = self.project_root;
+        egui::ScrollArea::vertical()
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                for (path, line, col, text) in self.references {
+                    let shown = root
+                        .and_then(|r| path.strip_prefix(r).ok())
+                        .unwrap_or(path)
+                        .display()
+                        .to_string();
+                    let resp = ui
+                        .horizontal(|ui| {
+                            ui.weak(format!("{shown}:{line}"));
+                            ui.add(
+                                egui::Label::new(RichText::new(text.trim()).monospace())
+                                    .sense(egui::Sense::click())
+                                    .truncate(),
+                            )
+                        })
+                        .inner;
+                    if resp.clicked() {
+                        self.actions.push((
+                            "file.open",
+                            json!({ "path": path, "line": line, "column": col }),
+                        ));
+                    }
+                }
+            });
+    }
+
     fn output(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| match self.build.running() {
             Some(k) => {
                 ui.spinner();
                 ui.label(format!("cargo {}", k.verb()));
-                if ui.button("■ Stop").clicked() {
+                if ui
+                    .add(egui::Button::image_and_text(
+                        perox_icons::Icon::Square.image(ui),
+                        "Stop",
+                    ))
+                    .clicked()
+                {
                     self.actions.push(("build.stop", json!({})));
                 }
             }
             None => match self.build.last {
                 Some((k, true)) => {
-                    ui.label(format!("✔ cargo {} finished", k.verb()));
+                    ui.add(
+                        perox_icons::Icon::CircleCheck
+                            .colored(egui::Color32::from_rgb(0x4e, 0xc9, 0x6b)),
+                    );
+                    ui.label(format!("cargo {} finished", k.verb()));
                 }
                 Some((k, false)) => {
+                    ui.add(perox_icons::Icon::CircleX.colored(ui.visuals().error_fg_color));
                     ui.colored_label(
                         ui.visuals().error_fg_color,
-                        format!("✖ cargo {} failed", k.verb()),
+                        format!("cargo {} failed", k.verb()),
                     );
                 }
                 None => {

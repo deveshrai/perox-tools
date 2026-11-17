@@ -3,6 +3,7 @@
 mod app;
 mod commands;
 mod docs;
+mod icons;
 mod ide;
 mod keymap;
 mod layout;
@@ -23,6 +24,13 @@ fn main() -> eframe::Result {
             .with_title("PeroxIDE")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0]),
+        // winit's default macOS menu quits the app directly on ⌘Q, skipping the
+        // "save changes?" prompt. Without it, ⌘Q reaches PeroxIDE like any shortcut.
+        #[cfg(target_os = "macos")]
+        event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::macos::EventLoopBuilderExtMacOS;
+            builder.with_default_menu(false);
+        })),
         ..Default::default()
     };
     eframe::run_native(

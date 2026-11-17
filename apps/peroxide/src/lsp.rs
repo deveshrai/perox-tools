@@ -50,6 +50,25 @@ enum Pending {
         doc: DocId,
         version: i32,
     },
+    References,
+    Rename,
+    CodeActions {
+        doc: DocId,
+    },
+    CodeActionResolve,
+    Format {
+        doc: DocId,
+        version: i32,
+        then_save: bool,
+    },
+}
+
+/// A place in a file (0-based line, char column).
+#[derive(Debug, Clone)]
+pub struct Location {
+    pub path: PathBuf,
+    pub line: usize,
+    pub col: usize,
 }
 
 /// A diagnostic for the Problems panel (0-based line, char column).
@@ -63,6 +82,8 @@ pub struct Problem {
     pub severity: Severity,
     pub message: String,
     pub source: String,
+    /// The diagnostic as the server sent it (for code-action requests).
+    pub raw: Value,
 }
 
 /// Something the app must do because of an answer.
@@ -73,6 +94,16 @@ pub enum Effect {
         line: usize,
         col: usize,
     },
+    References(Vec<Location>),
+    /// Code actions offered at the cursor: (title, raw action).
+    CodeActions {
+        doc: DocId,
+        items: Vec<(String, Value)>,
+    },
+    /// A WorkspaceEdit to apply (rename, code action).
+    WorkspaceEdit(Value),
+    Save(DocId),
+    Message(String),
 }
 
 pub struct Lsp {
@@ -224,7 +255,8 @@ impl Lsp {
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
             let wake_ctx = ctx.clone();
-            let result = perox_lsp::rust_analyzer::start(&program, &root, move || {
+            let env = perox_build::tools::env();
+            let result = perox_lsp::rust_analyzer::start(&program, &root, &env, move || {
                 wake_ctx.request_repaint()
             });
             let _ = tx.send(result);
@@ -340,6 +372,43 @@ impl Lsp {
 
     // ── requests ──────────────────────────────────────────────────────────
 
+    /// Formats a document, then saves it (format on save).
+    pub fn format_then_save(&mut self, id: DocId, docs: &Docs) -> bool {
+        let (Some(doc), State::Running { ra, .. }) = (docs.get(id), &self.state) else {
+            return false;
+        };
+        if !self.opened.contains_key(&id) {
+            return false;
+        }
+        let rid = ra.client.request(
+            "textDocument/formatting",
+            json!({ "textDocument": { "uri": uri::from_path(&doc.path) }, "options": { "tabSize": 4, "insertSpaces": true } }),
+        );
+        self.pending.insert(
+            rid,
+            Pending::Format {
+                doc: id,
+                version: doc.editor.core.doc.version(),
+                then_save: true,
+            },
+        );
+        true
+    }
+
+    /// Resolves and applies a code action chosen from the menu.
+    pub fn run_code_action(&mut self, action: Value, effects: &mut Vec<Effect>) {
+        if action["edit"].is_object() {
+            effects.push(Effect::WorkspaceEdit(action["edit"].clone()));
+        } else if action.get("data").is_some()
+            && let State::Running { ra, .. } = &self.state
+        {
+            let rid = ra.client.request("codeAction/resolve", action);
+            self.pending.insert(rid, Pending::CodeActionResolve);
+        } else {
+            effects.push(Effect::Message("That action can't be applied here.".into()));
+        }
+    }
+
     pub fn request(&mut self, id: DocId, docs: &Docs, req: &Request) {
         if !self.opened.contains_key(&id) {
             return;
@@ -393,6 +462,46 @@ impl Lsp {
                 json!({ "textDocument": td, "position": to_lsp(ed, *at, utf32) }),
                 Pending::Signature { doc: id },
             ),
+            Request::References { at } => (
+                "textDocument/references",
+                json!({ "textDocument": td, "position": to_lsp(ed, *at, utf32), "context": { "includeDeclaration": true } }),
+                Pending::References,
+            ),
+            Request::Rename { at, new_name } => (
+                "textDocument/rename",
+                json!({ "textDocument": td, "position": to_lsp(ed, *at, utf32), "newName": new_name }),
+                Pending::Rename,
+            ),
+            Request::CodeActions { range } => {
+                let (start, end) = (to_lsp(ed, range.start, utf32), to_lsp(ed, range.end, utf32));
+                // Diagnostics touching the range, so quick fixes for them are offered.
+                let diags: Vec<Value> = self
+                    .diagnostics
+                    .get(&doc.path)
+                    .into_iter()
+                    .flatten()
+                    .filter(|p| {
+                        let l = start["line"].as_u64().unwrap_or(0) as usize;
+                        let e = end["line"].as_u64().unwrap_or(0) as usize;
+                        p.line <= e && p.end_line >= l
+                    })
+                    .map(|p| p.raw.clone())
+                    .collect();
+                (
+                    "textDocument/codeAction",
+                    json!({ "textDocument": td, "range": { "start": start, "end": end }, "context": { "diagnostics": diags } }),
+                    Pending::CodeActions { doc: id },
+                )
+            }
+            Request::Format => (
+                "textDocument/formatting",
+                json!({ "textDocument": td, "options": { "tabSize": 4, "insertSpaces": true } }),
+                Pending::Format {
+                    doc: id,
+                    version: ed.core.doc.version(),
+                    then_save: false,
+                },
+            ),
         };
         let rid = ra.client.request(method, params);
         if matches!(pending, Pending::Completion { .. }) {
@@ -433,10 +542,23 @@ impl Lsp {
         for event in events {
             match event {
                 Event::Response { id, result } => {
-                    if let Some(p) = self.pending.remove(&id)
-                        && let Ok(v) = result
-                    {
-                        self.answer(p, v, docs, recency, &mut effects);
+                    let Some(p) = self.pending.remove(&id) else {
+                        continue;
+                    };
+                    match result {
+                        Ok(v) => self.answer(p, v, docs, recency, &mut effects),
+                        Err(e) => {
+                            // Cancelled completions are routine; anything else is worth saying.
+                            if !matches!(
+                                p,
+                                Pending::Completion { .. }
+                                    | Pending::Semantic { .. }
+                                    | Pending::Hover { .. }
+                            ) {
+                                effects.push(Effect::Message(format!("rust-analyzer: {e}")));
+                            }
+                            self.log.push(format!("{p:?} failed: {e}"));
+                        }
                     }
                 }
                 Event::Notification { method, params } => self.notification(&method, &params, docs),
@@ -485,6 +607,7 @@ impl Lsp {
                             severity: severity(d["severity"].as_u64()),
                             message: d["message"].as_str().unwrap_or_default().to_owned(),
                             source: d["source"].as_str().unwrap_or("rust-analyzer").to_owned(),
+                            raw: d.clone(),
                         }
                     })
                     .collect();
@@ -633,6 +756,61 @@ impl Lsp {
             Pending::Signature { doc } => {
                 let Some(d) = docs.get_mut(doc) else { return };
                 d.editor.deco.signature = signature(&v);
+            }
+            Pending::References => {
+                let locs = v
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|l| {
+                        Some(Location {
+                            path: uri::to_path(l["uri"].as_str()?)?,
+                            line: l["range"]["start"]["line"].as_u64()? as usize,
+                            col: l["range"]["start"]["character"].as_u64()? as usize,
+                        })
+                    })
+                    .collect();
+                effects.push(Effect::References(locs));
+            }
+            Pending::Rename | Pending::CodeActionResolve => {
+                if v["edit"].is_object() {
+                    effects.push(Effect::WorkspaceEdit(v["edit"].clone()));
+                } else if v.is_object() {
+                    effects.push(Effect::WorkspaceEdit(v));
+                } else {
+                    effects.push(Effect::Message("Nothing to change.".into()));
+                }
+            }
+            Pending::CodeActions { doc } => {
+                let items: Vec<(String, Value)> = v
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|a| a["disabled"].is_null())
+                    .filter_map(|a| Some((a["title"].as_str()?.to_owned(), a.clone())))
+                    .collect();
+                if items.is_empty() {
+                    effects.push(Effect::Message(
+                        "No quick fixes or refactorings here.".into(),
+                    ));
+                } else {
+                    effects.push(Effect::CodeActions { doc, items });
+                }
+            }
+            Pending::Format {
+                doc,
+                version,
+                then_save,
+            } => {
+                if let Some(d) = docs.get_mut(doc)
+                    && d.editor.core.doc.version() == version
+                {
+                    let changes = text_edits(&d.editor, &v, utf32);
+                    d.editor.apply_extra_edits(changes);
+                }
+                if then_save {
+                    effects.push(Effect::Save(doc));
+                }
             }
             Pending::Semantic { doc, version } => {
                 let Some(d) = docs.get_mut(doc) else { return };

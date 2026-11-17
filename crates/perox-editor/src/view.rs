@@ -13,9 +13,11 @@ use eframe::egui::{
 
 use crate::completion::{Popup, Recency};
 use crate::core::{EditorCore, word_at};
+use crate::find::Find;
 use crate::selection::{Selection, Selections};
 use crate::syntax::{Hl, Lang, Syntax, line_sections};
 use crate::theme::Theme;
+use perox_icons::Icon;
 
 const FONT_SIZE: f32 = 13.5;
 const TAB_WIDTH: usize = 4;
@@ -78,6 +80,17 @@ pub enum Request {
     ResolveCompletion {
         server_index: usize,
     },
+    References {
+        at: usize,
+    },
+    Rename {
+        at: usize,
+        new_name: String,
+    },
+    CodeActions {
+        range: Range<usize>,
+    },
+    Format,
 }
 
 #[derive(Debug, Default)]
@@ -101,6 +114,7 @@ pub struct EditorState {
     pub reveal: bool,
     /// Take keyboard focus on the next frame.
     pub focus_requested: bool,
+    pub find: Find,
     hover: Option<(usize, Instant, bool)>,
     drag_anchor: Option<usize>,
     lang: Lang,
@@ -132,6 +146,7 @@ impl EditorState {
             popup_requested_at: 0,
             reveal: false,
             focus_requested: false,
+            find: Find::default(),
             hover: None,
             drag_anchor: None,
             lang,
@@ -292,6 +307,9 @@ pub fn show(
     if std::mem::take(&mut st.focus_requested) {
         ui.memory_mut(|mem| mem.request_focus(id));
         st.reveal = true;
+    }
+    if st.find.open && find_bar(ui, st) {
+        ui.memory_mut(|mem| mem.request_focus(id));
     }
 
     // ── keyboard (before layout, so this frame shows the result) ────────────
@@ -502,6 +520,36 @@ fn paint(
                 2.0,
                 theme.selection,
             );
+        }
+    }
+
+    // Find matches.
+    if st.find.open {
+        for (i, r) in st.find.matches.iter().enumerate() {
+            let (a, b) = (doc.pos_of(r.start), doc.pos_of(r.end));
+            if a.line >= lines.end || b.line < lines.start {
+                continue;
+            }
+            let current = st.find.current == Some(i);
+            for l in a.line.max(lines.start)..=b.line.min(lines.end.saturating_sub(1)) {
+                let text = doc.line_text(l);
+                let c0 = if l == a.line { a.col } else { 0 };
+                let c1 = if l == b.line { b.col } else { doc.line_len(l) };
+                let y = line_y(l);
+                let rect = Rect::from_min_max(
+                    Pos2::new(x_of(&text, c0), y),
+                    Pos2::new(x_of(&text, c1), y + m.line_h),
+                );
+                painter.rect_filled(
+                    rect,
+                    2.0,
+                    if current {
+                        theme.find_current
+                    } else {
+                        theme.find_match
+                    },
+                );
+            }
         }
     }
 
@@ -781,6 +829,153 @@ fn matching_bracket(st: &EditorState) -> Option<(usize, usize)> {
     try_at(head).or_else(|| head.checked_sub(1).and_then(try_at))
 }
 
+// ── find bar ─────────────────────────────────────────────────────────────
+
+fn open_find(st: &mut EditorState, replace: bool) {
+    let sel = st.core.sels.primary();
+    if !sel.is_empty() {
+        let text = st.core.doc.slice(sel.range());
+        if !text.contains('\n') {
+            st.find.query = text;
+        }
+    }
+    st.find.open = true;
+    st.find.show_replace |= replace;
+    st.find.focus_query = true;
+}
+
+/// The find/replace bar above the text. Returns true when focus should go back to the text.
+fn find_bar(ui: &mut egui::Ui, st: &mut EditorState) -> bool {
+    let mut back_to_text = false;
+    let head = st.core.sels.primary().head;
+    egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let f = &mut st.find;
+                let toggle = if f.show_replace {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                };
+                if ui
+                    .add(egui::Button::image(toggle.image(ui)).frame(false))
+                    .on_hover_text("Replace")
+                    .clicked()
+                {
+                    f.show_replace = !f.show_replace;
+                }
+                let q = ui.add(
+                    egui::TextEdit::singleline(&mut f.query)
+                        .hint_text("Find")
+                        .desired_width(220.0),
+                );
+                if std::mem::take(&mut f.focus_query) {
+                    q.request_focus();
+                }
+                for (flag, icon, tip) in [
+                    (&mut f.case_sensitive, Icon::CaseSensitive, "Match case"),
+                    (&mut f.whole_word, Icon::WholeWord, "Whole word"),
+                    (&mut f.regex, Icon::Regex, "Regular expression"),
+                ] {
+                    if ui
+                        .add(egui::Button::image(icon.image(ui)).selected(*flag))
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        *flag = !*flag;
+                    }
+                }
+                f.update(&st.core, head);
+                let f = &mut st.find;
+                match (&f.error, f.matches.len(), f.current) {
+                    (Some(e), _, _) => {
+                        ui.colored_label(ui.visuals().error_fg_color, e);
+                    }
+                    (None, 0, _) if !f.query.is_empty() => {
+                        ui.weak("No results");
+                    }
+                    (None, n, Some(c)) => {
+                        ui.weak(format!("{} of {n}", c + 1));
+                    }
+                    _ => {}
+                }
+                let enter = q.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                let shift = ui.input(|i| i.modifiers.shift);
+                let alt = ui.input(|i| i.modifiers.alt);
+                if ui
+                    .add(egui::Button::image(Icon::ArrowUp.image(ui)).frame(false))
+                    .on_hover_text("Previous (⇧Enter)")
+                    .clicked()
+                    || (enter && shift)
+                {
+                    f.step(&mut st.core, true);
+                    st.reveal = true;
+                    q.request_focus();
+                } else if ui
+                    .add(egui::Button::image(Icon::ArrowDown.image(ui)).frame(false))
+                    .on_hover_text("Next (Enter)")
+                    .clicked()
+                    || (enter && !alt)
+                {
+                    f.step(&mut st.core, false);
+                    st.reveal = true;
+                    q.request_focus();
+                } else if enter && alt {
+                    f.select_all(&mut st.core);
+                    f.open = false;
+                    back_to_text = true;
+                }
+                if ui
+                    .add(egui::Button::image(Icon::X.image(ui)).frame(false))
+                    .on_hover_text("Close (Esc)")
+                    .clicked()
+                    || (q.has_focus() || q.lost_focus()) && ui.input(|i| i.key_pressed(Key::Escape))
+                {
+                    st.find.open = false;
+                    back_to_text = true;
+                }
+            });
+            if st.find.open && st.find.show_replace {
+                ui.horizontal(|ui| {
+                    ui.add_space(22.0);
+                    let f = &mut st.find;
+                    ui.add(
+                        egui::TextEdit::singleline(&mut f.replacement)
+                            .hint_text("Replace")
+                            .desired_width(220.0),
+                    );
+                    if ui
+                        .add(egui::Button::image_and_text(
+                            Icon::Replace.image(ui),
+                            "Replace",
+                        ))
+                        .clicked()
+                    {
+                        f.replace_one(&mut st.core);
+                        st.reveal = true;
+                    }
+                    if ui
+                        .add(egui::Button::image_and_text(
+                            Icon::ReplaceAll.image(ui),
+                            "Replace All",
+                        ))
+                        .clicked()
+                    {
+                        let n = f.replace_all(&mut st.core);
+                        ui.ctx().request_repaint();
+                        let _ = n;
+                    }
+                });
+            }
+        });
+    if back_to_text {
+        st.reveal = true;
+    }
+    back_to_text
+}
+
 // ── input ────────────────────────────────────────────────────────────────
 
 fn word_mod(m: &Modifiers) -> bool {
@@ -1055,6 +1250,24 @@ fn key_command(st: &mut EditorState, key: Key, m: &Modifiers, out: &mut Output) 
         Key::OpenBracket if m.command => {
             core.outdent_lines();
             edited = true;
+        }
+        Key::F if m.command => {
+            open_find(st, m.alt);
+            return;
+        }
+        Key::H if m.ctrl && !cfg!(target_os = "macos") => {
+            open_find(st, true);
+            return;
+        }
+        Key::G if m.command && !m.ctrl => {
+            st.find.step(&mut st.core, m.shift);
+            st.reveal = true;
+            return;
+        }
+        Key::F3 => {
+            st.find.step(&mut st.core, m.shift);
+            st.reveal = true;
+            return;
         }
         Key::Space if m.ctrl => {
             out.requests.push(Request::Completion {

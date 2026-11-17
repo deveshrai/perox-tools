@@ -29,6 +29,7 @@ CI runs the same three checks on macOS. A pull request needs all three passing.
   `MIT OR Apache-2.0` and must not depend on any GPL crate in this repo.
 - **A decision someone might later ask "why?" about** gets an ADR: copy
   [docs/adr/0000-template.md](docs/adr/0000-template.md), keep it to one page.
+- **Icons**: never emoji. Use `perox_icons::Icon`; map new commands in `apps/peroxide/src/icons.rs`.
 - **Docs**: short sentences, task first, tables for settings and troubleshooting.
 - `unsafe` is denied workspace-wide. If you need it (FFI, Android), allow it on the
   smallest scope you can, with a `// SAFETY:` comment.

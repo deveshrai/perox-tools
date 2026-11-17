@@ -27,7 +27,17 @@ pub struct AppState {
     pub show_about: bool,
     pub show_settings: bool,
     pub show_palette: bool,
+    /// Open the palette in this mode on the next frame.
+    pub palette_request: Option<crate::palette::Mode>,
     pub reset_layout: bool,
+    /// Project files (relative), for quick open.
+    pub files: Vec<std::path::PathBuf>,
+    /// Results of the last Find References: (path, 1-based line, column, line text).
+    pub references: Vec<(std::path::PathBuf, usize, usize, String)>,
+    /// The quick-fix menu: document and (title, action).
+    pub code_actions: Option<(DocId, Vec<(String, Value)>)>,
+    /// The rename prompt's text while it's open.
+    pub rename: Option<String>,
     pub project: Option<Project>,
     /// The Explorer's file tree.
     pub tree: Option<Node>,
@@ -62,7 +72,12 @@ impl AppState {
             show_about: false,
             show_settings: false,
             show_palette: false,
+            palette_request: None,
             reset_layout: false,
+            files: Vec::new(),
+            references: Vec::new(),
+            code_actions: None,
+            rename: None,
         }
     }
 }
@@ -72,6 +87,7 @@ impl AppState {
     pub fn refresh_tree(&mut self) {
         if let Some(p) = &self.project {
             self.tree = Some(p.file_tree(20_000));
+            self.files = p.files(50_000);
         }
     }
 }
@@ -108,7 +124,7 @@ impl Activity {
 type Handler = fn(&mut AppState, &Invocation) -> Result<Value, CommandError>;
 
 pub fn register(bus: &mut CommandBus<AppState>) {
-    let commands: [(CommandSpec, Handler); 15] = [
+    let commands: [(CommandSpec, Handler); 17] = [
         (
             CommandSpec::new("app.info", "About This IDE", Access::Read)
                 .description("Name and version of the running PeroxIDE, and whether a project is open."),
@@ -198,7 +214,21 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         (
             CommandSpec::new("view.command_palette", "Command Palette…", Access::Read).ui_only(),
             |s, _| {
-                s.show_palette = true;
+                s.palette_request = Some(crate::palette::Mode::Commands);
+                Ok(Value::Null)
+            },
+        ),
+        (
+            CommandSpec::new("view.quick_open", "Go to File…", Access::Read).ui_only(),
+            |s, _| {
+                s.palette_request = Some(crate::palette::Mode::Files);
+                Ok(Value::Null)
+            },
+        ),
+        (
+            CommandSpec::new("editor.goto_line_prompt", "Go to Line…", Access::Read).ui_only(),
+            |s, _| {
+                s.palette_request = Some(crate::palette::Mode::Line);
                 Ok(Value::Null)
             },
         ),

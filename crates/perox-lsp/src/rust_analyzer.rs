@@ -85,7 +85,8 @@ pub fn initialize_params(root: &Path) -> Value {
         "capabilities": {
             "general": { "positionEncodings": ["utf-32", "utf-16"] },
             "window": { "workDoneProgress": true },
-            "workspace": { "configuration": false, "workspaceFolders": true, "applyEdit": false },
+            "workspace": { "configuration": false, "workspaceFolders": true, "applyEdit": false,
+                "workspaceEdit": { "documentChanges": true } },
             "textDocument": {
                 "synchronization": { "didSave": true, "dynamicRegistration": false },
                 "completion": {
@@ -115,6 +116,17 @@ pub fn initialize_params(root: &Path) -> Value {
                     }
                 },
                 "definition": { "linkSupport": false },
+                "references": {},
+                "rename": { "prepareSupport": false },
+                "formatting": {},
+                "codeAction": {
+                    "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
+                        "", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports"
+                    ] } },
+                    "resolveSupport": { "properties": ["edit"] },
+                    "dataSupport": true,
+                    "isPreferredSupport": true
+                },
                 "publishDiagnostics": { "relatedInformation": false, "versionSupport": true },
                 "semanticTokens": {
                     "requests": { "full": true, "range": false },
@@ -141,8 +153,10 @@ pub fn initialize_params(root: &Path) -> Value {
             },
             "imports": { "granularity": { "group": "module" }, "prefix": "plain" },
             "semanticHighlighting": { "strings": { "enable": false } },
-            // Type errors as you type, not only after saving.
-            "diagnostics": { "experimental": { "enable": true } }
+            // Off: rust-analyzer's experimental diagnostics report false errors (e.g. an
+            // "unresolved import" on `std` in a crate that compiles). Type errors come from
+            // the compiler check on save instead.
+            "diagnostics": { "experimental": { "enable": false } }
         }
     })
 }
@@ -152,9 +166,10 @@ pub fn initialize_params(root: &Path) -> Value {
 pub fn start(
     program: &Path,
     root: &Path,
+    env: &[(String, String)],
     wake: impl Fn() + Send + Sync + 'static,
 ) -> Result<(RustAnalyzer, Receiver<Event>), String> {
-    let (client, events) = Client::spawn(program, &[], root, wake)
+    let (client, events) = Client::spawn(program, &[], root, env, wake)
         .map_err(|e| format!("couldn't start rust-analyzer: {e}"))?;
     let init = client.request_blocking(
         "initialize",

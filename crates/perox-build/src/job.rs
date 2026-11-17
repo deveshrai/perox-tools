@@ -88,6 +88,7 @@ impl Job {
             .arg("--message-format=json-diagnostic-rendered-ansi")
             .current_dir(root)
             .env("CARGO_TERM_COLOR", "never")
+            .envs(crate::tools::env())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

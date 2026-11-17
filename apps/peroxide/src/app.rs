@@ -10,6 +10,7 @@ use perox_core::{CommandBus, CommandError, Origin};
 use serde_json::{Value, json};
 
 use crate::commands::{self, AppState};
+use crate::icons;
 use crate::ide::{self, LayoutRequest};
 use crate::keymap;
 use crate::layout::{self, Pane, PaneUi};
@@ -18,8 +19,13 @@ use crate::mcp_host::{Call, McpController};
 use crate::mcp_page::{self, McpPage};
 use crate::palette::Palette;
 use crate::settings::Settings;
+use perox_icons::Icon;
 
 pub struct PeroxApp {
+    /// Showing "save before quitting?"; set when quitting with unsaved changes.
+    quit_prompt: bool,
+    /// The user chose to quit; don't ask again.
+    quitting: bool,
     bus: CommandBus<AppState>,
     state: AppState,
     calls: Receiver<Call>,
@@ -31,6 +37,7 @@ pub struct PeroxApp {
 impl PeroxApp {
     /// `open`: a project folder (or file) to open at start, from the command line.
     pub fn new(ctx: &egui::Context, open: Option<std::path::PathBuf>) -> Self {
+        egui_extras::install_image_loaders(ctx);
         let mut bus = CommandBus::new();
         commands::register(&mut bus);
         ide::register(&mut bus);
@@ -46,6 +53,8 @@ impl PeroxApp {
             state.status = note;
         }
         let mut app = Self {
+            quit_prompt: false,
+            quitting: false,
             bus,
             state,
             calls,
@@ -69,8 +78,8 @@ impl PeroxApp {
         let title = self.bus.spec(id).map_or(id, |s| s.title);
         let entry = match (&result, agent) {
             (Ok(_), false) => title.to_owned(),
-            (Ok(_), true) => format!("{id}  ✓"),
-            (Err(e), _) => format!("{id}  ✗ {e}"),
+            (Ok(_), true) => format!("{id}: ok"),
+            (Err(e), _) => format!("{id} failed: {e}"),
         };
         self.state.activity.push(agent, entry);
         if let (Err(e), false) = (&result, agent) {
@@ -83,6 +92,163 @@ impl PeroxApp {
         let _ = self.run(id, args, Origin::User);
     }
 
+    /// Acts on something rust-analyzer answered.
+    fn effect(&mut self, effect: Effect) {
+        match effect {
+            Effect::Open { path, line, col } => {
+                self.run_user(
+                    "file.open",
+                    json!({ "path": path, "line": line + 1, "column": col + 1 }),
+                );
+            }
+            Effect::References(locs) => {
+                let s = &mut self.state;
+                s.references = locs
+                    .into_iter()
+                    .map(|l| {
+                        let text = match s.docs.by_path(&l.path).and_then(|id| s.docs.get(id)) {
+                            Some(d) => d.editor.core.doc.line_text(l.line),
+                            None => std::fs::read_to_string(&l.path)
+                                .ok()
+                                .and_then(|t| t.lines().nth(l.line).map(str::to_owned))
+                                .unwrap_or_default(),
+                        };
+                        (l.path, l.line + 1, l.col + 1, text)
+                    })
+                    .collect();
+                s.status = format!("{} reference(s)", s.references.len());
+                s.layout_requests.push(LayoutRequest::ShowReferences);
+            }
+            Effect::CodeActions { doc, items } => self.state.code_actions = Some((doc, items)),
+            Effect::WorkspaceEdit(edit) => {
+                let n = ide::apply_workspace_edit(&mut self.state, &edit);
+                self.state.status = format!("Changed {n} file(s). Save to keep the changes.");
+            }
+            Effect::Save(doc) => {
+                if let Ok(path) = self.state.docs.save(doc) {
+                    self.state.lsp.did_save(doc, &self.state.docs);
+                    self.state.status = format!("Formatted and saved {}", path.display());
+                }
+            }
+            Effect::Message(m) => self.state.status = m,
+        }
+    }
+
+    /// Quitting (menu, ⌘Q or the window's close button) asks first if there are unsaved changes.
+    fn handle_quit(&mut self, ctx: &egui::Context) {
+        let close_button = ctx.input(|i| i.viewport().close_requested());
+        let asked = std::mem::take(&mut self.state.quit_requested) || close_button;
+        let dirty: Vec<String> = self
+            .state
+            .docs
+            .list
+            .iter()
+            .filter(|d| d.is_dirty())
+            .map(|d| {
+                d.path
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+            })
+            .collect();
+        if asked && !self.quitting {
+            if dirty.is_empty() {
+                self.quitting = true;
+            } else {
+                self.quit_prompt = true;
+                if close_button {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                }
+            }
+        }
+        if self.quit_prompt {
+            let mut choice = None;
+            egui::Modal::new(egui::Id::unique("quit_prompt")).show(ctx, |ui| {
+                ui.heading("Save changes before quitting?");
+                ui.label(format!("Unsaved: {}", dirty.join(", ")));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save All and Quit").clicked() {
+                        choice = Some(0);
+                    }
+                    if ui.button("Don't Save").clicked() {
+                        choice = Some(1);
+                    }
+                    if ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
+                        choice = Some(2);
+                    }
+                });
+            });
+            match choice {
+                Some(0) => {
+                    self.run_user("file.save_all", json!({}));
+                    self.quit_prompt = false;
+                    self.quitting = self.state.docs.list.iter().all(|d| !d.is_dirty());
+                }
+                Some(1) => {
+                    self.quit_prompt = false;
+                    self.quitting = true;
+                }
+                Some(_) => self.quit_prompt = false,
+                None => {}
+            }
+        }
+        if self.quitting {
+            self.state.lsp.stop();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// The rename prompt and the quick-fix menu.
+    fn editor_dialogs(&mut self, ctx: &egui::Context) -> Vec<(&'static str, Value)> {
+        let mut out = Vec::new();
+        if let Some(name) = &mut self.state.rename {
+            let mut open = true;
+            let mut submit = false;
+            egui::Window::new("Rename Symbol")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_TOP, [0.0, 80.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label("New name:");
+                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(320.0));
+                    r.request_focus();
+                    submit = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    ui.weak("Enter renames everywhere it's used. Esc cancels.");
+                });
+            if submit {
+                out.push(("editor.rename", json!({ "new_name": name.clone() })));
+                self.state.rename = None;
+            } else if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.state.rename = None;
+            }
+        }
+        if let Some((_, items)) = &self.state.code_actions {
+            let mut open = true;
+            let mut pick = None;
+            egui::Window::new("Quick Fix")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_TOP, [0.0, 80.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    for (i, (title, _)) in items.iter().enumerate() {
+                        if ui.button(title).clicked() {
+                            pick = Some(i);
+                        }
+                    }
+                });
+            if let Some(i) = pick {
+                out.push(("editor.apply_code_action", json!({ "index": i })));
+            } else if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.state.code_actions = None;
+            }
+        }
+        out
+    }
+
     fn menu_bar(&self, ui: &mut egui::Ui, actions: &mut Vec<&'static str>) {
         let item = |ui: &mut egui::Ui, actions: &mut Vec<&'static str>, id: &'static str| {
             let title = self.bus.spec(id).map_or(id, |s| s.title);
@@ -90,7 +256,12 @@ impl PeroxApp {
                 .map(|s| ui.ctx().format_shortcut(&s))
                 .unwrap_or_default();
             if ui
-                .add(egui::Button::new(title).shortcut_text(shortcut))
+                .add(perox_icons::button(
+                    ui,
+                    icons::for_command(id),
+                    title,
+                    &shortcut,
+                ))
                 .clicked()
             {
                 actions.push(id);
@@ -109,6 +280,29 @@ impl PeroxApp {
                 ui.separator();
                 item(ui, actions, "app.quit");
             });
+            ui.menu_button("Go", |ui| {
+                item(ui, actions, "view.quick_open");
+                item(ui, actions, "editor.goto_line_prompt");
+                item(ui, actions, "editor.references");
+            });
+            ui.menu_button("Code", |ui| {
+                item(ui, actions, "editor.code_actions");
+                item(ui, actions, "editor.rename_prompt");
+                item(ui, actions, "editor.format");
+                ui.separator();
+                let label = if self.state.settings.format_on_save {
+                    "Turn Off Format on Save"
+                } else {
+                    "Turn On Format on Save"
+                };
+                if ui
+                    .add(perox_icons::button(ui, Icon::FileCheck, label, ""))
+                    .clicked()
+                {
+                    actions.push("editor.toggle_format_on_save");
+                    ui.close();
+                }
+            });
             ui.menu_button("View", |ui| {
                 item(ui, actions, "view.command_palette");
                 item(ui, actions, "view.reset_layout");
@@ -123,12 +317,27 @@ impl PeroxApp {
                 item(ui, actions, "build.stop");
             });
             ui.menu_button("Tools", |ui| {
-                let mut on = self.state.mcp.is_on();
-                if ui.checkbox(&mut on, "MCP Server").clicked() {
+                let label = if self.state.mcp.is_on() {
+                    "Turn Off MCP Server"
+                } else {
+                    "Turn On MCP Server"
+                };
+                if ui
+                    .add(perox_icons::button(ui, Icon::Plug, label, ""))
+                    .clicked()
+                {
                     actions.push("mcp.toggle");
                     ui.close();
                 }
-                if ui.button("MCP Server Settings…").clicked() {
+                if ui
+                    .add(perox_icons::button(
+                        ui,
+                        Icon::Settings2,
+                        "MCP Server Settings…",
+                        "",
+                    ))
+                    .clicked()
+                {
                     actions.push("app.settings");
                     ui.close();
                 }
@@ -151,13 +360,14 @@ impl PeroxApp {
                 format!("{} {s}", self.bus.spec(id).map_or(id, |c| c.title))
             };
             for (label, id) in [
-                ("▶ Run", "build.run"),
-                ("🔨 Build", "build.build"),
-                ("✔ Check", "build.check"),
-                ("🧪 Test", "build.test"),
+                ("Run", "build.run"),
+                ("Build", "build.build"),
+                ("Check", "build.check"),
+                ("Test", "build.test"),
             ] {
+                let icon = icons::for_command(id).image(ui);
                 if ui
-                    .add_enabled(has_project, egui::Button::new(label))
+                    .add_enabled(has_project, egui::Button::image_and_text(icon, label))
                     .on_hover_text(tip(id))
                     .clicked()
                 {
@@ -165,7 +375,10 @@ impl PeroxApp {
                 }
             }
             if ui
-                .add_enabled(running, egui::Button::new("■ Stop"))
+                .add_enabled(
+                    running,
+                    egui::Button::image_and_text(Icon::Square.image(ui), "Stop"),
+                )
                 .on_hover_text(tip("build.stop"))
                 .clicked()
             {
@@ -194,11 +407,8 @@ impl eframe::App for PeroxApp {
             .state
             .lsp
             .poll(&mut self.state.docs, &self.state.recency);
-        for Effect::Open { path, line, col } in effects {
-            self.run_user(
-                "file.open",
-                json!({ "path": path, "line": line + 1, "column": col + 1 }),
-            );
+        for effect in effects {
+            self.effect(effect);
         }
         // cargo.
         if let Some((kind, ok)) = self.state.build.poll() {
@@ -266,6 +476,7 @@ impl eframe::App for PeroxApp {
                 tree: s.tree.as_ref(),
                 project_root: s.project.as_ref().map(|p| p.root.as_path()),
                 recent: &s.settings.recent_projects,
+                references: &s.references,
                 active_doc: s.active_doc,
                 actions: Vec::new(),
                 requests: Vec::new(),
@@ -299,12 +510,22 @@ impl eframe::App for PeroxApp {
             let _ = ide::close_doc(&mut self.state, id, true);
         }
 
-        let mut palette_open = self.state.show_palette;
-        if let Some(id) = self.palette.ui(&ctx, &self.bus, &mut palette_open) {
-            actions.push(id);
+        if let Some(mode) = self.state.palette_request.take() {
+            self.palette.open(mode);
+            self.state.show_palette = true;
         }
+        let mut palette_open = self.state.show_palette;
+        let lines = self
+            .state
+            .active_doc
+            .and_then(|id| self.state.docs.get(id))
+            .map(|d| d.editor.core.doc.len_lines());
+        let picked = self
+            .palette
+            .ui(&ctx, &self.bus, &self.state.files, lines, &mut palette_open);
         self.state.show_palette = palette_open;
 
+        let dialog_actions = self.editor_dialogs(&ctx);
         let mut page_actions = Vec::new();
         if self.state.show_settings {
             let mut open = true;
@@ -334,10 +555,27 @@ impl eframe::App for PeroxApp {
                 });
         }
 
+        // Commands change what's on screen: draw the next frame now, not on the next input.
+        let ran_any = !actions.is_empty();
         for id in actions {
             self.run_user(id, json!({}));
         }
-        for (id, args) in page_actions.into_iter().chain(pane_actions) {
+        if ran_any {
+            ctx.request_repaint();
+        }
+        let more = !page_actions.is_empty()
+            || !pane_actions.is_empty()
+            || picked.is_some()
+            || !dialog_actions.is_empty();
+        if more {
+            ctx.request_repaint();
+        }
+        for (id, args) in page_actions
+            .into_iter()
+            .chain(pane_actions)
+            .chain(picked)
+            .chain(dialog_actions)
+        {
             self.run_user(id, args);
         }
         if std::mem::take(&mut self.state.open_dialog_requested)
@@ -354,6 +592,9 @@ impl eframe::App for PeroxApp {
                     layout::remove_pane(&mut self.tree, Pane::Editor(id))
                 }
                 LayoutRequest::ShowOutput => layout::show_pane(&mut self.tree, Pane::Output),
+                LayoutRequest::ShowReferences => {
+                    layout::show_pane(&mut self.tree, Pane::References)
+                }
             }
         }
         if std::mem::take(&mut self.state.reset_layout) {
@@ -365,9 +606,6 @@ impl eframe::App for PeroxApp {
         if self.state.build.running().is_some() {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
-        if std::mem::take(&mut self.state.quit_requested) {
-            self.state.lsp.stop();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+        self.handle_quit(&ctx);
     }
 }
