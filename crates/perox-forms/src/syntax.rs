@@ -167,7 +167,7 @@ pub struct ParseError {
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct File {
     pub elements: Vec<Element>,
     pub errors: Vec<ParseError>,
@@ -540,12 +540,13 @@ impl Parser {
                 self.recover();
             }
         }
+        // Another member may follow on the same line: `{ text: "Hi" bold: true }`.
         if !matches!(
             self.peek(),
-            None | Some(Tok::Newline | Tok::Semi | Tok::RBrace)
+            None | Some(Tok::Newline | Tok::Semi | Tok::RBrace | Tok::Ident(_))
         ) {
             let s = self.span();
-            self.error(s, "one property per line (or separate with `;`)");
+            self.error(s, "expected a new line, `;` or `}` after the value");
             self.recover();
         }
     }
@@ -727,11 +728,21 @@ Window main_window {
     }
 
     #[test]
-    fn this_line_has_two_properties_and_is_an_error() {
-        // The sample's `Label result { text: "" color: … }` puts two properties on one line.
+    fn properties_can_share_a_line() {
         let f = parse(SAMPLE);
+        assert!(f.errors.is_empty(), "{:?}", f.errors);
+        let result = f.at(&[0, 1]).unwrap();
+        assert_eq!(
+            result.prop("color"),
+            Some(&Value::Color([0xff, 0x88, 0, 255]))
+        );
+        let f = parse("Slider s { min: 0 max: 10 on changed: moved }");
+        assert!(f.errors.is_empty(), "{:?}", f.errors);
+        let s = f.root().unwrap();
+        assert_eq!(s.num_prop("max"), Some(10.0));
+        assert_eq!(s.handlers[0].method, "moved");
+        let f = parse("Label { text: \"a\" 12 }");
         assert_eq!(f.errors.len(), 1, "{:?}", f.errors);
-        assert!(f.errors[0].message.contains("one property per line"));
     }
 
     #[test]

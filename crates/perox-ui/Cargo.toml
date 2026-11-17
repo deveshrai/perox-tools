@@ -1,0 +1,20 @@
+[package]
+name = "perox-ui"
+description = "Runtime for .pxui forms: lays them out with taffy and draws them with egui, in user apps and in the PeroxIDE designer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Ships inside user apps (ADR 0004).
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui_extras = { version = "=0.37.0", features = ["file", "image", "svg"] }
+image.workspace = true
+perox-forms.workspace = true
+taffy = "=0.15.1"
+
+[lints]
+workspace = true

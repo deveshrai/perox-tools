@@ -34,3 +34,12 @@ handler in the code-behind (syn edits, checked with rust-analyzer).
 ## Alternatives considered
 - RON/JSON: designer-friendly, unpleasant to hand-write. KDL: good, but bindings and
   expressions would be bolted on. Using the `.slint` language: ties us to Slint.
+
+## Amendment (2026-11-17): interpret first
+
+Phase 2 ships one runtime, `perox-ui`, that interprets the form in both the designer
+and user apps. Generated code is a typed wrapper (`MainWindow`, `MainWindowHandlers`)
+around it, with the `.pxui` source embedded. One code path means the designer preview
+and the shipped app can't drift. Interpreting costs a taffy layout per frame, which is
+microseconds for forms of normal size. Compiling to plain egui stays a later
+optimisation; the generated API won't change when it lands.

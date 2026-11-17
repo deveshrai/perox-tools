@@ -21,6 +21,8 @@ perox-project = { path = "crates/perox-project" }
 perox-build = { path = "crates/perox-build" }
 perox-icons = { path = "crates/perox-icons" }
 perox-terminal = { path = "crates/perox-terminal" }
+perox-forms = { path = "crates/perox-forms" }
+perox-ui = { path = "crates/perox-ui" }
 eframe = "=0.37.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
@@ -35,7 +37,7 @@ notify = "=8.2.2"
 similar = "=3.2.1"
 regex = "=1.13.1"
 egui_extras = { version = "=0.37.0", features = ["svg"] }
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

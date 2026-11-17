@@ -54,7 +54,7 @@ One page. The decisions behind each part are in [docs/adr](docs/adr/).
 | ✅ `perox-terminal` | Integrated terminal (alacritty_terminal + egui) | GPL |
 | ✅ `perox-icons` | Lucide SVG icons, tinted to the theme ([ADR 0010](docs/adr/0010-icons.md)) | MIT/Apache + ISC |
 | ⏳ `perox-forms` | `.pxui` parser (lossless syntax tree), formatter, code generation | MIT/Apache |
-| ⏳ `perox-ui` | **Runtime inside user apps**: widgets, taffy layouts, themes | MIT/Apache |
+| ✅ `perox-ui` | **Runtime inside user apps** and the designer canvas: widgets, taffy layouts, events | MIT/Apache |
 | ⏳ `perox-designer` | Canvas, inspector, palette, layout tools | GPL |
 | ⏳ `perox-preview` | Out-of-process form renderer | GPL |
 | ✅ `perox-mcp` | MCP server: Streamable HTTP, token, sessions, four tools over the bus. Later: `peroxide mcp` stdio shim | GPL |
