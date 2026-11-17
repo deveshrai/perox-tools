@@ -42,6 +42,7 @@ The toolchain is pinned in `rust-toolchain.toml`. Each platform also needs:
 apps/peroxide/      the IDE executable (GPL-3.0-or-later)
 crates/perox-core/  the command bus (GPL-3.0-or-later)
 docs/               ADRs, roadmap, spikes
+toolchain-set/      the pinned toolchain + bundled crates, and the check that proves them
 ```
 
 ## License

@@ -1,0 +1,34 @@
+# PeroxIDE Toolchain Set: everything one IDE release bundles.
+# Changed only deliberately, as a whole, after the set check passes on every platform.
+# Decision: docs/adr/0005-toolchain-sets.md. Contents and rules: docs/adr/0009-toolchain-set-2026-11.md.
+# Exact crate versions live in check/Cargo.toml (+ the workspace Cargo.lock).
+
+[set]
+version = "2026.11"
+
+[rust]
+version = "1.100.0"           # stable, 2026-11; LLVM 23.1.5
+components = ["rustc", "cargo", "rust-std", "rust-src", "rustfmt", "clippy", "rust-analyzer"]
+edition = "2024"
+
+[tools]
+lldb-dap = "23.1.5"           # from the LLVM release matching rustc's LLVM
+linker = "rust-lld"           # ships with rustc; platform linkers below where required
+
+[targets]
+desktop = [
+  "aarch64-apple-darwin", "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+  "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc",
+]
+android = ["aarch64-linux-android", "x86_64-linux-android"]   # milestone 2; NDK pinned then
+
+[platform-floor]              # oldest OS that IDE and user apps support
+macos = "12.0"                # MACOSX_DEPLOYMENT_TARGET
+linux = "glibc 2.35"          # built on Ubuntu 22.04; X11 or Wayland
+windows = "10 1809"
+
+[platform-prerequisites]      # can't be redistributed; the IDE detects them and guides the user
+macos = "Xcode Command Line Tools"
+windows = "MSVC Build Tools 2022 or later (Desktop development with C++)"
+linux = "a C toolchain (build-essential or equivalent)"

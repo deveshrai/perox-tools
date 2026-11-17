@@ -1,0 +1,67 @@
+[package]
+name = "perox-set-check"
+description = "Builds every crate in the Toolchain Set together, on every platform, to prove the set is consistent."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# ── UI ────────────────────────────────────────────────────────────────
+eframe = { workspace = true }
+egui = "=0.37.0"
+egui_extras = { version = "=0.37.0", features = ["all_loaders", "serde"] }
+egui_plot = "=0.38.0"
+egui_tiles = "=0.18.0"
+taffy = "=0.15.1"
+# ── Desktop integration ───────────────────────────────────────────────
+rfd = "=0.18.0"
+arboard = "=3.7.0"
+directories = "=6.0.0"
+open = "=5.4.5"
+# ── Data formats ──────────────────────────────────────────────────────
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "=1.2.1"
+ron = "=0.12.3"
+quick-xml = { version = "=0.42.0", features = ["serialize"] }
+csv = "=1.4.0"
+# ── Errors, logging ───────────────────────────────────────────────────
+anyhow = "=1.0.104"
+thiserror = { workspace = true }
+log = "=0.4.35"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+# ── Text, time ────────────────────────────────────────────────────────
+chrono = { version = "=0.4.45", features = ["serde"] }
+regex = "=1.13.1"
+unicode-segmentation = "=1.13.3"
+# ── Async, network, database ──────────────────────────────────────────
+# TLS: rustls with the `ring` provider only. Never enable aws-lc-rs as well:
+# with two providers rustls cannot pick a default and panics at runtime.
+tokio = { version = "=1.54.1", features = ["full"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider", "charset", "http2", "system-proxy", "json", "blocking", "stream", "gzip", "form", "query", "multipart", "cookies"] }
+# perox-ui installs the ring provider at app start, so users never have to.
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+sqlx = { version = "=0.9.0", features = ["runtime-tokio", "tls-rustls-ring-native-roots", "sqlite-bundled", "postgres", "mysql", "chrono", "uuid"] }
+# ── Images, graphics ──────────────────────────────────────────────────
+image = "=0.25.10"
+resvg = "=0.45.1"   # matches egui_extras (svg loader); one copy in the tree
+# ── Ids, randomness, hashing, encoding, compression ───────────────────
+uuid = { version = "=1.29.3", features = ["v4", "v7", "serde"] }
+rand = "=0.10.4"
+sha2 = "=0.11.1"
+base64 = "=0.23.1"
+flate2 = "=1.1.11"
+zip = "=9.6.1"
+# ── Internationalisation ──────────────────────────────────────────────
+fluent-bundle = "=0.16.0"
+unic-langid = "=0.9.6"
+# ── Concurrency ───────────────────────────────────────────────────────
+rayon = "=1.12.0"
+crossbeam-channel = "=0.5.17"
+parking_lot = "=0.12.5"   # same as egui, tokio, wgpu
+
+[lints]
+workspace = true

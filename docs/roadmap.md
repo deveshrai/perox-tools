@@ -12,7 +12,8 @@ Each phase ends with a usable build and a short demo note in `docs/`.
 - [x] Workspace, pinned toolchain, CI on macOS/Linux/Windows
 - [x] Licenses, CLA draft, README, ARCHITECTURE, ADRs 0001–0008
 - [x] Command bus with access levels (`perox-core`), app shell with menus wired to it
-- [ ] Docking layout (egui_dock), command palette, keybindings, settings storage
+- [x] Toolchain Set 2026.11 pinned, set check on every OS ([ADR 0009](adr/0009-toolchain-set-2026-11.md))
+- [ ] Docking layout (egui_tiles), command palette, keybindings, settings storage
 - [ ] MCP server skeleton: Streamable HTTP, token, `tools/list` and `tools/call` over the bus,
       Tools › MCP Server toggle
 
