@@ -271,6 +271,7 @@ impl PeroxApp {
         };
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
+                item(ui, actions, "project.new_dialog");
                 item(ui, actions, "project.open_dialog");
                 ui.separator();
                 item(ui, actions, "file.save");
@@ -597,6 +598,14 @@ impl eframe::App for PeroxApp {
             .chain(dialog_actions)
         {
             self.run_user(id, args);
+        }
+        if std::mem::take(&mut self.state.new_dialog_requested)
+            && let Some(dir) = rfd::FileDialog::new()
+                .set_title("New GUI app: choose its folder name and location")
+                .set_file_name("my_app")
+                .save_file()
+        {
+            self.run_user("project.new", json!({ "path": dir }));
         }
         if std::mem::take(&mut self.state.open_dialog_requested)
             && let Some(dir) = rfd::FileDialog::new()

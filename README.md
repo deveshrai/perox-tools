@@ -9,9 +9,9 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phase 1 (a real Rust IDE) is done. Phase 2 (forms) is nearly done:** the form
-> designer, the `perox-ui` runtime and code generation work end to end. A "New GUI app"
-> template is next. See [docs/roadmap.md](docs/roadmap.md).
+> Status: **Phases 1 and 2 are done.** It's a real Rust IDE with rust-analyzer, plus a
+> form designer. **File → New GUI App** gives you a window to design, a button wired to Rust
+> code, and Run. Next up: debugger and pro tooling. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Screenshots
 

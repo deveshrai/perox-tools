@@ -76,7 +76,7 @@ pub(crate) fn draw(
             container(ui, el, rect, design);
             continue;
         }
-        let response = leaf(ui, el, &e.key, &e.path, rect, values, design, events);
+        let response = leaf(ui, file, el, &e.key, &e.path, rect, values, design, events);
         if !design
             && let Some(r) = response
             && let Some(tip) = el.str_prop("tooltip")
@@ -150,6 +150,7 @@ fn container(ui: &mut egui::Ui, el: &Element, rect: Rect, design: bool) {
 #[allow(clippy::too_many_arguments)]
 fn leaf(
     ui: &mut egui::Ui,
+    file: &File,
     el: &Element,
     key: &str,
     path: &[usize],
@@ -162,7 +163,15 @@ fn leaf(
     let r = match el.kind.as_str() {
         "Label" => {
             let font = label_font(el, values, key, ui.style());
-            let mut rt = RichText::new(text(el, values, key, "text")).font(font);
+            let t = text(el, values, key, "text");
+            if t.is_empty() && design {
+                let rt = RichText::new(crate::layout::placeholder_text(el))
+                    .font(font)
+                    .italics()
+                    .color(ui.visuals().weak_text_color().gamma_multiply(0.6));
+                return Some(ui.add(egui::Label::new(rt).selectable(false)));
+            }
+            let mut rt = RichText::new(t).font(font);
             if let Some(c) = color(prop(el, values, key, "color")) {
                 rt = rt.color(c);
             }
@@ -345,7 +354,8 @@ fn leaf(
         "ListView" => list_view(ui, el, key, path, rect, values, events),
         "Spacer" => {
             if design {
-                spacer_mark(ui, rect);
+                let parent = file.at(&path[..path.len().saturating_sub(1)]);
+                spacer_mark(ui, rect, parent.is_some_and(|p| p.kind == "HBox"));
             }
             return None;
         }
@@ -423,10 +433,9 @@ fn placeholder(ui: &mut egui::Ui, rect: Rect, label: &str) -> egui::Response {
 }
 
 /// Spacers are invisible; the designer draws a spring so you can find them.
-fn spacer_mark(ui: &mut egui::Ui, rect: Rect) {
+fn spacer_mark(ui: &mut egui::Ui, rect: Rect, horizontal: bool) {
     let color = ui.visuals().selection.bg_fill.gamma_multiply(0.7);
     let stroke = Stroke::new(1.0, color);
-    let horizontal = rect.width() >= rect.height();
     let (len, mid) = if horizontal {
         (rect.width(), rect.center().y)
     } else {

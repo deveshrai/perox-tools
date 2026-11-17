@@ -72,6 +72,31 @@ pub fn env() -> Vec<(String, String)> {
     Vec::new()
 }
 
+/// The folder holding the runtime crates new apps depend on (`perox-ui`,
+/// `perox-forms`). Order: `PEROXIDE_SDK`; the install's `sdk` folder (next to the
+/// executable, or `Contents/Resources/sdk` in a macOS bundle); this source tree's
+/// `crates/` (development builds).
+pub fn sdk_dir() -> Option<PathBuf> {
+    let has_runtime = |d: &std::path::Path| d.join("perox-ui").join("Cargo.toml").exists();
+    if let Some(d) = std::env::var_os("PEROXIDE_SDK").map(PathBuf::from)
+        && has_runtime(&d)
+    {
+        return Some(d);
+    }
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(PathBuf::from))
+    {
+        for d in [exe_dir.join("sdk"), exe_dir.join("../Resources/sdk")] {
+            if has_runtime(&d) {
+                return d.canonicalize().ok();
+            }
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    has_runtime(&dev).then(|| dev.canonicalize().ok()).flatten()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

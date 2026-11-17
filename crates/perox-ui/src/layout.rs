@@ -525,7 +525,13 @@ impl Builder<'_> {
                     s.flex_shrink = 1.0;
                     s.min_size.width = length(20.0);
                 }
-                self.text_size(&t, &font)
+                // The designer shows empty labels by name, so you can find them.
+                let shown = if t.is_empty() && self.design {
+                    placeholder_text(el)
+                } else {
+                    t
+                };
+                self.text_size(&shown, &font)
             }
             "Button" => {
                 let t = self.text_size(&text(el, v, key, "text"), &button);
@@ -621,4 +627,9 @@ fn grid_columns(spec: Option<&Value>) -> Vec<GridTemplateComponent<String>> {
             .collect(),
         _ => vec![track(0.0), track(1.0)],
     }
+}
+
+/// What the designer shows for an empty label: its id, or "Label".
+pub(crate) fn placeholder_text(el: &Element) -> String {
+    el.id.clone().unwrap_or_else(|| el.kind.clone())
 }

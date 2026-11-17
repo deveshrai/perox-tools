@@ -56,6 +56,7 @@ pub struct AppState {
     pub recency: Recency,
     pub layout_requests: Vec<LayoutRequest>,
     pub open_dialog_requested: bool,
+    pub new_dialog_requested: bool,
     pub ctx: egui::Context,
 }
 
@@ -71,6 +72,7 @@ impl AppState {
             recency: Recency::default(),
             layout_requests: Vec::new(),
             open_dialog_requested: false,
+            new_dialog_requested: false,
             ctx,
             settings,
             mcp,

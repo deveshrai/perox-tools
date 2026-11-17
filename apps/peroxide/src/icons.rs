@@ -5,6 +5,7 @@ use perox_icons::Icon;
 pub fn for_command(id: &str) -> Icon {
     match id {
         "project.open_dialog" | "project.open" => Icon::FolderOpen,
+        "project.new_dialog" | "project.new" => Icon::AppWindow,
         "file.save" => Icon::Save,
         "file.save_all" => Icon::SaveAll,
         "file.close" => Icon::X,

@@ -402,6 +402,9 @@ impl PaneUi<'_> {
             ui.heading(RichText::new("PeroxIDE").size(32.0));
             ui.label("The Rust RAD IDE");
             ui.add_space(16.0);
+            if ui.button("New GUI App…").clicked() {
+                self.actions.push(("project.new_dialog", json!({})));
+            }
             if ui
                 .button(format!(
                     "Open Project…   {}",

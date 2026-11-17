@@ -14,6 +14,7 @@ mod mcp_host;
 mod mcp_page;
 mod palette;
 mod settings;
+mod templates;
 mod watcher;
 
 fn main() -> eframe::Result {

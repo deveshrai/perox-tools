@@ -419,6 +419,27 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 .params(json!({ "type": "object", "required": ["path"], "properties": { "path": { "type": "string", "description": "Absolute path" } } })),
             |s, inv| open_project(s, Path::new(inv.str_arg("path")?)),
         ),
+        (
+            CommandSpec::new("project.new", "New GUI App", Access::Edit)
+                .description("Creates a GUI app (a window form, its code-behind and build.rs) in a new folder, opens it, and shows the form in the designer. `path` is the new folder (absolute); its name becomes the package name.")
+                .params(json!({ "type": "object", "required": ["path"], "properties": { "path": { "type": "string", "description": "Absolute path of a folder that doesn't exist yet (or is empty)" } } })),
+            |s, inv| {
+                let dir = PathBuf::from(inv.str_arg("path")?);
+                if !dir.is_absolute() {
+                    return Err(err("Give an absolute path for the new app's folder."));
+                }
+                let sdk = perox_build::tools::sdk_dir()
+                    .ok_or_else(|| err("Can't find the PeroxIDE runtime crates (perox-ui). Reinstall, or set PEROXIDE_SDK."))?;
+                let form = crate::templates::create_gui_app(&dir, &sdk).map_err(err)?;
+                open_project(s, &dir)?;
+                open_file(s, &form, None, None)?;
+                Ok(json!({ "created": dir, "form": form }))
+            },
+        ),
+        (CommandSpec::new("project.new_dialog", "New GUI App…", Access::Edit).ui_only(), |s, _| {
+            s.new_dialog_requested = true;
+            Ok(Value::Null)
+        }),
         (CommandSpec::new("project.open_dialog", "Open Project…", Access::Edit).ui_only(), |s, _| {
             s.open_dialog_requested = true;
             Ok(Value::Null)
