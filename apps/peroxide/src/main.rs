@@ -12,6 +12,7 @@ mod mcp_host;
 mod mcp_page;
 mod palette;
 mod settings;
+mod watcher;
 
 fn main() -> eframe::Result {
     // `peroxide <folder or file>` opens that project.

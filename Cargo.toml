@@ -30,6 +30,7 @@ rand = "=0.10.4"
 directories = "=6.0.0"
 chrono = "=0.4.45"
 rfd = "=0.18.0"
+notify = "=8.2.2"
 regex = "=1.13.1"
 egui_extras = { version = "=0.37.0", features = ["svg"] }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }

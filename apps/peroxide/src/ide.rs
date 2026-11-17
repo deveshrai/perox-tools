@@ -166,8 +166,22 @@ pub fn open_project(s: &mut AppState, path: &Path) -> Result<Value, CommandError
     s.build.diagnostics.clear();
     let info = project_info(&project);
     s.status = format!("Opened {}", project.name);
+    s.save_session(); // the project being left
     s.settings.remember_project(&project.root);
+    s.watcher = crate::watcher::Watcher::new(&project.root, s.ctx.clone());
+    let session = s
+        .settings
+        .sessions
+        .get(&project.root)
+        .cloned()
+        .unwrap_or_default();
     s.project = Some(project);
+    for path in session.open.iter().filter(|p| p.is_file()) {
+        let _ = open_file(s, path, None, None);
+    }
+    if let Some(active) = session.active.filter(|p| p.is_file()) {
+        let _ = open_file(s, &active, None, None);
+    }
     Ok(info)
 }
 

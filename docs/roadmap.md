@@ -37,8 +37,8 @@ tool for long calls; the `peroxide mcp` stdio shim.
 - [x] Rename (all files), find references, quick fixes and refactorings (⌘.), format, format on save
 - [x] Icons: Lucide SVGs for every toolbar button and menu item ([ADR 0010](adr/0010-icons.md))
 - [x] Everything the IDE starts uses the pinned toolchain; quitting asks to save
-- [ ] Inlay hints
-- [ ] Reload files changed on disk; save and restore the layout
+- [x] Inlay hints (types, parameter names); decorations follow edits without flicker
+- [x] Reload files changed on disk (never over unsaved edits); Explorer refreshes; open files restored per project
 - [ ] Integrated terminal; git basics
 - [ ] Completion benchmark file: the right item in the top 3
 

@@ -195,6 +195,7 @@ impl PeroxApp {
             }
         }
         if self.quitting {
+            self.state.save_session();
             self.state.lsp.stop();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -397,7 +398,9 @@ impl eframe::App for PeroxApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // Agent calls first: they wait on a reply.
+        // Files changed by other programs, before anyone reads them.
+        self.state.apply_disk_changes();
+        // Agent calls next: they wait on a reply.
         while let Ok(call) = self.calls.try_recv() {
             let result = self.run(&call.id, call.args, call.origin);
             let _ = call.reply.send(result);

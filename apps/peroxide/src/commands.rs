@@ -38,6 +38,7 @@ pub struct AppState {
     pub code_actions: Option<(DocId, Vec<(String, Value)>)>,
     /// The rename prompt's text while it's open.
     pub rename: Option<String>,
+    pub watcher: Option<crate::watcher::Watcher>,
     pub project: Option<Project>,
     /// The Explorer's file tree.
     pub tree: Option<Node>,
@@ -78,11 +79,75 @@ impl AppState {
             references: Vec::new(),
             code_actions: None,
             rename: None,
+            watcher: None,
         }
     }
 }
 
 impl AppState {
+    /// Remembers the open project's open files, for next time.
+    pub fn save_session(&mut self) {
+        let Some(root) = self.project.as_ref().map(|p| p.root.clone()) else {
+            return;
+        };
+        let open: Vec<_> = self
+            .docs
+            .list
+            .iter()
+            .filter(|d| d.path.starts_with(&root))
+            .map(|d| d.path.clone())
+            .collect();
+        let active = self
+            .active_doc
+            .and_then(|id| self.docs.get(id))
+            .map(|d| d.path.clone());
+        self.settings
+            .sessions
+            .insert(root, crate::settings::Session { open, active });
+        self.settings.save();
+    }
+
+    /// Acts on files changed by other programs.
+    pub fn apply_disk_changes(&mut self) {
+        let Some(root) = self.project.as_ref().map(|p| p.root.clone()) else {
+            return;
+        };
+        let Some(changes) = self.watcher.as_mut().and_then(|w| w.poll(&root)) else {
+            return;
+        };
+        for path in &changes.files {
+            let Some(id) = self.docs.by_path(path) else {
+                continue;
+            };
+            let Ok(disk) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            let Some(doc) = self.docs.get_mut(id) else {
+                continue;
+            };
+            if doc.editor.core.text() == disk {
+                continue; // our own save, or no real change
+            }
+            let name = path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            if doc.is_dirty() {
+                self.status = format!(
+                    "{name} changed on disk; your unsaved edits are kept. Save to overwrite."
+                );
+                continue;
+            }
+            doc.editor.set_text(&disk);
+            doc.editor.core.doc.mark_saved();
+            let edits = doc.editor.take_lsp_edits();
+            self.lsp.did_change(id, &self.docs, &edits);
+            self.status = format!("Reloaded {name} (changed on disk)");
+        }
+        if changes.structure {
+            self.refresh_tree();
+        }
+    }
+
     /// Re-reads the Explorer tree (after files are added or removed).
     pub fn refresh_tree(&mut self) {
         if let Some(p) = &self.project {

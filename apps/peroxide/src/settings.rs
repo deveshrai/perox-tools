@@ -17,9 +17,19 @@ pub struct Settings {
     pub recent_projects: Vec<PathBuf>,
     /// Run rustfmt (through rust-analyzer) when saving Rust files.
     pub format_on_save: bool,
+    /// Open files per project root, restored when the project opens again.
+    pub sessions: std::collections::BTreeMap<PathBuf, Session>,
     /// Where these settings are saved. `None` (defaults, tests) never touches disk.
     #[serde(skip)]
     pub file: Option<PathBuf>,
+}
+
+/// A project's open files.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Session {
+    pub open: Vec<PathBuf>,
+    pub active: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
