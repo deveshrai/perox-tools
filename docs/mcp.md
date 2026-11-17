@@ -54,8 +54,12 @@ Agents get four tools that reach every IDE command they're allowed to use:
 | `execute` | Runs one command, exactly as if you chose it from a menu |
 | `batch` | Runs several in order; stops at the first failure unless told otherwise |
 
-Phase 0 commands: `app.info`, `status.show_message`, `activity.recent`. Each new IDE
-feature adds commands, and agents can use them straight away
+Commands so far, by area: `project.*` (open, info, files), `file.*` (open, read, write,
+save, close), `editor.*` (replace, type, completions, accept_completion, cursor), `build.*`
+(check, build, run, test, clippy, stop, status, output), `problems.list`, `lsp.*`,
+`view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
+Lines and columns are 1-based. Each new IDE feature adds commands, and agents can use them
+straight away
 ([ADR 0002](adr/0002-command-bus.md)). Commands that only make sense with a person present,
 such as quitting or changing the MCP settings, are hidden from agents.
 

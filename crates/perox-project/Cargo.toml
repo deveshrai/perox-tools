@@ -1,0 +1,16 @@
+[package]
+description = "PeroxIDE projects: Cargo workspaces and the file tree."
+name = "perox-project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+ignore = "0.4.34"
+
+[lints]
+workspace = true

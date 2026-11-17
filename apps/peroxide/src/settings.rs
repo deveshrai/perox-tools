@@ -13,6 +13,8 @@ pub const DEFAULT_MCP_PORT: u16 = 27890;
 #[serde(default)]
 pub struct Settings {
     pub mcp: McpSettings,
+    /// Most recent first.
+    pub recent_projects: Vec<PathBuf>,
     /// Where these settings are saved. `None` (defaults, tests) never touches disk.
     #[serde(skip)]
     pub file: Option<PathBuf>,
@@ -75,6 +77,14 @@ impl Settings {
             s.save();
         }
         s
+    }
+
+    /// Puts a project at the top of the recent list and saves.
+    pub fn remember_project(&mut self, root: &std::path::Path) {
+        self.recent_projects.retain(|p| p != root);
+        self.recent_projects.insert(0, root.to_owned());
+        self.recent_projects.truncate(10);
+        self.save();
     }
 
     /// Saves settings. The file holds the MCP token, so on Unix only the owner can read it.

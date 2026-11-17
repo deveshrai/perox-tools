@@ -18,6 +18,8 @@ use crate::tools::{self, Host};
 pub const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 const MAX_SESSIONS: usize = 16;
 const MAX_CONNECTIONS: usize = 32;
+/// Sessions with no request for this long are forgotten (clients rarely say goodbye).
+const SESSION_IDLE: Duration = Duration::from_secs(30 * 60);
 
 /// How to run the server.
 #[derive(Debug, Clone)]
@@ -104,7 +106,9 @@ impl Server {
     /// A snapshot for the status line.
     pub fn stats(&self) -> Stats {
         let mut stats = lock(&self.shared.stats).clone();
-        stats.sessions = lock(&self.shared.sessions).len();
+        let mut sessions = lock(&self.shared.sessions);
+        sessions.retain(|_, seen| seen.elapsed() < SESSION_IDLE);
+        stats.sessions = sessions.len();
         stats
     }
 }

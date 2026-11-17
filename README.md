@@ -9,14 +9,16 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phase 0 (foundation) is done.** Docking layout, command palette, settings, and a
-> built-in MCP server that Claude Code can drive ([docs/mcp.md](docs/mcp.md)). Next is Phase 1,
-> a real Rust IDE. See [docs/roadmap.md](docs/roadmap.md).
+> Status: **Phase 1 (a real Rust IDE) in progress.** Open a Cargo project, edit with
+> rust-analyzer completion, hover, go to definition and live errors; build, run and test.
+> Claude Code can drive all of it over MCP ([docs/mcp.md](docs/mcp.md)).
+> See [docs/roadmap.md](docs/roadmap.md).
 
 ## Build and run
 
 ```sh
 cargo run -p peroxide        # the IDE
+cargo run -p peroxide -- ~/code/my-crate   # …and open a project
 cargo test --workspace       # tests
 ```
 
@@ -44,6 +46,10 @@ The toolchain is pinned in `rust-toolchain.toml`. Each platform also needs:
 apps/peroxide/      the IDE executable (GPL-3.0-or-later)
 crates/perox-core/  the command bus (GPL-3.0-or-later)
 crates/perox-mcp/   the MCP server (GPL-3.0-or-later)
+crates/perox-editor/  the code editor (GPL-3.0-or-later)
+crates/perox-lsp/   the rust-analyzer client (GPL-3.0-or-later)
+crates/perox-project/ Cargo projects and the file tree (GPL-3.0-or-later)
+crates/perox-build/ running cargo (GPL-3.0-or-later)
 docs/               ADRs, roadmap, spikes
 toolchain-set/      the pinned toolchain + bundled crates, and the check that proves them
 ```

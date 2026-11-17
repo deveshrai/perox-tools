@@ -11,6 +11,12 @@ publish.workspace = true
 [dependencies]
 perox-core.workspace = true
 perox-mcp.workspace = true
+perox-editor.workspace = true
+perox-lsp.workspace = true
+perox-project.workspace = true
+perox-build.workspace = true
+rfd.workspace = true
+image.workspace = true
 eframe.workspace = true
 egui_tiles.workspace = true
 serde.workspace = true

@@ -2,14 +2,22 @@
 
 mod app;
 mod commands;
+mod docs;
+mod ide;
 mod keymap;
 mod layout;
+mod lsp;
 mod mcp_host;
 mod mcp_page;
 mod palette;
 mod settings;
 
 fn main() -> eframe::Result {
+    // `peroxide <folder or file>` opens that project.
+    let open = std::env::args_os()
+        .nth(1)
+        .map(std::path::PathBuf::from)
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p));
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("PeroxIDE")
@@ -20,6 +28,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "PeroxIDE",
         options,
-        Box::new(|cc| Ok(Box::new(app::PeroxApp::new(&cc.egui_ctx)))),
+        Box::new(move |cc| Ok(Box::new(app::PeroxApp::new(&cc.egui_ctx, open)))),
     )
 }

@@ -46,9 +46,11 @@ One page. The decisions behind each part are in [docs/adr](docs/adr/).
 |---|---|---|
 | ✅ `apps/peroxide` | The executable: docking (egui_tiles), menus, palette, settings, MCP host; wires everything to the bus | GPL |
 | ✅ `perox-core` | Command bus, access levels. Later: project model, documents, undo | GPL |
-| ⏳ `perox-editor` | Code editor widget: rope, tree-sitter, multi-cursor, folding | GPL |
-| ⏳ `perox-lsp`, `perox-dap` | rust-analyzer and lldb-dap clients | GPL |
-| ⏳ `perox-build` | cargo runs, JSON diagnostics, run configurations | GPL |
+| ✅ `perox-editor` | Code editor: rope, multi-cursor, tree-sitter highlighting, completion UI, snippets | GPL |
+| ✅ `perox-lsp` | rust-analyzer client | GPL |
+| ⏳ `perox-dap` | lldb-dap client (debugger) | GPL |
+| ✅ `perox-build` | cargo runs, JSON diagnostics, finding the toolchain | GPL |
+| ✅ `perox-project` | Cargo projects and the file tree | GPL |
 | ⏳ `perox-forms` | `.pxui` parser (lossless syntax tree), formatter, code generation | MIT/Apache |
 | ⏳ `perox-ui` | **Runtime inside user apps**: widgets, taffy layouts, themes | MIT/Apache |
 | ⏳ `perox-designer` | Canvas, inspector, palette, layout tools | GPL |

@@ -6,6 +6,13 @@ use std::collections::VecDeque;
 use perox_core::{Access, CommandBus, CommandError, CommandSpec, Invocation};
 use serde_json::{Value, json};
 
+use eframe::egui;
+use perox_editor::completion::Recency;
+use perox_project::{Node, Project};
+
+use crate::docs::{DocId, Docs};
+use crate::ide::{BuildState, LayoutRequest};
+use crate::lsp::Lsp;
 use crate::mcp_host::McpController;
 use crate::settings::{ConnectFrom, Settings};
 
@@ -21,11 +28,32 @@ pub struct AppState {
     pub show_settings: bool,
     pub show_palette: bool,
     pub reset_layout: bool,
+    pub project: Option<Project>,
+    /// The Explorer's file tree.
+    pub tree: Option<Node>,
+    pub docs: Docs,
+    pub active_doc: Option<DocId>,
+    pub lsp: Lsp,
+    pub build: BuildState,
+    pub recency: Recency,
+    pub layout_requests: Vec<LayoutRequest>,
+    pub open_dialog_requested: bool,
+    pub ctx: egui::Context,
 }
 
 impl AppState {
-    pub fn new(settings: Settings, mcp: McpController) -> Self {
+    pub fn new(settings: Settings, mcp: McpController, ctx: egui::Context) -> Self {
         Self {
+            project: None,
+            tree: None,
+            docs: Docs::default(),
+            active_doc: None,
+            lsp: Lsp::new(ctx.clone()),
+            build: BuildState::default(),
+            recency: Recency::default(),
+            layout_requests: Vec::new(),
+            open_dialog_requested: false,
+            ctx,
             settings,
             mcp,
             activity: Activity::default(),
@@ -35,6 +63,15 @@ impl AppState {
             show_settings: false,
             show_palette: false,
             reset_layout: false,
+        }
+    }
+}
+
+impl AppState {
+    /// Re-reads the Explorer tree (after files are added or removed).
+    pub fn refresh_tree(&mut self) {
+        if let Some(p) = &self.project {
+            self.tree = Some(p.file_tree(20_000));
         }
     }
 }
@@ -71,15 +108,15 @@ impl Activity {
 type Handler = fn(&mut AppState, &Invocation) -> Result<Value, CommandError>;
 
 pub fn register(bus: &mut CommandBus<AppState>) {
-    let commands: [(CommandSpec, Handler); 14] = [
+    let commands: [(CommandSpec, Handler); 15] = [
         (
             CommandSpec::new("app.info", "About This IDE", Access::Read)
                 .description("Name and version of the running PeroxIDE, and whether a project is open."),
-            |_, _| {
+            |s, _| {
                 Ok(json!({
                     "name": "PeroxIDE",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "phase": "0 (foundation): no projects or editor yet"
+                    "project": s.project.as_ref().map(|p| p.root.display().to_string())
                 }))
             },
         ),
@@ -111,6 +148,30 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     .map(|e| json!({ "time": e.time, "by": if e.agent { "agent" } else { "user" }, "text": e.text }))
                     .collect();
                 Ok(json!(entries))
+            },
+        ),
+        (
+            CommandSpec::new("view.screenshot", "Screenshot of the IDE", Access::Read)
+                .description("Saves a PNG of the IDE window and returns its path, so you can look at what's on screen. The file is written within a moment of the call; read it after that.")
+                .params(json!({ "type": "object", "properties": {
+                    "path": { "type": "string", "description": "Where to save; default: a temporary file." }
+                }})),
+            |s, inv| {
+                let path = match inv.args.get("path").and_then(Value::as_str) {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => std::env::temp_dir().join(format!("peroxide-screenshot-{}.png", chrono::Local::now().format("%Y%m%d-%H%M%S"))),
+                };
+                let target = path.clone();
+                let save = egui::ScreenshotCallback::new(move |img| {
+                    let [w, h] = img.size;
+                    let bytes: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
+                    if let Some(png) = image::RgbaImage::from_raw(w as u32, h as u32, bytes) {
+                        let _ = png.save(&target);
+                    }
+                });
+                s.ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(save));
+                s.ctx.request_repaint();
+                Ok(json!({ "path": path }))
             },
         ),
         (
@@ -265,15 +326,24 @@ mod tests {
     fn setup() -> (CommandBus<AppState>, AppState) {
         let mut bus = CommandBus::new();
         register(&mut bus);
-        let (mcp, _rx) = McpController::new(Vec::new(), eframe::egui::Context::default());
-        (bus, AppState::new(Settings::default(), mcp))
+        let ctx = eframe::egui::Context::default();
+        let (mcp, _rx) = McpController::new(Vec::new(), ctx.clone());
+        (bus, AppState::new(Settings::default(), mcp, ctx))
     }
 
     #[test]
     fn agents_see_only_the_safe_commands() {
         let (bus, _) = setup();
         let ids: Vec<_> = bus.agent_specs(Access::Execute).map(|c| c.id).collect();
-        assert_eq!(ids, ["activity.recent", "app.info", "status.show_message"]);
+        assert_eq!(
+            ids,
+            [
+                "activity.recent",
+                "app.info",
+                "status.show_message",
+                "view.screenshot"
+            ]
+        );
     }
 
     #[test]

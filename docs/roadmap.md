@@ -24,11 +24,20 @@ posted a status message. The IDE's Activity panel showed each call.
 **Carried into Phase 1:** save and restore the layout; user-defined keybindings; the `pending`
 tool for long calls; the `peroxide mcp` stdio shim.
 
-### Phase 1: a real Rust IDE ← *next*
-Project model (Cargo workspaces, `[package.metadata.peroxide]`), file tree, custom code
-editor (rope, tree-sitter, multi-cursor, folding), rust-analyzer (completion, go to
-definition, references, rename, diagnostics), cargo build/run/test with a problems panel,
-integrated terminal, git basics.
+### Phase 1: a real Rust IDE ← *in progress*
+- [x] Projects: open a Cargo package or workspace, Explorer tree, recent projects
+- [x] Editor: rope buffer, multi-cursor, undo/redo, auto-pairs, smart indent, ⌘D, comments
+- [x] Syntax highlighting: tree-sitter, plus rust-analyzer's semantic colours on top
+- [x] Completion: fast popup, fuzzy ranking with recency, snippets with Tab stops,
+      auto-imports, docs panel, signature help. Measured: median 27 ms, p90 36 ms
+- [x] Hover, go to definition (F12 / ⌘-click), live diagnostics, Problems panel
+- [x] cargo check/build/run/test/clippy, Output panel, Stop
+- [x] Agents: project, file, editor, build and problem commands; screenshots
+- [ ] Find and replace, go to line, quick open (⌘P)
+- [ ] Rename, find references, code actions (quick fixes), format, inlay hints
+- [ ] Reload files changed on disk; save and restore the layout
+- [ ] Integrated terminal; git basics
+- [ ] Completion benchmark file: the right item in the top 3
 
 **Done when:** you can comfortably write, build and run a multi-file Rust project in PeroxIDE.
 

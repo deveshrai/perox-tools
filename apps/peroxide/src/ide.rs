@@ -1,0 +1,574 @@
+//! IDE commands: projects, files, editing, building, problems. Menus, shortcuts, the
+//! palette and agents all use these. Agents' file access is limited to the project.
+//! Lines and columns in arguments and results are 1-based, as people count them.
+
+use std::path::{Path, PathBuf};
+
+use perox_build::{Job, Kind};
+use perox_core::{Access, CommandBus, CommandError, CommandSpec, Invocation, Origin};
+use perox_editor::{Change, Pos};
+use perox_project::Project;
+use serde_json::{Value, json};
+
+use crate::commands::AppState;
+use crate::docs::DocId;
+
+/// Something only the layout can do; queued by commands, done by the app after them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutRequest {
+    ShowDoc(DocId),
+    CloseDoc(DocId),
+    ShowOutput,
+}
+
+/// The current cargo job and what it printed.
+#[derive(Debug, Default)]
+pub struct BuildState {
+    pub job: Option<Job>,
+    pub output: Vec<String>,
+    pub diagnostics: Vec<perox_build::Diagnostic>,
+    /// The last finished job and whether it succeeded.
+    pub last: Option<(Kind, bool)>,
+}
+
+impl BuildState {
+    pub fn running(&self) -> Option<Kind> {
+        self.job.as_ref().map(|j| j.kind)
+    }
+
+    /// Collects new output; returns `Some(success)` when the job finished this frame.
+    pub fn poll(&mut self) -> Option<(Kind, bool)> {
+        let job = self.job.as_mut()?;
+        let kind = job.kind;
+        let mut finished = None;
+        for e in job.poll() {
+            match e {
+                perox_build::Event::Line(l) => {
+                    if self.output.len() >= 20_000 {
+                        self.output.drain(..5_000);
+                    }
+                    self.output.push(l);
+                }
+                perox_build::Event::Diagnostic(d) => self.diagnostics.push(d),
+                perox_build::Event::Finished { success } => finished = Some(success),
+            }
+        }
+        let success = finished?;
+        self.job = None;
+        self.last = Some((kind, success));
+        self.output.push(String::new());
+        self.output.push(format!(
+            "── cargo {} {} ──",
+            kind.verb(),
+            if success { "finished" } else { "failed" }
+        ));
+        Some((kind, success))
+    }
+}
+
+fn err(msg: impl Into<String>) -> CommandError {
+    CommandError::Failed(msg.into())
+}
+
+fn opt_usize(inv: &Invocation, name: &str) -> Option<usize> {
+    inv.args
+        .get(name)
+        .and_then(Value::as_u64)
+        .map(|n| n as usize)
+}
+
+/// Resolves a path argument against the project. Agents may only reach inside it.
+fn resolve(s: &AppState, inv: &Invocation, name: &str) -> Result<PathBuf, CommandError> {
+    let raw = inv.str_arg(name)?;
+    let root = s.project.as_ref().map(|p| p.root.clone());
+    let path = match (&root, Path::new(raw).is_absolute()) {
+        (_, true) => PathBuf::from(raw),
+        (Some(r), false) => r.join(raw),
+        (None, false) => {
+            return Err(err(
+                "No project is open; use an absolute path or open a project first.",
+            ));
+        }
+    };
+    if matches!(inv.origin, Origin::Agent { .. }) {
+        let Some(root) = root else {
+            return Err(err(
+                "No project is open. Agents can only use files inside the open project.",
+            ));
+        };
+        let normal = normalize(&path);
+        if !normal.starts_with(normalize(&root)) {
+            return Err(err(format!(
+                "{} is outside the project ({}).",
+                path.display(),
+                root.display()
+            )));
+        }
+    }
+    Ok(path)
+}
+
+/// Removes `.` and `..` without touching the disk (the file may not exist yet).
+fn normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn rel(s: &AppState, p: &Path) -> String {
+    s.project
+        .as_ref()
+        .and_then(|pr| p.strip_prefix(&pr.root).ok())
+        .unwrap_or(p)
+        .display()
+        .to_string()
+}
+
+/// Opens (or focuses) a file and optionally moves the cursor to a 1-based line/column.
+pub fn open_file(
+    s: &mut AppState,
+    path: &Path,
+    line: Option<usize>,
+    col: Option<usize>,
+) -> Result<DocId, CommandError> {
+    let (id, new) = s.docs.open(path).map_err(err)?;
+    if new {
+        s.lsp.did_open(id, &s.docs);
+    }
+    if let (Some(line), Some(doc)) = (line, s.docs.get_mut(id)) {
+        doc.editor
+            .goto(line.saturating_sub(1), col.unwrap_or(1).saturating_sub(1));
+    }
+    if let Some(doc) = s.docs.get_mut(id) {
+        doc.editor.focus_requested = true;
+    }
+    s.active_doc = Some(id);
+    s.layout_requests.push(LayoutRequest::ShowDoc(id));
+    Ok(id)
+}
+
+pub fn open_project(s: &mut AppState, path: &Path) -> Result<Value, CommandError> {
+    let cargo = perox_build::tools::cargo()
+        .ok_or_else(|| err("cargo isn't installed (Toolchain Set missing)."))?;
+    let project = Project::open(path, &cargo).map_err(err)?;
+    s.tree = Some(project.file_tree(20_000));
+    s.lsp.start(&project.root);
+    s.build.diagnostics.clear();
+    let info = project_info(&project);
+    s.status = format!("Opened {}", project.name);
+    s.settings.remember_project(&project.root);
+    s.project = Some(project);
+    Ok(info)
+}
+
+fn project_info(p: &Project) -> Value {
+    json!({
+        "root": p.root,
+        "name": p.name,
+        "packages": p.packages.iter().map(|pk| json!({
+            "name": pk.name,
+            "targets": pk.targets.iter().map(|t| json!({ "name": t.name, "kind": t.kind, "src": t.src_path })).collect::<Vec<_>>()
+        })).collect::<Vec<_>>()
+    })
+}
+
+fn start_build(s: &mut AppState, kind: Kind) -> Result<Value, CommandError> {
+    let root = s
+        .project
+        .as_ref()
+        .map(|p| p.root.clone())
+        .ok_or_else(|| err("No project is open."))?;
+    let cargo = perox_build::tools::cargo().ok_or_else(|| err("cargo isn't installed."))?;
+    // Save everything first, as people expect.
+    let dirty: Vec<DocId> = s
+        .docs
+        .list
+        .iter()
+        .filter(|d| d.is_dirty())
+        .map(|d| d.id)
+        .collect();
+    for id in dirty {
+        s.docs.save(id).map_err(err)?;
+        s.lsp.did_save(id, &s.docs);
+    }
+    if let Some(job) = &mut s.build.job {
+        job.stop();
+    }
+    let ctx = s.ctx.clone();
+    let job = Job::start(&cargo, &root, kind, move || ctx.request_repaint())
+        .map_err(|e| err(e.to_string()))?;
+    s.build.job = Some(job);
+    s.build.output.clear();
+    s.build.diagnostics.clear();
+    s.build.output.push(format!("── cargo {} ──", kind.verb()));
+    s.layout_requests.push(LayoutRequest::ShowOutput);
+    s.status = format!("cargo {}…", kind.verb());
+    Ok(
+        json!({ "started": format!("cargo {}", kind.verb()), "hint": "Call build.output (or problems.list) for results; build.status says when it's done." }),
+    )
+}
+
+type Handler = fn(&mut AppState, &Invocation) -> Result<Value, CommandError>;
+
+fn path_schema(extra: Value) -> Value {
+    let mut props = json!({ "path": { "type": "string", "description": "File path, relative to the project root or absolute." } });
+    if let (Some(p), Some(e)) = (props.as_object_mut(), extra.as_object()) {
+        p.extend(e.clone());
+    }
+    json!({ "type": "object", "required": ["path"], "properties": props })
+}
+
+pub fn register(bus: &mut CommandBus<AppState>) {
+    let line_col = json!({
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 }
+    });
+    let build = |id: &'static str, title: &'static str, desc: &'static str| {
+        CommandSpec::new(id, title, Access::Execute).description(desc)
+    };
+    let commands: Vec<(CommandSpec, Handler)> = vec![
+        // ── projects ──
+        (
+            CommandSpec::new("project.open", "Open Project", Access::Edit)
+                .description("Opens the Cargo project or workspace containing a folder or file. Starts rust-analyzer for it.")
+                .params(json!({ "type": "object", "required": ["path"], "properties": { "path": { "type": "string", "description": "Absolute path" } } })),
+            |s, inv| open_project(s, Path::new(inv.str_arg("path")?)),
+        ),
+        (CommandSpec::new("project.open_dialog", "Open Project…", Access::Edit).ui_only(), |s, _| {
+            s.open_dialog_requested = true;
+            Ok(Value::Null)
+        }),
+        (
+            CommandSpec::new("project.info", "Project Info", Access::Read)
+                .description("The open project: root folder, name, packages and their targets (bin, lib, test…)."),
+            |s, _| s.project.as_ref().map(project_info).ok_or_else(|| err("No project is open.")),
+        ),
+        (
+            CommandSpec::new("project.files", "List Project Files", Access::Read)
+                .description("Files in the project (relative paths), respecting .gitignore and skipping target/.")
+                .params(json!({ "type": "object", "properties": { "limit": { "type": "integer", "default": 2000 } } })),
+            |s, inv| {
+                let p = s.project.as_ref().ok_or_else(|| err("No project is open."))?;
+                Ok(json!(p.files(opt_usize(inv, "limit").unwrap_or(2000))))
+            },
+        ),
+        // ── files ──
+        (
+            CommandSpec::new("file.open", "Open File", Access::Read)
+                .description("Opens a file in an editor tab (or switches to it) and optionally moves the cursor to a line and column.")
+                .params(path_schema(line_col.clone())),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                open_file(s, &path, opt_usize(inv, "line"), opt_usize(inv, "column"))?;
+                Ok(json!({ "opened": rel(s, &path) }))
+            },
+        ),
+        (
+            CommandSpec::new("file.read", "Read File", Access::Read)
+                .description("A file's text as the editor has it (including unsaved changes), optionally a range of lines, with line numbers.")
+                .params(path_schema(json!({
+                    "start_line": { "type": "integer", "minimum": 1 },
+                    "end_line": { "type": "integer", "minimum": 1 }
+                }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let text = match s.docs.by_path(&path).and_then(|id| s.docs.get(id)) {
+                    Some(d) => d.editor.core.text(),
+                    None => std::fs::read_to_string(&path).map_err(|e| err(format!("{}: {e}", path.display())))?,
+                };
+                let lines: Vec<&str> = text.lines().collect();
+                let start = opt_usize(inv, "start_line").unwrap_or(1).max(1);
+                let end = opt_usize(inv, "end_line").unwrap_or(lines.len()).min(lines.len());
+                let body: String = (start..=end)
+                    .filter_map(|n| lines.get(n - 1).map(|l| format!("{n:>5}  {l}\n")))
+                    .collect();
+                Ok(json!({ "path": rel(s, &path), "total_lines": lines.len(), "text": body }))
+            },
+        ),
+        (
+            CommandSpec::new("file.write", "Write File", Access::Edit)
+                .description("Replaces a file's whole text. If it's open, the change goes into the editor (undoable, unsaved); otherwise the file is written (and created if needed).")
+                .params(path_schema(json!({ "text": { "type": "string" } }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let text = inv.str_arg("text")?.to_owned();
+                if let Some(id) = s.docs.by_path(&path) {
+                    let doc = s.docs.get_mut(id).expect("by_path");
+                    doc.editor.set_text(&text);
+                    let edits = doc.editor.take_lsp_edits();
+                    s.lsp.did_change(id, &s.docs, &edits);
+                    return Ok(json!({ "updated_editor": rel(s, &path), "saved": false }));
+                }
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| err(e.to_string()))?;
+                }
+                std::fs::write(&path, text).map_err(|e| err(e.to_string()))?;
+                s.refresh_tree();
+                Ok(json!({ "written": rel(s, &path) }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.replace", "Replace Text", Access::Edit)
+                .description("Replaces text between two positions (1-based line and column; end is exclusive) in a file, opening it if needed. Undoable; the file isn't saved.")
+                .params(path_schema(json!({
+                    "start_line": { "type": "integer" }, "start_column": { "type": "integer" },
+                    "end_line": { "type": "integer" }, "end_column": { "type": "integer" },
+                    "text": { "type": "string" }
+                }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let id = open_file(s, &path, None, None)?;
+                let num = |n: &str| opt_usize(inv, n).ok_or_else(|| CommandError::InvalidArgs(format!("`{n}` is required")));
+                let (sl, sc, el, ec) = (num("start_line")?, num("start_column")?, num("end_line")?, num("end_column")?);
+                let text = inv.str_arg("text")?.to_owned();
+                let doc = s.docs.get_mut(id).expect("just opened");
+                let d = &doc.editor.core.doc;
+                let start = d.char_of(Pos { line: sl.saturating_sub(1), col: sc.saturating_sub(1) });
+                let end = d.char_of(Pos { line: el.saturating_sub(1), col: ec.saturating_sub(1) });
+                doc.editor.apply_extra_edits(vec![Change::replace(start..end.max(start), text)]);
+                let edits = doc.editor.take_lsp_edits();
+                s.lsp.did_change(id, &s.docs, &edits);
+                Ok(json!({ "edited": rel(s, &path) }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.type", "Type Text", Access::Edit)
+                .description("Types text into the active editor at the cursor, keystroke by keystroke, as a person would: brackets auto-close, Enter indents, and the completion popup opens. Use editor.completions to see it. Optionally move the cursor first (1-based line/column).")
+                .params(json!({ "type": "object", "required": ["text"], "properties": {
+                    "text": { "type": "string" }, "line": { "type": "integer" }, "column": { "type": "integer" }
+                }})),
+            |s, inv| {
+                let id = s.active_doc.ok_or_else(|| err("No editor is active."))?;
+                let text = inv.str_arg("text")?.to_owned();
+                let doc = s.docs.get_mut(id).ok_or_else(|| err("No editor is active."))?;
+                if let Some(line) = opt_usize(inv, "line") {
+                    doc.editor.goto(line.saturating_sub(1), opt_usize(inv, "column").unwrap_or(1).saturating_sub(1));
+                }
+                let requests = doc.editor.type_text(&text, &s.recency);
+                let edits = doc.editor.take_lsp_edits();
+                s.lsp.did_change(id, &s.docs, &edits);
+                for r in &requests {
+                    s.lsp.request(id, &s.docs, r);
+                }
+                Ok(json!({ "typed": text.chars().count(), "requests": requests.len() }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.completions", "Completion List", Access::Read)
+                .description("What the active editor's completion popup offers right now, best first (empty if closed). Completions arrive a moment after typing.")
+                .params(json!({ "type": "object", "properties": { "limit": { "type": "integer", "default": 20 } } })),
+            |s, inv| {
+                let doc = s.active_doc.and_then(|id| s.docs.get(id)).ok_or_else(|| err("No editor is active."))?;
+                let Some(p) = &doc.editor.popup else { return Ok(json!([])) };
+                let n = opt_usize(inv, "limit").unwrap_or(20);
+                Ok(json!(p.shown.iter().take(n).map(|i| {
+                    let it = &p.items[*i];
+                    json!({ "label": it.label, "detail": it.detail, "kind": it.kind.tag(), "extra": it.label_detail })
+                }).collect::<Vec<_>>()))
+            },
+        ),
+        (
+            CommandSpec::new("editor.accept_completion", "Accept Completion", Access::Edit)
+                .description("Accepts an item from the completion popup (index into editor.completions, default 0), exactly like pressing Enter on it.")
+                .params(json!({ "type": "object", "properties": { "index": { "type": "integer", "default": 0 } } })),
+            |s, inv| {
+                let id = s.active_doc.ok_or_else(|| err("No editor is active."))?;
+                let doc = s.docs.get_mut(id).ok_or_else(|| err("No editor is active."))?;
+                let requests = doc
+                    .editor
+                    .accept_completion_at(opt_usize(inv, "index").unwrap_or(0), &mut s.recency)
+                    .ok_or_else(|| err("No completion popup, or no such item."))?;
+                let edits = doc.editor.take_lsp_edits();
+                s.lsp.did_change(id, &s.docs, &edits);
+                for r in &requests {
+                    s.lsp.request(id, &s.docs, r);
+                }
+                Ok(json!({ "accepted": true }))
+            },
+        ),
+        (
+            CommandSpec::new("editor.cursor", "Cursor Position", Access::Read)
+                .description("The active editor's file, cursor line and column (1-based) and selected text."),
+            |s, _| {
+                let doc = s.active_doc.and_then(|id| s.docs.get(id)).ok_or_else(|| err("No editor is active."))?;
+                let sel = doc.editor.core.sels.primary();
+                let p = doc.editor.core.doc.pos_of(sel.head);
+                Ok(json!({
+                    "path": rel(s, &doc.path), "line": p.line + 1, "column": p.col + 1,
+                    "selection": doc.editor.core.doc.slice(sel.range())
+                }))
+            },
+        ),
+        (
+            CommandSpec::new("file.save", "Save", Access::Edit)
+                .description("Saves the active file, or the given one.")
+                .params(json!({ "type": "object", "properties": { "path": { "type": "string" } } })),
+            |s, inv| {
+                let id = match inv.args.get("path") {
+                    Some(_) => {
+                        let p = resolve(s, inv, "path")?;
+                        s.docs.by_path(&p).ok_or_else(|| err("That file isn't open."))?
+                    }
+                    None => s.active_doc.ok_or_else(|| err("No editor is active."))?,
+                };
+                let path = s.docs.save(id).map_err(err)?;
+                s.lsp.did_save(id, &s.docs);
+                s.status = format!("Saved {}", rel(s, &path));
+                Ok(json!({ "saved": rel(s, &path) }))
+            },
+        ),
+        (
+            CommandSpec::new("file.save_all", "Save All", Access::Edit).description("Saves every file with unsaved changes."),
+            |s, _| {
+                let dirty: Vec<DocId> = s.docs.list.iter().filter(|d| d.is_dirty()).map(|d| d.id).collect();
+                let mut saved = Vec::new();
+                for id in dirty {
+                    let p = s.docs.save(id).map_err(err)?;
+                    s.lsp.did_save(id, &s.docs);
+                    saved.push(rel(s, &p));
+                }
+                s.status = format!("Saved {} file(s)", saved.len());
+                Ok(json!({ "saved": saved }))
+            },
+        ),
+        (
+            CommandSpec::new("file.close", "Close Editor", Access::Edit)
+                .description("Closes the active editor, or the given file's. Refuses if there are unsaved changes unless `discard` is true.")
+                .params(json!({ "type": "object", "properties": { "path": { "type": "string" }, "discard": { "type": "boolean" } } })),
+            |s, inv| {
+                let id = match inv.args.get("path") {
+                    Some(_) => {
+                        let p = resolve(s, inv, "path")?;
+                        s.docs.by_path(&p).ok_or_else(|| err("That file isn't open."))?
+                    }
+                    None => s.active_doc.ok_or_else(|| err("No editor is active."))?,
+                };
+                close_doc(s, id, inv.bool_arg("discard")?.unwrap_or(false))
+            },
+        ),
+        // ── build ──
+        (build("build.check", "Check", "Runs `cargo check`: fast type checking without building."), |s, _| start_build(s, Kind::Check)),
+        (build("build.build", "Build", "Runs `cargo build`."), |s, _| start_build(s, Kind::Build)),
+        (build("build.run", "Run", "Runs `cargo run`: builds and starts the program. Its output appears in Output."), |s, _| start_build(s, Kind::Run)),
+        (build("build.test", "Run Tests", "Runs `cargo test`."), |s, _| start_build(s, Kind::Test)),
+        (build("build.clippy", "Clippy", "Runs `cargo clippy` for lints."), |s, _| start_build(s, Kind::Clippy)),
+        (build("build.stop", "Stop", "Stops the running cargo command and the program it started."), |s, _| {
+            match &mut s.build.job {
+                Some(job) => {
+                    job.stop();
+                    Ok(json!({ "stopped": true }))
+                }
+                None => Ok(json!({ "stopped": false, "note": "nothing was running" })),
+            }
+        }),
+        (
+            CommandSpec::new("build.status", "Build Status", Access::Read)
+                .description("Whether a cargo command is running, and how the last one ended."),
+            |s, _| {
+                Ok(json!({
+                    "running": s.build.running().map(Kind::verb),
+                    "last": s.build.last.map(|(k, ok)| json!({ "command": k.verb(), "success": ok })),
+                    "errors": s.build.diagnostics.iter().filter(|d| d.level == perox_build::Level::Error).count(),
+                    "warnings": s.build.diagnostics.iter().filter(|d| d.level == perox_build::Level::Warning).count()
+                }))
+            },
+        ),
+        (
+            CommandSpec::new("build.output", "Build Output", Access::Read)
+                .description("The last lines of the Output panel: cargo's messages and the program's output.")
+                .params(json!({ "type": "object", "properties": { "lines": { "type": "integer", "default": 100 } } })),
+            |s, inv| {
+                let n = opt_usize(inv, "lines").unwrap_or(100);
+                let out = &s.build.output;
+                Ok(json!(out[out.len().saturating_sub(n)..].join("\n")))
+            },
+        ),
+        (
+            CommandSpec::new("problems.list", "List Problems", Access::Read)
+                .description("Errors and warnings: from rust-analyzer (live, as you type) and from the last cargo command."),
+            |s, _| {
+                let mut out = Vec::new();
+                for p in s.lsp.diagnostics.values().flatten() {
+                    out.push(json!({
+                        "path": rel(s, &p.path), "line": p.line + 1, "column": p.col + 1,
+                        "severity": format!("{:?}", p.severity).to_lowercase(), "message": p.message, "source": p.source
+                    }));
+                }
+                for d in &s.build.diagnostics {
+                    out.push(json!({
+                        "path": d.file.as_ref().map(|f| rel(s, f)), "line": d.line, "column": d.column,
+                        "severity": format!("{:?}", d.level).to_lowercase(), "message": d.message, "source": "cargo"
+                    }));
+                }
+                Ok(json!(out))
+            },
+        ),
+        (
+            CommandSpec::new("lsp.status", "rust-analyzer Status", Access::Read)
+                .description("What rust-analyzer is doing, and recent completion response times in milliseconds."),
+            |s, _| {
+                let ms = &s.lsp.completion_ms;
+                let mut sorted = ms.clone();
+                sorted.sort_by(f32::total_cmp);
+                let pct = |p: f32| sorted.get(((sorted.len() as f32 - 1.0) * p).round() as usize).copied();
+                Ok(json!({
+                    "status": s.lsp.status, "busy": s.lsp.busy,
+                    "completion_ms": { "count": ms.len(), "median": pct(0.5), "p90": pct(0.9), "max": sorted.last() }
+                }))
+            },
+        ),
+        (
+            CommandSpec::new("lsp.restart", "Restart rust-analyzer", Access::Execute).description("Restarts the language server."),
+            |s, _| {
+                let root = s.project.as_ref().map(|p| p.root.clone()).ok_or_else(|| err("No project is open."))?;
+                s.lsp.start(&root);
+                Ok(Value::Null)
+            },
+        ),
+    ];
+    for (spec, h) in commands {
+        bus.register(spec, h)
+            .expect("ide command ids are valid and unique");
+    }
+}
+
+pub fn close_doc(s: &mut AppState, id: DocId, discard: bool) -> Result<Value, CommandError> {
+    let doc = s.docs.get(id).ok_or_else(|| err("No such editor."))?;
+    if doc.is_dirty() && !discard {
+        return Err(err(format!(
+            "{} has unsaved changes. Save it first, or close with discard.",
+            rel(s, &doc.path)
+        )));
+    }
+    let path = doc.path.clone();
+    s.docs.close(id);
+    s.lsp.did_close(id, &path);
+    if s.active_doc == Some(id) {
+        s.active_doc = s.docs.list.last().map(|d| d.id);
+    }
+    s.layout_requests.push(LayoutRequest::CloseDoc(id));
+    Ok(json!({ "closed": rel(s, &path) }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_dot_dot() {
+        assert_eq!(
+            normalize(Path::new("/p/src/../../etc/passwd")),
+            PathBuf::from("/etc/passwd")
+        );
+        assert!(!normalize(Path::new("/p/src/../../etc")).starts_with("/p"));
+        assert!(normalize(Path::new("/p/./src/x.rs")).starts_with("/p"));
+    }
+}
