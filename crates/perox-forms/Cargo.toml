@@ -1,0 +1,15 @@
+[package]
+name = "perox-forms"
+description = "The .pxui form language: parser with exact source spans, text-preserving edits, Rust code generation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Runs inside user builds (build.rs), so permissive like perox-ui (ADR 0004).
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
