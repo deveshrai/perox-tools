@@ -199,7 +199,7 @@ pub fn parse_status(out: &str, root: &Path) -> Status {
                 .and_then(|b| b.trim_start_matches('-').parse().ok())
                 .unwrap_or(0);
         } else if let Some(p) = entry.strip_prefix("? ") {
-            s.files.push((root.join(p), FileState::Untracked));
+            s.files.push((join_git_path(root, p), FileState::Untracked));
         } else if entry.starts_with("1 ") || entry.starts_with("2 ") || entry.starts_with("u ") {
             let parts: Vec<&str> = entry
                 .splitn(
@@ -227,7 +227,7 @@ pub fn parse_status(out: &str, root: &Path) -> Status {
             } else {
                 FileState::Modified
             };
-            s.files.push((root.join(path), state));
+            s.files.push((join_git_path(root, path), state));
         }
     }
     s.files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -258,6 +258,15 @@ pub fn line_marks(base: &str, current: &str) -> Vec<(usize, LineMark)> {
     marks
 }
 
+/// Git prints `/`-separated paths; join them part by part so Windows paths use
+/// backslashes throughout (Path equality ignores the mix, but display and hashing of
+/// strings don't).
+fn join_git_path(root: &Path, rel: &str) -> std::path::PathBuf {
+    let mut out = root.to_path_buf();
+    out.extend(rel.split('/').filter(|p| !p.is_empty()));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,18 +280,14 @@ mod tests {
                    ? notes.txt\0";
         let s = parse_status(out, Path::new("/r"));
         assert_eq!((s.branch.as_str(), s.ahead, s.behind), ("main", 2, 1));
-        let states: Vec<_> = s
-            .files
-            .iter()
-            .map(|(p, st)| (p.to_string_lossy().into_owned(), *st))
-            .collect();
+        let r = Path::new("/r");
         assert_eq!(
-            states,
+            s.files,
             [
-                ("/r/notes.txt".into(), FileState::Untracked),
-                ("/r/src/b.rs".into(), FileState::Renamed),
-                ("/r/src/main.rs".into(), FileState::Modified),
-                ("/r/src/new.rs".into(), FileState::Added),
+                (r.join("notes.txt"), FileState::Untracked),
+                (r.join("src").join("b.rs"), FileState::Renamed),
+                (r.join("src").join("main.rs"), FileState::Modified),
+                (r.join("src").join("new.rs"), FileState::Added),
             ]
         );
     }
