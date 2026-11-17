@@ -39,6 +39,7 @@ pub struct AppState {
     /// The rename prompt's text while it's open.
     pub rename: Option<String>,
     pub watcher: Option<crate::watcher::Watcher>,
+    pub terminal: Option<perox_terminal::Terminal>,
     pub project: Option<Project>,
     /// The Explorer's file tree.
     pub tree: Option<Node>,
@@ -80,6 +81,7 @@ impl AppState {
             code_actions: None,
             rename: None,
             watcher: None,
+            terminal: None,
         }
     }
 }

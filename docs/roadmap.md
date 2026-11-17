@@ -39,7 +39,8 @@ tool for long calls; the `peroxide mcp` stdio shim.
 - [x] Everything the IDE starts uses the pinned toolchain; quitting asks to save
 - [x] Inlay hints (types, parameter names); decorations follow edits without flicker
 - [x] Reload files changed on disk (never over unsaved edits); Explorer refreshes; open files restored per project
-- [ ] Integrated terminal; git basics
+- [x] Integrated terminal (⌃`), shell in the project with the pinned toolchain; agents: terminal.run / terminal.read
+- [ ] Git basics
 - [ ] Completion benchmark file: the right item in the top 3
 
 **Done when:** you can comfortably write, build and run a multi-file Rust project in PeroxIDE.

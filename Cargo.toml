@@ -20,6 +20,7 @@ perox-lsp = { path = "crates/perox-lsp" }
 perox-project = { path = "crates/perox-project" }
 perox-build = { path = "crates/perox-build" }
 perox-icons = { path = "crates/perox-icons" }
+perox-terminal = { path = "crates/perox-terminal" }
 eframe = "=0.37.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

@@ -306,6 +306,7 @@ impl PeroxApp {
             });
             ui.menu_button("View", |ui| {
                 item(ui, actions, "view.command_palette");
+                item(ui, actions, "terminal.show");
                 item(ui, actions, "view.reset_layout");
             });
             ui.menu_button("Build", |ui| {
@@ -480,6 +481,7 @@ impl eframe::App for PeroxApp {
                 project_root: s.project.as_ref().map(|p| p.root.as_path()),
                 recent: &s.settings.recent_projects,
                 references: &s.references,
+                terminal: s.terminal.as_mut(),
                 active_doc: s.active_doc,
                 actions: Vec::new(),
                 requests: Vec::new(),
@@ -598,6 +600,7 @@ impl eframe::App for PeroxApp {
                 LayoutRequest::ShowReferences => {
                     layout::show_pane(&mut self.tree, Pane::References)
                 }
+                LayoutRequest::ShowTerminal => layout::show_pane(&mut self.tree, Pane::Terminal),
             }
         }
         if std::mem::take(&mut self.state.reset_layout) {

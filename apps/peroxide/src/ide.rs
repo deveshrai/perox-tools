@@ -20,6 +20,7 @@ pub enum LayoutRequest {
     CloseDoc(DocId),
     ShowOutput,
     ShowReferences,
+    ShowTerminal,
 }
 
 /// The current cargo job and what it printed.
@@ -652,6 +653,33 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("terminal.show", "Terminal", Access::Read).ui_only(),
+            |s, _| {
+                terminal(s)?;
+                s.layout_requests.push(LayoutRequest::ShowTerminal);
+                Ok(Value::Null)
+            },
+        ),
+        (
+            CommandSpec::new("terminal.run", "Run in Terminal", Access::Execute)
+                .description("Types a command line into the integrated terminal (a shell in the project folder) and presses Enter. Read the result with terminal.read after a moment.")
+                .params(json!({ "type": "object", "required": ["command"], "properties": { "command": { "type": "string" } } })),
+            |s, inv| {
+                let command = inv.str_arg("command")?.replace('\n', " ");
+                terminal(s)?.write(format!("{command}\r").into_bytes());
+                s.layout_requests.push(LayoutRequest::ShowTerminal);
+                Ok(json!({ "sent": command }))
+            },
+        ),
+        (
+            CommandSpec::new("terminal.read", "Read Terminal", Access::Read)
+                .description("The text currently visible in the integrated terminal."),
+            |s, _| {
+                let t = s.terminal.as_ref().ok_or_else(|| err("The terminal isn't open."))?;
+                Ok(json!(t.screen_text()))
+            },
+        ),
+        (
             CommandSpec::new("lsp.log", "rust-analyzer Log", Access::Read)
                 .description("The last lines rust-analyzer wrote to its log, and failed requests.")
                 .params(json!({ "type": "object", "properties": { "lines": { "type": "integer", "default": 50 } } })),
@@ -744,6 +772,25 @@ pub fn apply_workspace_edit(s: &mut AppState, edit: &Value) -> usize {
         n += 1;
     }
     n
+}
+
+/// The terminal, started in the project folder (or home) on first use.
+fn terminal(s: &mut AppState) -> Result<&mut perox_terminal::Terminal, CommandError> {
+    if s.terminal.as_ref().is_some_and(|t| t.exited) {
+        s.terminal = None;
+    }
+    if s.terminal.is_none() {
+        let cwd = s
+            .project
+            .as_ref()
+            .map(|p| p.root.clone())
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let t = perox_terminal::Terminal::spawn(&cwd, &perox_build::tools::env(), s.ctx.clone())
+            .map_err(|e| err(format!("Couldn't start a shell: {e}")))?;
+        s.terminal = Some(t);
+    }
+    Ok(s.terminal.as_mut().expect("just set"))
 }
 
 pub fn close_doc(s: &mut AppState, id: DocId, discard: bool) -> Result<Value, CommandError> {

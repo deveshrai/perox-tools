@@ -1,0 +1,16 @@
+[package]
+name = "perox-terminal"
+description = "PeroxIDE's integrated terminal: alacritty_terminal's emulator and PTY, drawn with egui."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+eframe.workspace = true
+alacritty_terminal = "=0.26.0"
+
+[lints]
+workspace = true

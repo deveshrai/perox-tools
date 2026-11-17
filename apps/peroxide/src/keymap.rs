@@ -25,6 +25,7 @@ pub const BINDINGS: &[(KeyboardShortcut, &str)] = &[
     (KeyboardShortcut::new(Modifiers::COMMAND, Key::R), "build.run"),
     (KeyboardShortcut::new(Modifiers::COMMAND, Key::Period), "editor.code_actions"),
     (KeyboardShortcut::new(Modifiers::CTRL, Key::G), "editor.goto_line_prompt"),
+    (KeyboardShortcut::new(Modifiers::CTRL, Key::Backtick), "terminal.show"),
     (KeyboardShortcut::new(Modifiers::NONE, Key::F5), "build.run"),
     (KeyboardShortcut::new(Modifiers::NONE, Key::F2), "editor.rename_prompt"),
 ];

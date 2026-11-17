@@ -27,6 +27,7 @@ pub fn for_command(id: &str) -> Icon {
         "build.stop" => Icon::Square,
         "mcp.toggle" => Icon::Plug,
         "lsp.restart" => Icon::RotateCcw,
+        "terminal.show" | "terminal.run" | "terminal.read" => Icon::Terminal,
         "help.about" | "app.info" => Icon::Info,
         _ if id.starts_with("mcp.") => Icon::Settings2,
         _ => Icon::ListChecks,

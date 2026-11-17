@@ -23,6 +23,7 @@ pub enum Pane {
     Output,
     Activity,
     References,
+    Terminal,
 }
 
 /// Explorer on the left; editors above, Problems / Output / Activity below.
@@ -67,7 +68,11 @@ pub fn show_pane(tree: &mut Tree<Pane>, pane: Pane) {
             let bottom = |p: &Pane| {
                 matches!(
                     p,
-                    Pane::Problems | Pane::Output | Pane::Activity | Pane::References
+                    Pane::Problems
+                        | Pane::Output
+                        | Pane::Activity
+                        | Pane::References
+                        | Pane::Terminal
                 )
             };
             let sibling = if bottom(&pane) {
@@ -115,6 +120,7 @@ pub struct PaneUi<'a> {
     pub project_root: Option<&'a std::path::Path>,
     pub recent: &'a [std::path::PathBuf],
     pub references: &'a [(std::path::PathBuf, usize, usize, String)],
+    pub terminal: Option<&'a mut perox_terminal::Terminal>,
     pub active_doc: Option<DocId>,
     /// Commands to run after drawing.
     pub actions: Vec<(&'static str, Value)>,
@@ -148,6 +154,11 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
             Pane::Output => "Output".into(),
             Pane::Activity => "Activity".into(),
             Pane::References => format!("References ({})", self.references.len()).into(),
+            Pane::Terminal => self
+                .terminal
+                .as_ref()
+                .map_or("Terminal".to_owned(), |t| t.title.clone())
+                .into(),
         }
     }
 
@@ -175,6 +186,17 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
 
     fn pane_ui(&mut self, ui: &mut egui::Ui, _tile: TileId, pane: &mut Pane) -> UiResponse {
         match pane {
+            Pane::Terminal => match self.terminal.as_deref_mut() {
+                Some(t) if !t.exited => t.show(ui, "terminal"),
+                _ => {
+                    egui::Frame::new().inner_margin(8).show(ui, |ui| {
+                        ui.weak("The shell has exited.");
+                        if ui.button("Start a New Shell").clicked() {
+                            self.actions.push(("terminal.show", json!({})));
+                        }
+                    });
+                }
+            },
             Pane::Editor(id) => {
                 let id = *id;
                 if let Some(doc) = self.docs.get_mut(id) {
@@ -199,7 +221,7 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                         Pane::Output => self.output(ui),
                         Pane::Activity => activity(ui, self.activity),
                         Pane::References => self.references_ui(ui),
-                        Pane::Editor(_) => {}
+                        Pane::Editor(_) | Pane::Terminal => {}
                     }
                 });
             }
