@@ -159,13 +159,15 @@ fn run(root: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+use perox_build::canonical;
+
 const NO_REPO: &str = "The project isn't in a git repository (or git isn't installed).";
 
 impl Git {
     /// Finds the repository containing `project`, if any.
     pub fn open(project: &Path) -> Self {
         let root = git(project, &["rev-parse", "--show-toplevel"]).map(|s| PathBuf::from(s.trim()));
-        let root = root.map(|r| std::fs::canonicalize(&r).unwrap_or(r));
+        let root = root.map(|r| canonical(&r));
         Self {
             root,
             ..Default::default()
@@ -1319,12 +1321,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("perox-git-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let dir = std::fs::canonicalize(&dir).unwrap();
+        let dir = canonical(&dir);
         for args in [
             vec!["init", "-q", "-b", "main"],
             vec!["config", "user.email", "t@example.invalid"],
             vec!["config", "user.name", "T"],
             vec!["config", "commit.gpgsign", "false"],
+            // Files as written, whatever the machine's git does with line endings.
+            vec!["config", "core.autocrlf", "false"],
         ] {
             run(&dir, &args).unwrap();
         }

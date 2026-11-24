@@ -111,7 +111,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("src")).unwrap();
         let file = dir.join("src/a.rs");
         std::fs::write(&file, "one").unwrap();
-        let root = std::fs::canonicalize(&dir).unwrap();
+        let root = perox_build::canonical(&dir);
         let mut w = Watcher::new(&root, egui::Context::default()).expect("watcher");
         std::thread::sleep(Duration::from_millis(300));
         std::fs::write(root.join("src/a.rs"), "two").unwrap();

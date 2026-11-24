@@ -89,12 +89,12 @@ pub fn sdk_dir() -> Option<PathBuf> {
     {
         for d in [exe_dir.join("sdk"), exe_dir.join("../Resources/sdk")] {
             if has_runtime(&d) {
-                return d.canonicalize().ok();
+                return Some(crate::canonical(&d));
             }
         }
     }
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-    has_runtime(&dev).then(|| dev.canonicalize().ok()).flatten()
+    has_runtime(&dev).then(|| crate::canonical(&dev))
 }
 
 #[cfg(test)]

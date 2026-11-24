@@ -24,7 +24,7 @@ fn main() -> eframe::Result {
     let open = std::env::args_os()
         .nth(1)
         .map(std::path::PathBuf::from)
-        .map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+        .map(|p| perox_build::canonical(&p));
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("PeroxIDE")
