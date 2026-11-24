@@ -263,3 +263,67 @@ mod tests {
         assert_eq!(libs.len(), 1);
     }
 }
+
+/// The structs a type names (`[DrinkData]`, `{ a: Layer }`) that another `.slint` file
+/// of the project exports and `src` doesn't have yet: `(name, import from)`. Declaring a
+/// property of such a type then imports them, as dropping a component does.
+pub fn struct_imports(file: &Path, src: &str, ty: &str, ui: &Path) -> Vec<(String, String)> {
+    let doc = perox_slint::parse(src);
+    let here = file.parent().unwrap_or(Path::new("."));
+    let mut files = Vec::new();
+    slint_files(ui, &mut files, 0);
+    let mut out: Vec<(String, String)> = Vec::new();
+    for name in ty
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+        .filter(|w| w.chars().next().is_some_and(char::is_uppercase))
+    {
+        let known = doc
+            .imports
+            .iter()
+            .any(|i| i.names.iter().any(|n| n == name))
+            || src.contains(&format!("struct {name} "))
+            || src.contains(&format!("struct {name}{{"))
+            || out.iter().any(|(n, _)| n == name);
+        if known {
+            continue;
+        }
+        let decl = format!("export struct {name} ");
+        if let Some(f) = files.iter().find(|f| {
+            *f != file
+                && std::fs::read_to_string(f).is_ok_and(|t| {
+                    t.contains(&decl) || t.contains(&format!("export struct {name}{{"))
+                })
+        }) {
+            out.push((name.to_owned(), relative(f, here)));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod struct_tests {
+    use super::*;
+
+    #[test]
+    fn structs_from_other_files_are_found() {
+        let dir = std::env::temp_dir().join(format!("perox-structs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("parts")).unwrap();
+        std::fs::write(
+            dir.join("parts/tile.slint"),
+            "export struct Layer { c: string }\nexport struct DrinkData { layers: [Layer] }\nexport component Tile {}\n",
+        )
+        .unwrap();
+        let main = dir.join("main.slint");
+        let src = "export component W inherits Window {}\n";
+        std::fs::write(&main, src).unwrap();
+        let found = struct_imports(&main, src, "[DrinkData]", &dir);
+        assert_eq!(
+            found,
+            [("DrinkData".to_owned(), "parts/tile.slint".to_owned())]
+        );
+        let src2 = "import { DrinkData } from \"parts/tile.slint\";\nexport component W inherits Window {}\n";
+        assert!(struct_imports(&main, src2, "[DrinkData]", &dir).is_empty());
+        assert!(struct_imports(&main, src, "string", &dir).is_empty());
+    }
+}

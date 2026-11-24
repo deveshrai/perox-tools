@@ -156,6 +156,9 @@ failure shows its output and a link to where it panicked. View → Test Explorer
 
 ![The Test Explorer with a failing test](docs/screenshots/test-explorer.png)
 
+**Animations.** Any colour, length or number can change smoothly: the inspector's
+Animations section sets the duration and easing (`animate background { … }`).
+
 **Canvas.** For what only code can draw (graphs, charts, games), drop a Canvas from the
 palette: an image wired for the code to draw into with tiny-skia (`perox_ui::canvas`),
 redrawn when it's resized. The Graphing Calculator's plots are one.
@@ -247,6 +250,20 @@ cargo run -p graphing-calculator
 ```
 
 ![Graphing Calculator, a sample built in PeroxIDE](examples/graphing-calculator/docs/app-3d.png)
+
+## Sample app: Barista
+
+[examples/barista](examples/barista) is the touch panel of an espresso machine: eight
+drinks, size, strength, milk, temperature, sugar and an extra shot, and a Brew button
+that fills the cup layer by layer. The cup, its layers, the stream and the steam are
+vector paths computed in Rust. Building it added animations to the designer, among four
+fixes; [BUILDING.md](examples/barista/BUILDING.md) has the record.
+
+```sh
+cargo run -p barista
+```
+
+![Barista, a sample built in PeroxIDE](examples/barista/docs/app-brewing.png)
 
 ## Build and run
 

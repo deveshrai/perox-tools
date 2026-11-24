@@ -1,0 +1,20 @@
+[package]
+name = "barista"
+description = "Sample PeroxIDE app: the touch panel of an espresso machine. Eight drinks, size, strength, milk, temperature, sugar and an extra shot; the cup, its layers, the stream and the steam are vector paths computed from the recipe. Built in PeroxIDE by an agent over MCP (see BUILDING.md)."
+version = "0.1.0"
+edition.workspace = true
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata.peroxide]
+display-name = "Barista"
+
+[dependencies]
+perox-ui.workspace = true
+slint = { version = "=1.19.0" }
+
+[build-dependencies]
+perox-slint = { workspace = true, features = ["build"] }
+
+[lints]
+workspace = true

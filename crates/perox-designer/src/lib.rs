@@ -2694,10 +2694,22 @@ impl Designer {
                         let ty = self.buffers.get("#decl-type").cloned().unwrap_or_default();
                         let name = name.trim().replace(' ', "_");
                         if !name.is_empty() && c.property(&name).is_none() {
-                            self.apply(
-                                out,
-                                edit::declare_property(source, &c.name, vis, &name, &ty, None),
-                            );
+                            // A struct another file exports comes with its import.
+                            let (ui_dir, _) = translations::location(&self.form_dir());
+                            let imports =
+                                components::struct_imports(&self.file, source, &ty, &ui_dir);
+                            let result = edit::declare_property(
+                                source, &c.name, vis, &name, &ty, None,
+                            )
+                            .map(|e| {
+                                let mut work = edit::apply(source, &e);
+                                for (n, from) in &imports {
+                                    let e = edit::ensure_import(&work, n, from);
+                                    work = edit::apply(&work, &e);
+                                }
+                                work
+                            });
+                            self.apply_text(out, source, result);
                             self.buffers.remove("#decl-name");
                         }
                     }

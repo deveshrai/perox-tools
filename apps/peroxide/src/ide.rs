@@ -960,10 +960,20 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     return Err(err(format!("`{name}` is declared already.")));
                 }
                 let vis = inv.args["visibility"].as_str().unwrap_or("in");
-                let edits = perox_slint::edit::declare_property(&text, &comp, vis, name, inv.str_arg("type")?, inv.args["default"].as_str())
+                let ty = inv.str_arg("type")?;
+                let edits = perox_slint::edit::declare_property(&text, &comp, vis, name, ty, inv.args["default"].as_str())
                     .map_err(|e| err(e.to_string()))?;
-                apply_form_edits(s, id, edits);
-                Ok(json!({ "declared": name }))
+                // A struct another file exports: imported, as dropping a component is.
+                let file = resolve(s, inv, "path")?;
+                let ui_dir = perox_designer::translations::location(file.parent().unwrap_or(std::path::Path::new("."))).0;
+                let mut work = perox_slint::edit::apply(&text, &edits);
+                let imports = perox_designer::components::struct_imports(&file, &text, ty, &ui_dir);
+                for (n, from) in &imports {
+                    let e = perox_slint::edit::ensure_import(&work, n, from);
+                    work = perox_slint::edit::apply(&work, &e);
+                }
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &work));
+                Ok(json!({ "declared": name, "imported": imports.iter().map(|(n, _)| n).collect::<Vec<_>>() }))
             },
         ),
         (

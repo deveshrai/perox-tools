@@ -1,0 +1,14 @@
+import { AboutSlint, StandardButton, VerticalBox } from "std-widgets.slint";
+
+// Shown from the About button. `AboutSlint` credits Slint, as its royalty-free
+// license asks; keep it (or buy a Slint license) when you ship.
+export component AboutDialog inherits Dialog {
+    title: "About Barista";
+
+    VerticalBox {
+        Text { text: "Barista"; font-size: 18px; font-weight: 700; }
+        Text { text: "Version 0.1.0"; }
+        AboutSlint { }
+    }
+    StandardButton { kind: ok; }
+}

@@ -603,6 +603,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "barista"
+version = "0.1.0"
+dependencies = [
+ "perox-slint",
+ "perox-ui",
+ "slint",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

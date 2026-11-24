@@ -1,0 +1,40 @@
+import { VerticalBox } from "std-widgets.slint";
+
+// A reusable part: drop it on any form from the designer's palette (This project).
+export component Gauge inherits Rectangle {
+    in property <string> label: "Water";
+    in property <float> value: 0.8;
+    in property <color> tint: #6cb6ff;
+    min-width: 120px;
+
+    vertical_layout1 := VerticalLayout {
+        spacing: 6px;
+        horizontal_layout1 := HorizontalLayout {
+            Text {
+                color: #a88d78;
+                font-size: 12px;
+                horizontal-stretch: 1;
+                text: root.label;
+            }
+            Text {
+                color: #f3e6da;
+                font-size: 12px;
+                font-weight: 600;
+                text: "\{round(root.value * 100)}%";
+            }
+        }
+        track := Rectangle {
+            background: #ffffff12;
+            border-radius: 3px;
+            height: 6px;
+            fill := Rectangle {
+                background: root.value < 0.2 ? #ff7b6b : root.tint;
+                border-radius: 3px;
+                height: parent.height;
+                width: parent.width * clamp(root.value, 0, 1);
+                x: 0;
+                animate width { duration: 400ms; easing: ease-out; }
+            }
+        }
+    }
+}

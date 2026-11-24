@@ -478,13 +478,18 @@ pub fn element_source(
         Some(i) => format!("{i} := {kind}"),
         None => kind.to_owned(),
     };
+    // `<=> root.x`: a two-way binding (see `set_property`).
+    let member = |n: &str, v: &str| match v.trim().strip_prefix("<=>") {
+        Some(target) => format!("{n} <=> {};", target.trim()),
+        None => format!("{n}: {v};"),
+    };
     match props {
         [] => format!("{indent}{head} {{ }}"),
-        [(n, v)] => format!("{indent}{head} {{ {n}: {v}; }}"),
+        [(n, v)] => format!("{indent}{head} {{ {} }}", member(n, v)),
         many => {
             let mut s = format!("{indent}{head} {{\n");
             for (n, v) in many {
-                s.push_str(&format!("{indent}{unit}{n}: {v};\n"));
+                s.push_str(&format!("{indent}{unit}{}\n", member(n, v)));
             }
             s.push_str(&format!("{indent}}}"));
             s

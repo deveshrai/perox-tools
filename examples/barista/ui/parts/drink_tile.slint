@@ -1,0 +1,82 @@
+import { VerticalBox } from "std-widgets.slint";
+
+// One liquid in a cup: its outline (SVG path commands in a 200 × 200 box) and colour.
+export struct Layer { commands: string, color: color }
+// A drink on the menu.
+export struct DrinkData { name: string, note: string, price: string, layers: [Layer] }
+
+// A reusable part: drop it on any form from the designer's palette (This project).
+export component DrinkTile inherits Rectangle {
+    in property <DrinkData> drink: { name: "Cappuccino", note: "espresso, milk, foam", price: "€3.40", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 57.8 138.2 L 142.2 138.2 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 57.8 138.2 L 53.3 110.6 L 146.7 110.6 L 142.2 138.2 Z", color: #e9d6c0 }, { commands: "M 53.3 110.6 L 48.8 83 Q 57.3 78.6 65.9 83 Q 74.4 76.3 82.9 83 Q 91.5 79.3 100 83 Q 108.5 80.9 117.1 83 Q 125.6 77.5 134.1 83 Q 142.7 76.7 151.2 83 L 146.7 110.6 Z", color: #fbf3e8 }] };
+    in property <string> cup: "M 40 60 L 160 60 L 143 170 Q 141 178 132 178 L 68 178 Q 59 178 57 170 Z M 156 82 C 190 80 192 132 148 140 L 150 128 C 176 122 176 94 154 95 Z";
+    in property <bool> selected: false;
+    callback clicked();
+    border-radius: 16px;
+    min-width: 120px;
+    min-height: 150px;
+    horizontal-stretch: 1;
+    border-width: 1.5px;
+    background: root.selected ? #3b2a20 : area.has-hover ? #2e221c : #281d18;
+    border-color: root.selected ? #d9a066 : #ffffff0d;
+    drop-shadow-blur: root.selected ? 18px : 0px;
+    drop-shadow-color: #d9a06640;
+    animate background { duration: 160ms; easing: ease-out; }
+    animate border-color { duration: 160ms; easing: ease-out; }
+    animate drop-shadow-blur { duration: 200ms; easing: ease-out; }
+    preferred-width: 120px;
+
+    vertical_layout1 := VerticalLayout {
+        padding: 12px;
+        spacing: 3px;
+        mini := Rectangle {
+            height: 66px;
+            glass := Path {
+                commands: root.cup;
+                fill: #ffffff0d;
+                height: parent.height;
+                viewbox-height: 200;
+                viewbox-width: 200;
+                width: parent.width;
+            }
+            for layer in root.drink.layers : liquid := Path {
+                commands: layer.commands;
+                fill: layer.color;
+                height: parent.height;
+                viewbox-height: 200;
+                viewbox-width: 200;
+                width: parent.width;
+            }
+            rim := Path {
+                commands: root.cup;
+                height: parent.height;
+                stroke: #f3e6dab0;
+                stroke-width: 1.5px;
+                viewbox-height: 200;
+                viewbox-width: 200;
+                width: parent.width;
+            }
+        }
+        Text {
+            color: #f6e9dc;
+            font-size: 15px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            text: root.drink.name;
+        }
+        Text {
+            color: #a88d78;
+            font-size: 11px;
+            horizontal-alignment: center;
+            overflow: elide;
+            text: root.drink.note;
+        }
+        Text {
+            color: #d9a066;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            text: root.drink.price;
+        }
+    }
+    area := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}

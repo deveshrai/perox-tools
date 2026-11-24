@@ -1,0 +1,505 @@
+import { Button, HorizontalBox, LineEdit, VerticalBox, ComboBox, Slider, Switch } from "std-widgets.slint";
+import { DrinkData, Layer, DrinkTile } from "parts/drink_tile.slint";
+import { Card } from "parts/card.slint";
+import { Gauge } from "parts/gauge.slint";
+import { Segmented } from "parts/segmented.slint";
+
+// The main window. Design it in PeroxIDE (Design tab) or edit it here.
+export component MainWindow inherits Window {
+    title: "Barista";
+    preferred-width: 1240px;
+    preferred-height: 880px;
+
+    // What the Rust code reads and writes.
+
+    callback about_clicked();
+    callback drink_picked(name: string);
+    callback size_picked(index: int);
+    callback strength_picked(level: int);
+    callback options_changed();
+    callback sugar_changed(delta: int);
+    callback brew_clicked();
+    callback tick();
+    in property <[[DrinkData]]> menu: [[{ name: "Espresso", note: "short and intense", price: "€2.20", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 57.8 138.2 L 142.2 138.2 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 57.8 138.2 L 56.9 132.7 Q 64.1 128.3 71.3 132.7 Q 78.4 125.9 85.6 132.7 Q 92.8 128.9 100 132.7 Q 107.2 130.5 114.4 132.7 Q 121.6 127.1 128.7 132.7 Q 135.9 126.4 143.1 132.7 L 142.2 138.2 Z", color: #c48448 }] }, { name: "Doppio", note: "a double shot", price: "€2.80", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 55.1 121.7 L 144.9 121.7 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 55.1 121.7 L 54 115.2 Q 61.7 110.8 69.4 115.2 Q 77 108.5 84.7 115.2 Q 92.3 111.5 100 115.2 Q 107.7 113.1 115.3 115.2 Q 123 109.7 130.6 115.2 Q 138.3 108.9 146 115.2 L 144.9 121.7 Z", color: #c48448 }] }, { name: "Americano", note: "espresso, hot water", price: "€2.90", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 50.3 92.2 L 149.7 92.2 L 136.5 148 Q 138 164 122 164 Z", color: #5a331e }, { commands: "M 50.3 92.2 L 49.5 87.6 Q 57.9 83.2 66.4 87.6 Q 74.8 80.9 83.2 87.6 Q 91.6 83.9 100 87.6 Q 108.4 85.5 116.8 87.6 Q 125.2 82.1 133.6 87.6 Q 142.1 81.3 150.5 87.6 L 149.7 92.2 Z", color: #c48448 }] }, { name: "Cappuccino", note: "espresso, milk, foam", price: "€3.40", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 57.8 138.2 L 142.2 138.2 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 57.8 138.2 L 53.3 110.6 L 146.7 110.6 L 142.2 138.2 Z", color: #e9d6c0 }, { commands: "M 53.3 110.6 L 48.8 83 Q 57.3 78.6 65.9 83 Q 74.4 76.3 82.9 83 Q 91.5 79.3 100 83 Q 108.5 80.9 117.1 83 Q 125.6 77.5 134.1 83 Q 142.7 76.7 151.2 83 L 146.7 110.6 Z", color: #fbf3e8 }] }], [{ name: "Latte", note: "lots of milk", price: "€3.60", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 58.7 143.8 L 141.3 143.8 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 58.7 143.8 L 50.3 92.2 L 149.7 92.2 L 141.3 143.8 Z", color: #e9d6c0 }, { commands: "M 50.3 92.2 L 48.5 81.2 Q 57.1 76.8 65.7 81.2 Q 74.2 74.4 82.8 81.2 Q 91.4 77.4 100 81.2 Q 108.6 79 117.2 81.2 Q 125.8 75.6 134.3 81.2 Q 142.9 74.9 151.5 81.2 L 149.7 92.2 Z", color: #fbf3e8 }] }, { name: "Flat White", note: "velvety microfoam", price: "€3.50", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 57.2 134.6 L 142.8 134.6 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 57.2 134.6 L 50.6 94.1 L 149.4 94.1 L 142.8 134.6 Z", color: #e9d6c0 }, { commands: "M 50.6 94.1 L 49.5 87.6 Q 57.9 83.2 66.4 87.6 Q 74.8 80.9 83.2 87.6 Q 91.6 83.9 100 87.6 Q 108.4 85.5 116.8 87.6 Q 125.2 82.1 133.6 87.6 Q 142.1 81.3 150.5 87.6 L 149.4 94.1 Z", color: #fbf3e8 }] }, { name: "Macchiato", note: "espresso, a cap of foam", price: "€2.70", layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 57.2 134.6 L 142.8 134.6 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 57.2 134.6 L 54.8 119.8 Q 62.3 115.4 69.9 119.8 Q 77.4 113.1 84.9 119.8 Q 92.5 116.1 100 119.8 Q 107.5 117.7 115.1 119.8 Q 122.6 114.3 130.1 119.8 Q 137.7 113.5 145.2 119.8 L 142.8 134.6 Z", color: #fbf3e8 }] }, { name: "Mocha", note: "chocolate, espresso, cream", price: "€3.90", layers: [{ commands: "M 78 164 Q 62 164 63.4 149.3 L 59.6 149.3 L 140.4 149.3 L 136.6 149.3 Q 138 164 122 164 Z", color: #5a2e1a }, { commands: "M 59.6 149.3 L 56 127.2 L 144 127.2 L 140.4 149.3 Z", color: #3b2014 }, { commands: "M 56 127.2 L 51.2 97.8 L 148.8 97.8 L 144 127.2 Z", color: #e9d6c0 }, { commands: "M 51.2 97.8 L 48.8 83 Q 57.3 78.6 65.9 83 Q 74.4 76.3 82.9 83 Q 91.5 79.3 100 83 Q 108.5 80.9 117.1 83 Q 125.6 77.5 134.1 83 Q 142.7 76.7 151.2 83 L 148.8 97.8 Z", color: #fffaf2 }] }]];
+    in property <string> cup: "M 40 60 L 160 60 L 143 170 Q 141 178 132 178 L 68 178 Q 59 178 57 170 Z M 156 82 C 190 80 192 132 148 140 L 150 128 C 176 122 176 94 154 95 Z";
+    in property <string> saucer: "M 14 180 Q 100 200 186 180 Q 186 190 170 192 L 30 192 Q 14 190 14 180 Z";
+    in property <[Layer]> cup_layers: [{ commands: "M 78 164 Q 62 164 63.5 148 L 57.8 138.2 L 142.2 138.2 L 136.5 148 Q 138 164 122 164 Z", color: #3b2014 }, { commands: "M 57.8 138.2 L 53.3 110.6 L 146.7 110.6 L 142.2 138.2 Z", color: #e9d6c0 }, { commands: "M 53.3 110.6 L 48.8 83 Q 57.3 78.6 65.9 83 Q 74.4 76.3 82.9 83 Q 91.5 79.3 100 83 Q 108.5 80.9 117.1 83 Q 125.6 77.5 134.1 83 Q 142.7 76.7 151.2 83 L 146.7 110.6 Z", color: #fbf3e8 }];
+    in property <[string]> steam: ["M 78 52 C 78 38 72.1 30 81.8 18 S 77 -2 75.4 -10", "M 100 52 C 106.6 38 98.3 30 97.1 18 S 106.9 -2 98.7 -10", "M 122 52 C 117.7 38 129 30 120 18 S 118.5 -2 125.5 -10"];
+    in property <float> steam_opacity: 0.6;
+    in property <color> stream_color: #3b2014;
+    in property <bool> pouring: false;
+    in property <string> selected_name: "Cappuccino";
+    in property <int> size: 1;
+    in property <int> strength: 3;
+    in property <string> strength_name: "balanced";
+    in property <[string]> milks: ["Whole milk", "Oat milk", "Almond milk", "Skimmed milk", "No milk"];
+    in-out property <int> milk: 0;
+    in-out property <float> temperature: 72;
+    in property <int> sugar: 0;
+    in-out property <bool> extra_shot: false;
+    in property <string> summary: "Medium cappuccino · balanced · whole milk · 72°C";
+    in property <string> price: "€3.40";
+    in property <string> status: "Ready";
+    in property <string> status_detail: "Pick a drink and press Brew";
+    in property <string> screen: "READY";
+    in property <float> progress: 0;
+    in property <bool> brewing: false;
+    in property <string> brew_label: "Brew  ·  €3.40";
+    in property <float> water: 0.82;
+    in property <float> beans: 0.64;
+    in property <int> cups_today: 12;
+    in property <bool> animating: false;
+    in property <float> stream_end: 120;
+    background: @linear-gradient(160deg, #21170f 0%, #120c09 100%);
+
+    ticker := Timer {
+        interval: 33ms;
+        running: root.animating;
+        triggered => { root.tick(); }
+    }
+    HorizontalLayout {
+        padding: 24px;
+        spacing: 24px;
+        stage := Card {
+            width: 430px;
+            machine := Rectangle {
+                min-height: 470px;
+                vertical-stretch: 1;
+                cup_area := Rectangle {
+                    height: 300px;
+                    width: 300px;
+                    x: (parent.width - 300px) / 2;
+                    y: parent.height - 314px;
+                    saucer_path := Path {
+                        commands: root.saucer;
+                        fill: @linear-gradient(180deg, #f6efe8 0%, #c9bdb0 100%);
+                        height: parent.height;
+                        viewbox-height: 200;
+                        viewbox-width: 200;
+                        width: parent.width;
+                    }
+                    glass := Path {
+                        commands: root.cup;
+                        fill: #ffffff12;
+                        height: parent.height;
+                        viewbox-height: 200;
+                        viewbox-width: 200;
+                        width: parent.width;
+                    }
+                    for layer in root.cup_layers : liquid := Path {
+                        commands: layer.commands;
+                        fill: layer.color;
+                        height: parent.height;
+                        viewbox-height: 200;
+                        viewbox-width: 200;
+                        width: parent.width;
+                    }
+                    rim := Path {
+                        commands: root.cup;
+                        height: parent.height;
+                        stroke: #f6ebe0c0;
+                        stroke-width: 2.5px;
+                        viewbox-height: 200;
+                        viewbox-width: 200;
+                        width: parent.width;
+                    }
+                    shine := Path {
+                        commands: "M 52 72 L 60 150";
+                        height: parent.height;
+                        stroke: #ffffff30;
+                        stroke-width: 5px;
+                        viewbox-height: 200;
+                        viewbox-width: 200;
+                        width: parent.width;
+                    }
+                    for s in root.steam : wisp := Path {
+                        commands: s;
+                        height: parent.height;
+                        opacity: root.steam_opacity * 0.35;
+                        stroke: #ffffff;
+                        stroke-width: 4px;
+                        viewbox-height: 200;
+                        viewbox-width: 200;
+                        width: parent.width;
+                    }
+                }
+                head := Rectangle {
+                    background: @linear-gradient(180deg, #555b63 0%, #34383e 45%, #1e2024 100%);
+                    border-color: #ffffff1f;
+                    border-radius: 20px;
+                    border-width: 1px;
+                    drop-shadow-blur: 16px;
+                    drop-shadow-color: #00000080;
+                    drop-shadow-offset-y: 6px;
+                    height: 100px;
+                    width: parent.width - 20px;
+                    x: 10px;
+                    y: 0px;
+                    Text {
+                        color: #d5d9de;
+                        font-size: 14px;
+                        font-weight: 800;
+                        letter-spacing: 4px;
+                        text: "BARISTA";
+                        x: 22px;
+                        y: 20px;
+                    }
+                    Text {
+                        color: #9aa1aa;
+                        font-size: 11px;
+                        text: "\{root.cups_today} cups today";
+                        x: 22px;
+                        y: 42px;
+                    }
+                    screen_box := Rectangle {
+                        background: #0b1610;
+                        border-color: root.brewing ? #e2ae73 : #2f7a4c;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        height: 38px;
+                        width: 136px;
+                        x: parent.width - 160px;
+                        y: 22px;
+                        animate border-color { duration: 300ms; }
+                        Text {
+                            color: root.brewing ? #ffd29a : #7dffb0;
+                            font-family: "Menlo";
+                            font-size: 13px;
+                            font-weight: 700;
+                            height: parent.height;
+                            horizontal-alignment: center;
+                            text: root.screen;
+                            vertical-alignment: center;
+                            width: parent.width;
+                        }
+                    }
+                }
+                group_head := Rectangle {
+                    background: @linear-gradient(90deg, #6b7178 0%, #c3c8ce 45%, #7b8188 100%);
+                    border-radius: 6px;
+                    height: 24px;
+                    width: 120px;
+                    x: (parent.width - 120px) / 2;
+                    y: 96px;
+                }
+                handle := Rectangle {
+                    background: @linear-gradient(180deg, #3a2c24 0%, #140e0b 100%);
+                    border-radius: 7px;
+                    height: 14px;
+                    width: 130px;
+                    x: parent.width / 2 + 50px;
+                    y: 101px;
+                }
+                spouts := Rectangle {
+                    background: @linear-gradient(90deg, #7b8188 0%, #d0d4d9 50%, #7b8188 100%);
+                    border-radius: 3px;
+                    height: 12px;
+                    width: 36px;
+                    x: (parent.width - 36px) / 2;
+                    y: 119px;
+                }
+                tray := Rectangle {
+                    background: @linear-gradient(180deg, #3a3e44 0%, #17191c 100%);
+                    border-radius: 6px;
+                    height: 18px;
+                    width: parent.width - 60px;
+                    x: 30px;
+                    y: parent.height - 26px;
+                }
+                stream_bar := Rectangle {
+                    background: @linear-gradient(90deg, root.stream_color.darker(30%) 0%, root.stream_color.brighter(40%) 45%, root.stream_color 100%);
+                    border-radius: 3.5px;
+                    height: max(0px, cup_area.y + root.stream_end * 1.5px - self.y);
+                    opacity: root.pouring ? 1 : 0;
+                    width: 7px;
+                    x: (parent.width - self.width) / 2;
+                    y: 131px;
+                    animate opacity { duration: 250ms; }
+                }
+            }
+            Text {
+                color: #f6e9dc;
+                font-size: 20px;
+                font-weight: 700;
+                text: root.status;
+            }
+            Text {
+                color: #a88d78;
+                font-size: 13px;
+                text: root.status_detail;
+            }
+            progress_track := Rectangle {
+                background: #ffffff10;
+                border-radius: 4px;
+                height: 8px;
+                progress_fill := Rectangle {
+                    background: @linear-gradient(90deg, #b5763c 0%, #f0c48c 100%);
+                    border-radius: 4px;
+                    height: parent.height;
+                    width: parent.width * root.progress;
+                    x: 0;
+                    animate width { duration: 120ms; }
+                }
+            }
+            brew := Rectangle {
+                background: root.brewing ? #3a2a20 : brew_area.pressed ? #b8783f : brew_area.has-hover ? #e9b77e : #d9a066;
+                border-radius: 16px;
+                drop-shadow-blur: root.brewing ? 0px : 20px;
+                drop-shadow-color: #d9a06655;
+                height: 58px;
+                animate background { duration: 160ms; easing: ease-out; }
+                Text {
+                    color: root.brewing ? #d9a066 : #1a1210;
+                    font-size: 18px;
+                    font-weight: 800;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    text: root.brew_label;
+                    vertical-alignment: center;
+                    width: parent.width;
+                }
+                brew_area := TouchArea { mouse-cursor: root.brewing ? MouseCursor.default : MouseCursor.pointer; clicked => { root.brew_clicked(); } }
+            }
+        }
+        side := VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 20px;
+            top_bar := HorizontalLayout {
+                spacing: 24px;
+                hello := VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text {
+                        color: #f6e9dc;
+                        font-size: 30px;
+                        font-weight: 800;
+                        text: "Good morning";
+                    }
+                    Text {
+                        color: #a88d78;
+                        font-size: 15px;
+                        text: "What can I make you?";
+                    }
+                }
+                water_gauge := Gauge {
+                    label: "Water";
+                    tint: #6cb6ff;
+                    value: root.water;
+                    width: 150px;
+                }
+                beans_gauge := Gauge {
+                    label: "Beans";
+                    tint: #d9a066;
+                    value: root.beans;
+                    width: 150px;
+                }
+                about := Button { text: "About"; clicked => { root.about_clicked(); } }
+            }
+            menu_card := Card {
+                title: "MENU";
+                for row in root.menu : menu_row := HorizontalLayout {
+                    spacing: 12px;
+                    for d in row : tile := DrinkTile {
+                        cup: root.cup;
+                        drink: d;
+                        selected: d.name == root.selected_name;
+                        clicked => { root.drink_picked(d.name); }
+                    }
+                }
+            }
+            options := Card {
+                title: "MAKE IT YOURS";
+                vertical-stretch: 1;
+                option_grid := GridLayout {
+                    spacing-horizontal: 18px;
+                    spacing-vertical: 10px;
+                    Text {
+                        col: 0;
+                        color: #c9b09a;
+                        font-size: 14px;
+                        min-width: 110px;
+                        row: 0;
+                        text: "Size";
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                    size_pick := Segmented {
+                        col: 1;
+                        current: root.size;
+                        items: ["Small", "Medium", "Large"];
+                        row: 0;
+                        horizontal-stretch: 1;
+                        picked(index) => { root.size_picked(index); }
+                    }
+                    Text {
+                        col: 0;
+                        color: #c9b09a;
+                        font-size: 14px;
+                        min-width: 110px;
+                        row: 1;
+                        text: "Strength";
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                    beans_row := HorizontalLayout {
+                        alignment: start;
+                        col: 1;
+                        row: 1;
+                        spacing: 10px;
+                        horizontal-stretch: 1;
+                        for i in 5 : bean := Rectangle {
+                            height: 30px;
+                            width: 22px;
+                            bean_body := Path {
+                                commands: "M 12 1 C 20 1 23 9 23 16 C 23 24 19 31 12 31 C 5 31 1 24 1 16 C 1 9 4 1 12 1 Z";
+                                fill: i < root.strength ? #c8864a : bean_area.has-hover ? #ffffff30 : #ffffff14;
+                                height: parent.height;
+                                viewbox-height: 32;
+                                viewbox-width: 24;
+                                width: parent.width;
+                                animate fill { duration: 150ms; }
+                            }
+                            bean_crease := Path {
+                                commands: "M 12 4 C 7 11 17 20 12 28";
+                                height: parent.height;
+                                stroke: i < root.strength ? #5a3418 : #ffffff20;
+                                stroke-width: 1.6px;
+                                viewbox-height: 32;
+                                viewbox-width: 24;
+                                width: parent.width;
+                            }
+                            bean_area := TouchArea { mouse-cursor: pointer; clicked => { root.strength_picked(i + 1); } }
+                        }
+                        Text {
+                            color: #a88d78;
+                            font-size: 13px;
+                            text: root.strength_name;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Text {
+                        col: 0;
+                        color: #c9b09a;
+                        font-size: 14px;
+                        min-width: 110px;
+                        row: 2;
+                        text: "Milk";
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                    milk_pick := ComboBox {
+                        col: 1;
+                        current-index <=> root.milk;
+                        model: root.milks;
+                        row: 2;
+                        horizontal-stretch: 1;
+                        selected(value) => { root.options_changed(); }
+                    }
+                    Text {
+                        col: 0;
+                        color: #c9b09a;
+                        font-size: 14px;
+                        min-width: 110px;
+                        row: 3;
+                        text: "Temperature";
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                    temp_row := HorizontalLayout {
+                        col: 1;
+                        row: 3;
+                        spacing: 12px;
+                        horizontal-stretch: 1;
+                        temp_slider := Slider {
+                            horizontal-stretch: 1;
+                            maximum: 90;
+                            minimum: 60;
+                            value <=> root.temperature;
+                            changed(v) => { root.options_changed(); }
+                        }
+                        Text {
+                            color: #f3e6da;
+                            font-size: 14px;
+                            font-weight: 600;
+                            min-width: 44px;
+                            text: "\{round(root.temperature)}°C";
+                            vertical-alignment: center;
+                        }
+                    }
+                    Text {
+                        col: 0;
+                        color: #c9b09a;
+                        font-size: 14px;
+                        min-width: 110px;
+                        row: 4;
+                        text: "Sugar";
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                    sugar_row := HorizontalLayout {
+                        alignment: start;
+                        col: 1;
+                        row: 4;
+                        spacing: 10px;
+                        horizontal-stretch: 1;
+                        less_sugar := Button {
+                            enabled: root.sugar > 0;
+                            text: "−";
+                            clicked => { root.sugar_changed(-1); }
+                        }
+                        Text {
+                            color: #f3e6da;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            min-width: 70px;
+                            text: root.sugar == 0 ? "None" : root.sugar == 1 ? "1 spoon" : "\{root.sugar} spoons";
+                            vertical-alignment: center;
+                        }
+                        more_sugar := Button {
+                            enabled: root.sugar < 4;
+                            text: "+";
+                            clicked => { root.sugar_changed(1); }
+                        }
+                    }
+                    Text {
+                        col: 0;
+                        color: #c9b09a;
+                        font-size: 14px;
+                        min-width: 110px;
+                        row: 5;
+                        text: "Extra shot";
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                    shot_switch := Switch {
+                        checked <=> root.extra_shot;
+                        col: 1;
+                        row: 5;
+                        text: "+ €0.60";
+                        horizontal-stretch: 1;
+                        toggled => { root.options_changed(); }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; }
+                total := HorizontalLayout {
+                    spacing: 16px;
+                    Text {
+                        color: #d9c2ad;
+                        font-size: 14px;
+                        horizontal-stretch: 1;
+                        text: root.summary;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        color: #e2ae73;
+                        font-size: 26px;
+                        font-weight: 800;
+                        text: root.price;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
