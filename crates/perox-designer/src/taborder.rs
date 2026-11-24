@@ -15,7 +15,6 @@ pub fn focusable(kind: &str) -> bool {
         "Button"
             | "StandardButton"
             | "LineEdit"
-            | "TextInput"
             | "TextEdit"
             | "CheckBox"
             | "Switch"
