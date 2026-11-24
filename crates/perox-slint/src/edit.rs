@@ -306,7 +306,8 @@ pub fn set_handler(
     params: &[&str],
     body: &str,
 ) -> Result<Vec<TextEdit>, EditError> {
-    check(&[event])?;
+    // `changed <property>`: runs when the property changes.
+    check(&[event.strip_prefix("changed ").unwrap_or(event)])?;
     check(params)?;
     let doc = parse(src);
     let el = element(component(&doc, comp)?, path)?;
@@ -1214,6 +1215,28 @@ mod tests {
             &remove_handler(&out, "Main", &[0, 1], "pointer-event").unwrap(),
         );
         assert_eq!(out2, SRC);
+        // `changed <property>` handlers.
+        let out = run(set_handler(
+            SRC,
+            "Main",
+            &[0, 1],
+            "changed width",
+            &[],
+            "root.go();",
+        ));
+        assert!(out.contains("changed width => { root.go(); }"), "{out}");
+        let doc = parse(&out);
+        let b = doc.components[0].at(&[0, 1]).unwrap();
+        assert_eq!(b.handler("changed width").unwrap().body, "root.go();");
+        let again = apply(
+            &out,
+            &set_handler(&out, "Main", &[0, 1], "changed width", &[], "root.stop();").unwrap(),
+        );
+        assert!(
+            again.contains("changed width => { root.stop(); }"),
+            "{again}"
+        );
+        assert_eq!(again.matches("changed width").count(), 1);
         let out = run(set_id(SRC, "Main", &[0], Some("column")));
         assert!(out.contains("    column := VerticalLayout {"));
         let out = run(set_id(SRC, "Main", &[0, 0], None));

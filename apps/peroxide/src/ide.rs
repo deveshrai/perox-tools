@@ -561,7 +561,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.add_widget", "Add Element", Access::Edit)
-                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea; ToolBar (a HorizontalBox named toolbar, for buttons that run actions: see designer.use_action); menus: MenuBar (in a Window, goes first) Menu (title) MenuItem (title, shortcut: \"@keys(Control + O)\", event activated) MenuSeparator ContextMenuArea (its Menu goes first, then the content it covers); non-visual: Timer (interval: \"500ms\", running, event triggered; goes at the top of the root). Or any component (other std-widgets ones are imported too; the project's own and its libraries' are imported from their files). In a component, kind \"@children\" marks where the elements forms put inside it go. Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
+                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea; Canvas (an Image the Rust code draws into with perox_ui::canvas: declares <id>_image, <id>_width/<id>_height and callback <id>_resized(), wired to redraw on resize); ToolBar (a HorizontalBox named toolbar, for buttons that run actions: see designer.use_action); menus: MenuBar (in a Window, goes first) Menu (title) MenuItem (title, shortcut: \"@keys(Control + O)\", event activated) MenuSeparator ContextMenuArea (its Menu goes first, then the content it covers); non-visual: Timer (interval: \"500ms\", running, event triggered; goes at the top of the root). Or any component (other std-widgets ones are imported too; the project's own and its libraries' are imported from their files). In a component, kind \"@children\" marks where the elements forms put inside it go. Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
                 .params(path_schema(json!({
                     "component": { "type": "string" },
                     "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
@@ -607,6 +607,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                         }
                     }
                 }
+                let canvas = kind == "Canvas";
                 let kind = template.map_or(kind, |(real, _)| real);
                 // Like the designer: widgets code talks to get an id.
                 let auto = match template {
@@ -637,6 +638,9 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 if props.iter().any(|(_, v)| v.contains("Palette.")) {
                     let e = perox_slint::edit::ensure_import(&work, "Palette", perox_designer::catalog::STD_WIDGETS);
                     work = perox_slint::edit::apply(&work, &e);
+                }
+                if canvas && let Some(w) = wid {
+                    work = perox_designer::canvas::wire(&work, &comp, w).map_err(|e| err(e.to_string()))?;
                 }
                 apply_form_edits(s, id, perox_slint::edit::diff(&text, &work));
                 let count = doc.component(&comp).and_then(|c| c.at(&parent)).map_or(0, |p| p.children.len());

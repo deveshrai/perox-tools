@@ -444,6 +444,18 @@ pub const KINDS: &[Kind] = &[
         events: &[],
     },
     Kind {
+        name: "Canvas",
+        icon: Icon::Paintbrush,
+        group: Group::Widget,
+        std: false,
+        props: &[p(
+            "image-fit",
+            Choice(&["fill", "contain", "cover", "preserve"]),
+            "",
+        )],
+        events: &[],
+    },
+    Kind {
         name: "TouchArea",
         icon: Icon::SquareMousePointer,
         group: Group::Container,
@@ -795,6 +807,7 @@ pub fn defaults(kind: &str) -> Vec<(String, String)> {
         "Menu" => vec![s("title", "Menu")],
         "MenuItem" => vec![s("title", "Item")],
         "Timer" => vec![n("interval", "1s")],
+        "Canvas" => vec![n("image-fit", "fill")],
         "ToolBar" => vec![
             n("alignment", "start"),
             n("padding", "4px"),
@@ -822,6 +835,8 @@ pub fn free_default_size(kind: &str) -> Option<(f64, f64)> {
 pub fn template(kind: &str) -> Option<(&'static str, &'static str)> {
     match kind {
         "ToolBar" => Some(("HorizontalBox", "toolbar")),
+        // An Image the code draws into (see `canvas`).
+        "Canvas" => Some(("Image", "canvas")),
         _ => None,
     }
 }

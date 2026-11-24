@@ -605,8 +605,17 @@ fn build_element(
                     value_span,
                 });
             }
-            SyntaxKind::CallbackConnection => {
-                let event = first_ident(&child).unwrap_or_default();
+            // `clicked => { … }`, and `changed width => { … }` (event `changed width`).
+            SyntaxKind::CallbackConnection | SyntaxKind::PropertyChangedCallback => {
+                let event = if child.kind() == SyntaxKind::PropertyChangedCallback {
+                    let prop = child
+                        .child_node(SyntaxKind::DeclaredIdentifier)
+                        .map(|d| src[trimmed(&d)].to_owned())
+                        .unwrap_or_default();
+                    format!("changed {prop}")
+                } else {
+                    first_ident(&child).unwrap_or_default()
+                };
                 let params = child
                     .children()
                     .filter(|c| c.kind() == SyntaxKind::DeclaredIdentifier)

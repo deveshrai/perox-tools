@@ -16,6 +16,7 @@ sqlite = ["dep:sqlx", "dep:tokio"]
 [dependencies]
 rfd.workspace = true
 image.workspace = true
+tiny-skia = "=0.12.0"
 slint = { workspace = true, features = ["raw-window-handle-06"] }
 sqlx = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }

@@ -4,6 +4,7 @@
 //!   `<Name>Handlers` trait and `connect` for each (see `perox_slint::codegen`).
 //! - [`msgbox`]: native message boxes (information, warning, error, OK/Cancel, Yes/No).
 //! - [`dialog`]: show a `.slint` `Dialog` over a window and get the button that closed it.
+//! - [`canvas`]: drawing in Rust (tiny-skia) for the designer's Canvas.
 //! - [`snapshot`]: a picture of the running window (`PEROX_SNAPSHOT=<file.png>`).
 //! - [`data`]: tables as list and table models; SQLite queries (feature `sqlite`).
 //!
@@ -26,6 +27,7 @@
 //! }
 //! ```
 
+pub mod canvas;
 pub mod data;
 pub mod dialog;
 pub mod msgbox;

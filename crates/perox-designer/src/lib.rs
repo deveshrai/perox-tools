@@ -9,6 +9,7 @@
 
 pub mod actions;
 pub mod brush;
+pub mod canvas;
 pub mod catalog;
 pub mod components;
 pub mod data;
@@ -649,6 +650,7 @@ impl Designer {
         if kind == "Image" {
             props.extend(self.drag_extra.iter().cloned());
         }
+        let template_kind = kind;
         let (kind, id) = match catalog::template(kind) {
             Some((real, name)) => (
                 real,
@@ -669,18 +671,22 @@ impl Designer {
             .as_ref()
             .and_then(|(_, l)| l.iter().find(|o| o.name == kind))
             .and_then(|o| o.from.clone());
+        let canvas = template_kind == "Canvas";
         let mut work = source.to_owned();
         let result = free::step(
             &mut work,
             edit::add_element(source, &comp, parent, index, kind, id.as_deref(), &props),
         )
-        .map(|()| {
+        .and_then(|()| {
             free::import(&mut work, kind);
             if let Some(from) = &import_from {
                 let e = edit::ensure_import(&work, kind, from);
                 work = edit::apply(&work, &e);
             }
-            work
+            match (&id, canvas) {
+                (Some(id), true) => canvas::wire(&work, &comp, id),
+                _ => Ok(work),
+            }
         });
         if self.apply_text(actions, source, result) {
             let mut path = parent.to_vec();
