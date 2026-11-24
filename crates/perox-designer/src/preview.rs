@@ -223,6 +223,39 @@ impl Preview {
         self.texture.as_ref()
     }
 
+    /// Draws now, at `size` (points) and `scale`, into straight (not premultiplied) RGBA:
+    /// returns width, height and the pixels.
+    pub fn render(&mut self, size: Vec2, scale: f32) -> Option<(usize, usize, Vec<u8>)> {
+        let window = self.window.clone()?;
+        slint::platform::update_timers_and_animations();
+        let (w, h) = (
+            (size.x * scale).round().max(1.0) as usize,
+            (size.y * scale).round().max(1.0) as usize,
+        );
+        window.dispatch_event(WindowEvent::ScaleFactorChanged {
+            scale_factor: scale,
+        });
+        window.set_size(slint::PhysicalSize::new(w as u32, h as u32));
+        window.request_redraw();
+        let mut pixels = vec![PremultipliedRgbaColor::background(); w * h];
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut pixels, w);
+        });
+        self.rendered = None; // the canvas redraws at its own size next time
+        let mut out = Vec::with_capacity(w * h * 4);
+        for p in &pixels {
+            let un = |c: u8| {
+                if p.alpha == 0 {
+                    0
+                } else {
+                    ((c as u32 * 255 + p.alpha as u32 / 2) / p.alpha as u32).min(255) as u8
+                }
+            };
+            out.extend_from_slice(&[un(p.red), un(p.green), un(p.blue), p.alpha]);
+        }
+        Some((w, h, out))
+    }
+
     /// A pixel of the last render (for tests).
     pub fn pixel(&self, x: usize, y: usize) -> Option<[u8; 4]> {
         self.pixels.get(y * self.width + x).copied()
@@ -240,4 +273,27 @@ impl Preview {
             vec2(r.size.width, r.size.height),
         ))
     }
+}
+
+/// Renders a component of a `.slint` source on its own, at its preferred size (or
+/// `size`), for screenshots: width, height and straight RGBA pixels.
+pub fn render_component(
+    source: &str,
+    path: &Path,
+    component: &str,
+    style: &str,
+    dark: bool,
+    size: Option<Vec2>,
+    scale: f32,
+) -> Result<(usize, usize, Vec<u8>), String> {
+    let mut p = Preview::default();
+    p.update(source, path, component, style, dark);
+    if !p.diagnostics.is_empty() {
+        return Err(p.diagnostics.join("\n"));
+    }
+    let size = size
+        .or_else(|| p.preferred_size())
+        .unwrap_or(vec2(400.0, 300.0));
+    p.render(size, scale)
+        .ok_or_else(|| "the component didn't render".to_owned())
 }

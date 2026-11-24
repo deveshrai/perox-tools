@@ -318,6 +318,62 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.screenshot", "Form Screenshot", Access::Execute)
+                .description("Renders a .slint component (the file's main window by default) to a PNG, exactly as Slint draws it, at its natural size or `width`×`height` points. `style` (fluent, cupertino, material, cosmic; default: this OS's), `dark`, `scale` (pixels per point, default 2). Saved under target/peroxide/screenshots/ unless `out` (inside the project) is given; returns the path. Uses unsaved edits if the file is open.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" }, "style": { "type": "string" },
+                    "dark": { "type": "boolean" }, "scale": { "type": "number", "minimum": 0.5, "maximum": 4 },
+                    "width": { "type": "number" }, "height": { "type": "number" },
+                    "out": { "type": "string" }
+                }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                if !crate::docs::is_form(&path) {
+                    return Err(err("Not a .slint file."));
+                }
+                let text = match s.docs.list.iter().find(|d| d.path == path) {
+                    Some(d) => d.editor.core.text(),
+                    None => std::fs::read_to_string(&path).map_err(|e| err(e.to_string()))?,
+                };
+                let doc = perox_slint::parse(&text);
+                let component = component_name(&doc, inv)?;
+                let style = inv.args["style"].as_str().unwrap_or(perox_designer::preview::native_style()).to_owned();
+                if !perox_designer::preview::STYLES.contains(&style.as_str()) {
+                    return Err(err(format!("`style` is one of {}", perox_designer::preview::STYLES.join(", "))));
+                }
+                let dark = inv.bool_arg("dark")?.unwrap_or(false);
+                let scale = inv.args["scale"].as_f64().unwrap_or(2.0).clamp(0.5, 4.0) as f32;
+                let size = match (inv.args["width"].as_f64(), inv.args["height"].as_f64()) {
+                    (Some(w), Some(h)) if w > 0.0 && h > 0.0 => Some(eframe::egui::vec2(w as f32, h as f32)),
+                    (None, None) => None,
+                    _ => return Err(err("Give both `width` and `height`, or neither.")),
+                };
+                let (w, h, rgba) = perox_designer::preview::render_component(&text, &path, &component, &style, dark, size, scale)
+                    .map_err(|e| err(format!("The form doesn't compile:\n{e}")))?;
+                let root = s.project.as_ref().map(|p| p.root.clone()).ok_or_else(|| err("No project is open."))?;
+                let out = match inv.args["out"].as_str() {
+                    Some(o) => {
+                        let o = normalize(&root.join(o));
+                        if !o.starts_with(&root) {
+                            return Err(err("`out` must be inside the project."));
+                        }
+                        o
+                    }
+                    None => {
+                        let stem = path.file_stem().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+                        root.join("target").join("peroxide").join("screenshots")
+                            .join(format!("{stem}-{component}-{style}{}.png", if dark { "-dark" } else { "" }))
+                    }
+                };
+                if let Some(dir) = out.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| err(e.to_string()))?;
+                }
+                image::save_buffer(&out, &rgba, w as u32, h as u32, image::ExtendedColorType::Rgba8)
+                    .map_err(|e| err(format!("couldn't write the PNG: {e}")))?;
+                Ok(json!({ "path": out, "component": component, "style": style, "width": w, "height": h }))
+            },
+        ),
+        (
             CommandSpec::new("designer.tree", "Form Tree", Access::Read)
                 .description("A .slint file's components, and the designed one as a tree: each element's kind, id, path (#0.1), properties (as .slint expressions) and callbacks. Also lists syntax errors and the preview's compile errors.")
                 .params(path_schema(json!({ "component": { "type": "string", "description": "Default: the file's main window" } }))),

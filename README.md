@@ -9,11 +9,12 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phases 1 and 2 are done; forms now use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
-> It's a real Rust IDE with rust-analyzer, plus a form designer for `.slint` files.
-> **File → New GUI App** gives you a native-looking window to design, a button wired to
-> Rust code, an About dialog, and Run. Phase 3 (pro tooling) is under way: the Test Explorer, the debugger, full git, and clippy/rustfmt integration are in. See
-> [docs/roadmap.md](docs/roadmap.md).
+> Status: **Phases 1, 2 and 3 are done; forms use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
+> A real Rust IDE with rust-analyzer, a form designer for `.slint` files, a debugger, a
+> Test Explorer, full git, and clippy and rustfmt built in. **File → New GUI App** gives
+> you a native-looking window to design, a button wired to Rust code, an About dialog,
+> and Run. Agents can drive all of it over MCP, down to screenshotting forms
+> (`designer.screenshot`). See [docs/roadmap.md](docs/roadmap.md).
 
 ## Screenshots
 

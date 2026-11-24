@@ -97,7 +97,7 @@ snippets `msgbox`, `msgwarn`, `msgerror`, `msgconfirm`, `msgask`, `dialog` in Ru
 Still to come:
 OS-level dialog modality when Slint has it.
 
-### Phase 3: pro tooling ← *in progress*
+### Phase 3: pro tooling ✅ (2026-11-24)
 Debugger (lldb-dap on macOS/Linux; on Windows, lldb-dap or cppvsdbg, decided by ADR), test
 explorer, full git, clippy and rustfmt integration, all major features exposed over MCP,
 including designer operations and form screenshots.
@@ -108,10 +108,11 @@ including designer operations and form screenshots.
 | Debugger: lldb-dap over DAP, gutter breakpoints, stepping, call stack, variables with Rust formatters, watches, console, stop on panic, debug a test, `debug.*` over MCP ([ADR 0012](adr/0012-debugger.md)) | ✅ |
 | Full git: stage, unstage, discard (confirmed), branches, history, commit view, Diff pane, fetch / pull / push, `git.*` over MCP | ✅ |
 | clippy and rustfmt: clippy lints as you save (rust-analyzer, with quick fixes; switchable to plain check), Apply Clippy Fixes, Format Project, Check Formatting | ✅ |
-| Form screenshots over MCP | |
+| Form screenshots over MCP: `designer.screenshot` renders any `.slint` component to PNG in any style, light or dark | ✅ |
 
 Every part is checked three ways before it's ticked: automated tests, a live run of the IDE
-driven over MCP (with screenshots), and CI on macOS, Linux and Windows.
+driven over MCP (with screenshots), and CI. The Windows CI job is paused for now, so the
+CI leg covers macOS and Linux; Windows needs another pass before a Windows release.
 
 ### Phase 4: RAD depth
 Third-party components and the preview host, non-visual components, menus, actions and
