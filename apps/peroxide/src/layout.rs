@@ -79,14 +79,13 @@ pub fn show_pane(tree: &mut Tree<Pane>, pane: Pane) {
                         | Pane::Activity
                         | Pane::References
                         | Pane::Terminal
-                        | Pane::SourceControl
                         | Pane::Tests
                         | Pane::DebugConsole
                 )
             };
             let sibling = if bottom(&pane) {
                 find_pane(tree, bottom)
-            } else if pane == Pane::Debug {
+            } else if matches!(pane, Pane::Debug | Pane::SourceControl) {
                 find_pane(tree, |p| *p == Pane::Explorer)
             } else {
                 find_pane(tree, |p| matches!(p, Pane::Editor(_)))

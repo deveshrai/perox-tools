@@ -12,7 +12,7 @@ the device.
 > Status: **Phases 1 and 2 are done; forms now use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
 > It's a real Rust IDE with rust-analyzer, plus a form designer for `.slint` files.
 > **File → New GUI App** gives you a native-looking window to design, a button wired to
-> Rust code, an About dialog, and Run. Phase 3 (pro tooling) is under way: the Test Explorer and the debugger are in. See
+> Rust code, an About dialog, and Run. Phase 3 (pro tooling) is under way: the Test Explorer, the debugger and full git are in. See
 > [docs/roadmap.md](docs/roadmap.md).
 
 ## Screenshots
@@ -60,6 +60,12 @@ any test can be debugged from the Test Explorer. macOS uses Xcode's lldb-dap; on
 install `lldb`, on Windows LLVM ([ADR 0012](docs/adr/0012-debugger.md)).
 
 ![Paused at a breakpoint](docs/screenshots/debugger.png)
+
+**Source Control.** Stage and unstage files, discard changes (after asking), commit,
+switch or create branches, read the history, and fetch, pull and push without leaving
+the IDE. Click a changed file or a commit to see its diff.
+
+![Source Control and the Diff pane](docs/screenshots/source-control.png)
 
 **Test Explorer.** Every test in the project (unit, integration and doc tests) by crate
 and module, with its last result. Run all, the failed ones, a module or one test; a

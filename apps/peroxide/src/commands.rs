@@ -175,6 +175,9 @@ impl AppState {
 
     /// Takes finished git refreshes and keeps every open file's gutter marks current.
     pub fn update_git(&mut self) {
+        if std::mem::take(&mut self.git.stale) {
+            self.git.refresh(&self.ctx);
+        }
         if self.git.poll() {
             self.git_generation += 1;
         }

@@ -126,6 +126,8 @@ pub struct Git {
     /// Files the user asked to discard, waiting for confirmation.
     pub confirm_discard: Option<Vec<PathBuf>>,
     pub new_branch: Option<String>,
+    /// A remote operation finished: status (upstream, ahead/behind) needs reading again.
+    pub stale: bool,
 }
 
 fn git(root: &Path, args: &[&str]) -> Option<String> {
@@ -224,6 +226,7 @@ impl Git {
         {
             self.remote_result = Some((name.clone(), result));
             self.remote = None;
+            self.stale = true;
         }
         let Some(rx) = &self.pending else {
             return false;
@@ -641,8 +644,8 @@ pub fn show(ui: &mut egui::Ui, g: &mut Git, message: &mut String) -> Vec<(&'stat
         ui.weak(NO_REPO);
         return out;
     };
-    // Branch, sync state and remote buttons.
-    ui.horizontal(|ui| {
+    // Branch, sync state and remote buttons (wrapping in a narrow sidebar).
+    ui.horizontal_wrapped(|ui| {
         ui.add(Icon::GitBranch.image(ui));
         let current = g.status.branch.clone();
         egui::ComboBox::from_id_salt("git_branch")
