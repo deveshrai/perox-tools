@@ -113,6 +113,18 @@ impl Job {
         args: &[String],
         wake: impl Fn() + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
+        Self::start_env(cargo, root, kind, args, &[], wake)
+    }
+
+    /// [`Job::start_with`], with extra environment variables for cargo and what it runs.
+    pub fn start_env(
+        cargo: &Path,
+        root: &Path,
+        kind: Kind,
+        args: &[String],
+        env: &[(String, String)],
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> std::io::Result<Self> {
         let (reader, writer) = std::io::pipe()?;
         let mut cmd = Command::new(cargo);
         cmd.arg(kind.verb());
@@ -124,6 +136,7 @@ impl Job {
             .current_dir(root)
             .env("CARGO_TERM_COLOR", "never")
             .envs(crate::tools::env())
+            .envs(env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(writer.try_clone()?)
             .stderr(writer);

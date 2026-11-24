@@ -269,6 +269,16 @@ pub fn start_build_with(
     kind: Kind,
     args: &[String],
 ) -> Result<Value, CommandError> {
+    start_build_env(s, kind, args, &[])
+}
+
+/// [`start_build_with`], with environment variables for cargo and the program.
+pub fn start_build_env(
+    s: &mut AppState,
+    kind: Kind,
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<Value, CommandError> {
     let root = s
         .project
         .as_ref()
@@ -293,8 +303,10 @@ pub fn start_build_with(
     }
     s.build.tests.finish(); // a test run that was going on has ended
     let ctx = s.ctx.clone();
-    let job = Job::start_with(&cargo, &root, kind, args, move || ctx.request_repaint())
-        .map_err(|e| err(e.to_string()))?;
+    let job = Job::start_env(&cargo, &root, kind, args, env, move || {
+        ctx.request_repaint()
+    })
+    .map_err(|e| err(e.to_string()))?;
     s.build.job = Some(job);
     s.build.output.clear();
     s.build.diagnostics.clear();
@@ -1753,6 +1765,38 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         (build("build.run", "Run", "Runs `cargo run`: builds and starts the program. Its output appears in Output."), |s, _| start_build(s, Kind::Run)),
         (build("build.test", "Run Tests", "Runs `cargo test`; results also go to the Test Explorer (test.results)."), |s, _| crate::testing::run(s, crate::testing::Scope::All)),
         (build("build.clippy", "Clippy", "Runs `cargo clippy` for lints."), |s, _| start_build(s, Kind::Clippy)),
+        (
+            CommandSpec::new("build.snapshot", "Run and Screenshot", Access::Execute)
+                .description("Runs the app (`cargo run`) and saves a PNG of its main window once it has settled (`delay_ms`, default 1500), then closes it: what the running app really looks like, data and all. Works with apps whose window is connected with perox-ui's generated `connect`. `out` (inside the project; default target/peroxide/screenshots/app.png); `args` are passed to the program. When build.status shows it finished, the PNG is there.")
+                .params(json!({ "type": "object", "properties": {
+                    "out": { "type": "string" },
+                    "delay_ms": { "type": "integer", "minimum": 0 },
+                    "args": { "type": "array", "items": { "type": "string" } }
+                } })),
+            |s, inv| {
+                let out = match inv.args.get("out") {
+                    Some(_) => resolve(s, inv, "out")?,
+                    None => s
+                        .project
+                        .as_ref()
+                        .map(|p| p.root.join("target/peroxide/screenshots/app.png"))
+                        .ok_or_else(|| err("No project is open."))?,
+                };
+                let _ = std::fs::remove_file(&out);
+                let mut env = vec![("PEROX_SNAPSHOT".to_owned(), out.to_string_lossy().into_owned())];
+                if let Some(d) = inv.args.get("delay_ms").and_then(Value::as_u64) {
+                    env.push(("PEROX_SNAPSHOT_DELAY".into(), d.to_string()));
+                }
+                let mut args = Vec::new();
+                if let Some(a) = inv.args.get("args").and_then(Value::as_array) {
+                    args.push("--".to_owned());
+                    args.extend(a.iter().filter_map(|v| v.as_str().map(str::to_owned)));
+                }
+                let mut r = start_build_env(s, Kind::Run, &args, &env)?;
+                r["out"] = json!(rel(s, &out));
+                Ok(r)
+            },
+        ),
         (
             CommandSpec::new("build.package", "Package App…", Access::Execute)
                 .description("Makes installable packages of the app: a release build (`cargo build --release`), then, by default, what this OS makes: a .app and .dmg on macOS, a .deb (and an AppImage if appimagetool is installed) on Linux, an .msi (if WiX is installed) and a .zip on Windows. Into target/peroxide/package. Name, identifier, publisher and icon come from [package.metadata.peroxide] in Cargo.toml. Signs and notarizes on macOS when PEROX_MACOS_SIGN_IDENTITY / PEROX_MACOS_NOTARY_PROFILE are set.")

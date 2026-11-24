@@ -177,7 +177,7 @@ fn callback_handlers(c: &Component) -> Option<String> {
         ));
     }
     Some(format!(
-        "/// Handlers for `{name}`'s callbacks. Every method has an empty default; implement the\n/// ones you need and pass your type to [`{name}::connect`].\n#[allow(unused_variables)]\npub trait {name}Handlers: 'static {{\n{trait_body}}}\n\nimpl {name} {{\n    /// Routes every callback of this window to `handlers`, and returns them, shared.\n    #[allow(clippy::let_unit_value, clippy::unused_unit)]\n    pub fn connect<H: {name}Handlers>(&self, handlers: H) -> std::rc::Rc<std::cell::RefCell<H>> {{\n        let shared = std::rc::Rc::new(std::cell::RefCell::new(handlers));\n{wiring}        shared\n    }}\n}}\n{}",
+        "/// Handlers for `{name}`'s callbacks. Every method has an empty default; implement the\n/// ones you need and pass your type to [`{name}::connect`].\n#[allow(unused_variables)]\npub trait {name}Handlers: 'static {{\n{trait_body}}}\n\nimpl {name} {{\n    /// Routes every callback of this window to `handlers`, and returns them, shared.\n    #[allow(clippy::let_unit_value, clippy::unused_unit)]\n    pub fn connect<H: {name}Handlers>(&self, handlers: H) -> std::rc::Rc<std::cell::RefCell<H>> {{\n        let shared = std::rc::Rc::new(std::cell::RefCell::new(handlers));\n        perox_ui::snapshot::arm(self);\n{wiring}        shared\n    }}\n}}\n{}",
         dialog.map(|d| format!("\n{d}")).unwrap_or_default()
     ))
 }
