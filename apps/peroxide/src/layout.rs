@@ -26,6 +26,7 @@ pub enum Pane {
     References,
     Terminal,
     SourceControl,
+    Tests,
 }
 
 /// Explorer on the left; editors above, Problems / Output / Activity below.
@@ -76,6 +77,7 @@ pub fn show_pane(tree: &mut Tree<Pane>, pane: Pane) {
                         | Pane::References
                         | Pane::Terminal
                         | Pane::SourceControl
+                        | Pane::Tests
                 )
             };
             let sibling = if bottom(&pane) {
@@ -118,7 +120,7 @@ pub struct PaneUi<'a> {
     pub recency: &'a mut Recency,
     pub activity: &'a Activity,
     pub lsp: &'a Lsp,
-    pub build: &'a BuildState,
+    pub build: &'a mut BuildState,
     pub tree: Option<&'a perox_project::Node>,
     pub project_root: Option<&'a std::path::Path>,
     pub recent: &'a [std::path::PathBuf],
@@ -164,6 +166,10 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                 .as_ref()
                 .map_or("Terminal".to_owned(), |t| t.title.clone())
                 .into(),
+            Pane::Tests => match self.build.tests.counts().1 {
+                0 => "Tests".into(),
+                n => format!("Tests ({n} failed)").into(),
+            },
             Pane::SourceControl => match self.git.status.files.len() {
                 0 => "Source Control".into(),
                 n => format!("Source Control ({n})").into(),
@@ -240,6 +246,7 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                         Pane::Activity => activity(ui, self.activity),
                         Pane::References => self.references_ui(ui),
                         Pane::SourceControl => self.source_control(ui),
+                        Pane::Tests => self.tests_ui(ui),
                         Pane::Editor(_) | Pane::Terminal => {}
                     }
                 });
@@ -593,6 +600,40 @@ impl PaneUi<'_> {
                     }
                 }
             });
+    }
+
+    fn tests_ui(&mut self, ui: &mut egui::Ui) {
+        use crate::testing::{PaneAction, Scope};
+        let open = self.project_root.is_some();
+        for a in crate::testing::show(ui, &mut self.build.tests, open) {
+            let harness = |id: &crate::testing::TestId| json!({ "harness": id.0, "name": id.1 });
+            match a {
+                PaneAction::Run(Scope::All) => self.actions.push(("test.run", json!({}))),
+                PaneAction::Run(Scope::Failed) => {
+                    self.actions.push(("test.run", json!({ "failed": true })))
+                }
+                PaneAction::Run(Scope::Binary(k)) => {
+                    self.actions.push(("test.run", json!({ "harness": k })))
+                }
+                PaneAction::Run(Scope::Prefix { binary, prefix }) => self
+                    .actions
+                    .push(("test.run", json!({ "harness": binary, "prefix": prefix }))),
+                PaneAction::Run(Scope::Test(id)) => self.actions.push(("test.run", harness(&id))),
+                PaneAction::Discover => self.actions.push(("test.discover", json!({}))),
+                PaneAction::Stop => self.actions.push(("build.stop", json!({}))),
+                PaneAction::Open(id) => self.actions.push(("test.go_to", harness(&id))),
+                PaneAction::Select(id) => self.build.tests.selected = Some(id),
+                PaneAction::OpenAt(file, line) => {
+                    // Paths in panics are relative to the package; try the project root.
+                    let path = match self.project_root {
+                        Some(r) if file.is_relative() => r.join(file),
+                        _ => file,
+                    };
+                    self.actions
+                        .push(("file.open", json!({ "path": path, "line": line })));
+                }
+            }
+        }
     }
 
     fn references_ui(&mut self, ui: &mut egui::Ui) {

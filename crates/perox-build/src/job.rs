@@ -83,40 +83,45 @@ impl Job {
         kind: Kind,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
+        Self::start_with(cargo, root, kind, &[], wake)
+    }
+
+    /// Starts `cargo <kind> <args…>`. cargo's stdout and stderr share one pipe, so
+    /// lines arrive in the order they were written (a test's results after the
+    /// "Running" line that names its harness).
+    pub fn start_with(
+        cargo: &Path,
+        root: &Path,
+        kind: Kind,
+        args: &[String],
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> std::io::Result<Self> {
+        let (reader, writer) = std::io::pipe()?;
         let mut cmd = Command::new(cargo);
         cmd.arg(kind.verb())
-            .arg("--message-format=json-diagnostic-rendered-ansi")
+            .arg("--message-format=json-diagnostic-rendered-ansi");
+        cmd.args(args)
             .current_dir(root)
             .env("CARGO_TERM_COLOR", "never")
             .envs(crate::tools::env())
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdout(writer.try_clone()?)
+            .stderr(writer);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0); // so Stop also ends the program cargo started
         }
-        let mut child = cmd.spawn()?;
-        let stdout = child.stdout.take().expect("piped");
-        let stderr = child.stderr.take().expect("piped");
+        let child = cmd.spawn()?;
+        drop(cmd); // closes our copies of the write end, so reading ends at exit
         let (tx, rx) = mpsc::channel();
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
         let root = root.to_owned();
-        {
-            let (tx, wake) = (tx.clone(), wake.clone());
-            thread::spawn(move || {
-                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                    for e in parse_stdout_line(&line, &root) {
-                        let _ = tx.send(e);
-                    }
-                    wake();
-                }
-            });
-        }
         thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                let _ = tx.send(Event::Line(strip_ansi(&line)));
+            for line in BufReader::new(reader).lines().map_while(Result::ok) {
+                for e in parse_stdout_line(&line, &root) {
+                    let _ = tx.send(e);
+                }
                 wake();
             }
             wake();
@@ -175,13 +180,13 @@ impl Drop for Job {
     }
 }
 
-/// cargo's stdout carries JSON messages, and with `run`/`test`, the program's own output.
+/// cargo's JSON messages, its progress lines, and with `run`/`test`, the program's own output.
 pub fn parse_stdout_line(line: &str, root: &Path) -> Vec<Event> {
     if !line.starts_with('{') {
-        return vec![Event::Line(line.to_owned())];
+        return vec![Event::Line(strip_ansi(line))];
     }
     let Ok(v) = serde_json::from_str::<Value>(line) else {
-        return vec![Event::Line(line.to_owned())];
+        return vec![Event::Line(strip_ansi(line))];
     };
     match v["reason"].as_str() {
         Some("compiler-message") => {

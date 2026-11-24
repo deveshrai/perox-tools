@@ -97,10 +97,21 @@ snippets `msgbox`, `msgwarn`, `msgerror`, `msgconfirm`, `msgask`, `dialog` in Ru
 Still to come:
 OS-level dialog modality when Slint has it.
 
-### Phase 3: pro tooling ← *next*
+### Phase 3: pro tooling ← *in progress*
 Debugger (lldb-dap on macOS/Linux; on Windows, lldb-dap or cppvsdbg, decided by ADR), test
 explorer, full git, clippy and rustfmt integration, all major features exposed over MCP,
 including designer operations and form screenshots.
+
+| Part | State |
+|---|---|
+| Test Explorer: discovery, tree by target and module, run all / failed / module / one, failure output, `test.*` over MCP | ✅ |
+| Debugger | |
+| Full git: stage, unstage, discard, branches, log, push and pull | |
+| clippy and rustfmt integration | |
+| Form screenshots over MCP | |
+
+Every part is checked three ways before it's ticked: automated tests, a live run of the IDE
+driven over MCP (with screenshots), and CI on macOS, Linux and Windows.
 
 ### Phase 4: RAD depth
 Third-party components and the preview host, non-visual components, menus, actions and

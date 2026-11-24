@@ -15,6 +15,7 @@ mod mcp_page;
 mod palette;
 mod settings;
 mod templates;
+mod testing;
 mod watcher;
 
 fn main() -> eframe::Result {

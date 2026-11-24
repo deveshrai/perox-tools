@@ -12,7 +12,7 @@ the device.
 > Status: **Phases 1 and 2 are done; forms now use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
 > It's a real Rust IDE with rust-analyzer, plus a form designer for `.slint` files.
 > **File → New GUI App** gives you a native-looking window to design, a button wired to
-> Rust code, an About dialog, and Run. Next up: debugger and pro tooling. See
+> Rust code, an About dialog, and Run. Phase 3 (pro tooling) is under way: the Test Explorer is in; debugger next. See
 > [docs/roadmap.md](docs/roadmap.md).
 
 ## Screenshots
@@ -51,6 +51,12 @@ Right: a new GUI app with a widget added in the designer.
   <img src="docs/screenshots/word-counter-app.png" alt="The word counter example app" width="48%">
   <img src="docs/screenshots/new-app.png" alt="A new app from the template" width="48%">
 </p>
+
+**Test Explorer.** Every test in the project (unit, integration and doc tests) by crate
+and module, with its last result. Run all, the failed ones, a module or one test; a
+failure shows its output and a link to where it panicked. View → Test Explorer.
+
+![The Test Explorer with a failing test](docs/screenshots/test-explorer.png)
 
 Claude Code can drive all of it, the designer included, over MCP ([docs/mcp.md](docs/mcp.md)).
 

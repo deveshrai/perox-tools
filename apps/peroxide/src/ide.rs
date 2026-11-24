@@ -22,6 +22,7 @@ pub enum LayoutRequest {
     ShowReferences,
     ShowTerminal,
     ShowSourceControl,
+    ShowPane(crate::layout::Pane),
 }
 
 /// The current cargo job and what it printed.
@@ -32,6 +33,8 @@ pub struct BuildState {
     pub diagnostics: Vec<perox_build::Diagnostic>,
     /// The last finished job and whether it succeeded.
     pub last: Option<(Kind, bool)>,
+    /// The Test Explorer; it reads the output of test runs.
+    pub tests: crate::testing::Tests,
 }
 
 impl BuildState {
@@ -47,6 +50,9 @@ impl BuildState {
         for e in job.poll() {
             match e {
                 perox_build::Event::Line(l) => {
+                    if kind == Kind::Test {
+                        self.tests.feed(&l);
+                    }
                     if self.output.len() >= 20_000 {
                         self.output.drain(..5_000);
                     }
@@ -58,6 +64,9 @@ impl BuildState {
         }
         let success = finished?;
         self.job = None;
+        if kind == Kind::Test {
+            self.tests.finish();
+        }
         self.last = Some((kind, success));
         self.output.push(String::new());
         self.output.push(format!(
@@ -166,6 +175,7 @@ pub fn open_project(s: &mut AppState, path: &Path) -> Result<Value, CommandError
     s.files = project.files(50_000);
     s.lsp.start(&project.root);
     s.build.diagnostics.clear();
+    s.build.tests.reset();
     let info = project_info(&project);
     s.status = format!("Opened {}", project.name);
     s.save_session(); // the project being left
@@ -201,6 +211,15 @@ fn project_info(p: &Project) -> Value {
 }
 
 fn start_build(s: &mut AppState, kind: Kind) -> Result<Value, CommandError> {
+    start_build_with(s, kind, &[])
+}
+
+/// Starts `cargo <kind> <args…>` after saving every file.
+pub fn start_build_with(
+    s: &mut AppState,
+    kind: Kind,
+    args: &[String],
+) -> Result<Value, CommandError> {
     let root = s
         .project
         .as_ref()
@@ -223,8 +242,9 @@ fn start_build(s: &mut AppState, kind: Kind) -> Result<Value, CommandError> {
     if let Some(job) = &mut s.build.job {
         job.stop();
     }
+    s.build.tests.finish(); // a test run that was going on has ended
     let ctx = s.ctx.clone();
-    let job = Job::start(&cargo, &root, kind, move || ctx.request_repaint())
+    let job = Job::start_with(&cargo, &root, kind, args, move || ctx.request_repaint())
         .map_err(|e| err(e.to_string()))?;
     s.build.job = Some(job);
     s.build.output.clear();
@@ -924,7 +944,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         (build("build.check", "Check", "Runs `cargo check`: fast type checking without building."), |s, _| start_build(s, Kind::Check)),
         (build("build.build", "Build", "Runs `cargo build`."), |s, _| start_build(s, Kind::Build)),
         (build("build.run", "Run", "Runs `cargo run`: builds and starts the program. Its output appears in Output."), |s, _| start_build(s, Kind::Run)),
-        (build("build.test", "Run Tests", "Runs `cargo test`."), |s, _| start_build(s, Kind::Test)),
+        (build("build.test", "Run Tests", "Runs `cargo test`; results also go to the Test Explorer (test.results)."), |s, _| crate::testing::run(s, crate::testing::Scope::All)),
         (build("build.clippy", "Clippy", "Runs `cargo clippy` for lints."), |s, _| start_build(s, Kind::Clippy)),
         (build("build.stop", "Stop", "Stops the running cargo command and the program it started."), |s, _| {
             match &mut s.build.job {

@@ -58,7 +58,8 @@ Commands so far, by area: `project.*` (open, info, files), `file.*` (open, read,
 save, close), `editor.*` (replace, type, completions, accept_completion, cursor, goto_line,
 references, rename, code_actions, apply_code_action, format), `build.*`
 (check, build, run, test, clippy, stop, status, output), `problems.list`, `lsp.*`,
-`terminal.run`, `terminal.read`, `git.*` (status, diff, commit), `designer.*` (tree,
+`terminal.run`, `terminal.read`, `test.*` (discover, list, run, results, go_to),
+`git.*` (status, diff, commit), `designer.*` (tree,
 add_widget, set_property, remove_widget, move_widget, set_handler, go_to_handler, expose,
 select, open_handler, break_layout, lay_out), `form.new` (a new window or dialog),
 `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.

@@ -2,6 +2,7 @@
 //! command and turns its JSON output into diagnostics and Output-panel lines.
 
 pub mod job;
+pub mod testing;
 pub mod tools;
 
 pub use job::{Diagnostic, Event, Job, Kind, Level};

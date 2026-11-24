@@ -41,6 +41,7 @@ impl PeroxApp {
         let mut bus = CommandBus::new();
         commands::register(&mut bus);
         ide::register(&mut bus);
+        crate::testing::register(&mut bus);
         let (mcp, calls) = McpController::new(bus.specs().cloned().collect(), ctx.clone());
         let mut state = AppState::new(Settings::load(), mcp, ctx.clone());
         if state.settings.mcp.start_on_launch {
@@ -312,6 +313,7 @@ impl PeroxApp {
                 item(ui, actions, "view.command_palette");
                 item(ui, actions, "terminal.show");
                 item(ui, actions, "view.source_control");
+                item(ui, actions, "view.tests");
                 item(ui, actions, "view.reset_layout");
             });
             ui.menu_button("Build", |ui| {
@@ -421,7 +423,14 @@ impl eframe::App for PeroxApp {
             self.effect(effect);
         }
         // cargo.
+        self.state.build.tests.poll();
         if let Some((kind, ok)) = self.state.build.poll() {
+            if kind == perox_build::Kind::Test
+                && let Some(root) = self.state.project.as_ref().map(|p| p.root.clone())
+            {
+                // The run built the tests, so this is quick, and picks up new ones.
+                self.state.build.tests.discover(root, &self.state.ctx);
+            }
             self.state.status = format!(
                 "cargo {} {}",
                 kind.verb(),
@@ -493,7 +502,7 @@ impl eframe::App for PeroxApp {
                 recency: &mut s.recency,
                 activity: &s.activity,
                 lsp: &s.lsp,
-                build: &s.build,
+                build: &mut s.build,
                 tree: s.tree.as_ref(),
                 project_root: s.project.as_ref().map(|p| p.root.as_path()),
                 recent: &s.settings.recent_projects,
@@ -657,6 +666,7 @@ impl eframe::App for PeroxApp {
                 LayoutRequest::ShowSourceControl => {
                     layout::show_pane(&mut self.tree, Pane::SourceControl)
                 }
+                LayoutRequest::ShowPane(pane) => layout::show_pane(&mut self.tree, pane),
             }
         }
         if std::mem::take(&mut self.state.reset_layout) {
