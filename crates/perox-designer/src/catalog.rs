@@ -268,6 +268,39 @@ pub const KINDS: &[Kind] = &[
         ],
     },
     Kind {
+        // The plain editable text under LineEdit and TextEdit: no frame, no scrolling,
+        // every colour yours (an editor over its own highlighting, say).
+        name: "TextInput",
+        icon: Icon::TextCursorInput,
+        group: Group::Widget,
+        std: false,
+        props: &[
+            p("text", Text, ""),
+            p(
+                "font-family",
+                Font,
+                "An imported font, or the window's default",
+            ),
+            p("font-size", Length, ""),
+            p(
+                "color",
+                Color,
+                "Of the text (and, on most systems, the caret)",
+            ),
+            p("single-line", Bool, "One line (Return accepts), or many"),
+            p("read-only", Bool, ""),
+            p("wrap", Choice(&["no-wrap", "word-wrap", "char-wrap"]), ""),
+            p("selection-background-color", Color, ""),
+            p("selection-foreground-color", Color, ""),
+            p("text-cursor-width", Length, ""),
+        ],
+        events: &[
+            e("edited", &[]),
+            e("accepted", &[]),
+            e("cursor-position-changed", &[("position", "Point")]),
+        ],
+    },
+    Kind {
         name: "TextEdit",
         icon: Icon::LetterText,
         group: Group::Widget,
@@ -465,7 +498,12 @@ pub const KINDS: &[Kind] = &[
             Choice(&["default", "pointer", "text", "move"]),
             "",
         )],
-        events: &[e("clicked", &[]), e("double-clicked", &[])],
+        events: &[
+            e("clicked", &[]),
+            e("double-clicked", &[]),
+            e("moved", &[]),
+            e("pointer-event", &[("event", "PointerEvent")]),
+        ],
     },
     Kind {
         name: "ToolBar",
