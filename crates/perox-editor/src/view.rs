@@ -60,6 +60,10 @@ pub struct Decorations {
     pub inlays: Vec<Inlay>,
     /// Version-control changes by line, for the gutter.
     pub line_marks: Vec<(usize, LineMark)>,
+    /// Where the debugger is stopped in this file (0-based line).
+    pub exec_line: Option<usize>,
+    /// Breakpoint lines the debugger couldn't place (drawn hollow).
+    pub unverified_breakpoints: Vec<usize>,
 }
 
 /// How a line differs from the last commit.
@@ -122,6 +126,8 @@ pub struct Output {
     pub changed: bool,
     /// The editor has keyboard focus.
     pub has_focus: bool,
+    /// A breakpoint was added or removed by clicking the gutter.
+    pub breakpoints_changed: bool,
 }
 
 /// One open editor: the document, its syntax tree, and view state.
@@ -142,6 +148,8 @@ pub struct EditorState {
     lang: Lang,
     /// Edits not yet sent to the language server.
     lsp_edits: Vec<crate::text::Edited>,
+    /// Breakpoints, as the char offsets of their lines' starts, so they move with edits.
+    breakpoints: Vec<usize>,
 }
 
 impl std::fmt::Debug for EditorState {
@@ -173,7 +181,47 @@ impl EditorState {
             drag_anchor: None,
             lang,
             lsp_edits: Vec::new(),
+            breakpoints: Vec::new(),
         }
+    }
+
+    /// Breakpoint lines (0-based, sorted).
+    pub fn breakpoints(&self) -> Vec<usize> {
+        let mut lines: Vec<usize> = self
+            .breakpoints
+            .iter()
+            .map(|&c| self.core.doc.pos_of(c.min(self.core.doc.len_chars())).line)
+            .collect();
+        lines.sort_unstable();
+        lines.dedup();
+        lines
+    }
+
+    /// Replaces the breakpoints (0-based lines; ones past the end are dropped).
+    pub fn set_breakpoints(&mut self, lines: &[usize]) {
+        let n = self.core.doc.len_lines();
+        self.breakpoints = lines
+            .iter()
+            .filter(|&&l| l < n)
+            .map(|&l| self.core.doc.rope().line_to_char(l))
+            .collect();
+    }
+
+    /// Adds or removes the breakpoint on a line (0-based). True if it's now set.
+    pub fn toggle_breakpoint(&mut self, line: usize) -> bool {
+        let mut lines = self.breakpoints();
+        let on = match lines.iter().position(|&l| l == line) {
+            Some(i) => {
+                lines.remove(i);
+                false
+            }
+            None => {
+                lines.push(line);
+                true
+            }
+        };
+        self.set_breakpoints(&lines);
+        on
     }
 
     pub fn lang(&self) -> Lang {
@@ -229,6 +277,14 @@ impl EditorState {
             }
             None => false,
         });
+        self.breakpoints
+            .retain_mut(|c| match map_through(&edits, *c) {
+                Some(a) => {
+                    *c = a;
+                    true
+                }
+                None => false,
+            });
         for diag in &mut d.diagnostics {
             let a = map_through(&edits, diag.range.start).unwrap_or(diag.range.start);
             let b = map_through(&edits, diag.range.end).unwrap_or(a);
@@ -416,7 +472,7 @@ pub fn show(
         font,
         line_h,
         char_w,
-        gutter_w: digits as f32 * char_w + 24.0,
+        gutter_w: digits as f32 * char_w + 38.0,
     };
     let id = ui.make_persistent_id(id_salt);
 
@@ -509,6 +565,25 @@ pub fn show(
             })
         };
 
+        // The gutter's left part toggles breakpoints (on top of the text's click area).
+        let gutter = Rect::from_min_size(
+            Pos2::new(origin.x + viewport.min.x, origin.y),
+            Vec2::new((m.gutter_w - 8.0).max(0.0), rect.height()),
+        );
+        let g = ui.interact(gutter, id.with("gutter"), Sense::click());
+        let hover_line = g
+            .hover_pos()
+            .map(|p| ((p.y - origin.y) / m.line_h).floor().max(0.0) as usize);
+        if g.clicked()
+            && let Some(l) = hover_line.filter(|&l| l < n_lines)
+        {
+            st.toggle_breakpoint(l);
+            out.breakpoints_changed = true;
+        }
+        let hover_line = hover_line.filter(|&l| l < n_lines);
+        if g.hovered() {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
         handle_mouse(ui, st, &resp, &to_char, &mut out);
 
         let first = ((viewport.min.y / m.line_h).floor().max(0.0)) as usize;
@@ -527,6 +602,7 @@ pub fn show(
             viewport,
             first..last,
             has_focus,
+            hover_line,
         );
 
         // Popups anchor to the primary cursor.
@@ -610,6 +686,7 @@ fn paint(
     viewport: Rect,
     lines: Range<usize>,
     has_focus: bool,
+    gutter_hover: Option<usize>,
 ) {
     let doc = &st.core.doc;
     let rope = doc.rope();
@@ -640,6 +717,19 @@ fn paint(
             ),
             0.0,
             theme.current_line,
+        );
+    }
+
+    // Where the debugger stopped.
+    if let Some(l) = st.deco.exec_line.filter(|l| lines.contains(l)) {
+        let y = line_y(l);
+        painter.rect_filled(
+            Rect::from_min_max(
+                Pos2::new(origin.x + viewport.min.x, y),
+                Pos2::new(origin.x + viewport.max.x, y + m.line_h),
+            ),
+            0.0,
+            theme.exec_line,
         );
     }
 
@@ -807,6 +897,7 @@ fn paint(
         0.0,
         theme.gutter_bg,
     );
+    let breakpoints = st.breakpoints();
     for l in lines {
         let worst = st
             .deco
@@ -852,12 +943,42 @@ fn paint(
                 )),
             };
         }
-        if let Some(sev) = worst {
+        let centre = Pos2::new(gx + 8.0, line_y(l) + m.line_h / 2.0);
+        let radius = (m.line_h * 0.3).min(6.0);
+        if breakpoints.contains(&l) {
+            if st.deco.unverified_breakpoints.contains(&l) {
+                painter.circle_stroke(centre, radius - 0.5, Stroke::new(1.5, theme.breakpoint));
+            } else {
+                painter.circle_filled(centre, radius, theme.breakpoint);
+            }
+        } else if gutter_hover == Some(l) {
+            painter.circle_filled(centre, radius, theme.breakpoint.gamma_multiply(0.35));
+        } else if let Some(sev) = worst {
             painter.circle_filled(
                 Pos2::new(gx + 6.0, line_y(l) + m.line_h / 2.0),
                 3.0,
                 theme.severity(sev),
             );
+        }
+        if st.deco.exec_line == Some(l) {
+            // An arrow pointing at the line, over the breakpoint if there is one.
+            let (x, y, h) = (gx + 2.0, line_y(l) + m.line_h * 0.2, m.line_h * 0.6);
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    Pos2::new(x, y),
+                    Pos2::new(x + 7.0, y),
+                    Pos2::new(x + 13.0, y + h / 2.0),
+                    Pos2::new(x + 7.0, y + h),
+                    Pos2::new(x, y + h),
+                ],
+                theme.exec_arrow,
+                // On a breakpoint, a red outline keeps the breakpoint visible.
+                if breakpoints.contains(&l) {
+                    Stroke::new(1.5, theme.breakpoint)
+                } else {
+                    Stroke::NONE
+                },
+            ));
         }
     }
 }
@@ -1858,6 +1979,25 @@ pub fn markdown(ui: &mut egui::Ui, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn breakpoints_follow_edits() {
+        let mut st = EditorState::new("a\nb\nc\nd\n", Lang::Rust);
+        assert!(st.toggle_breakpoint(2));
+        st.set_breakpoints(&[1, 2, 99]);
+        assert_eq!(st.breakpoints(), [1, 2]);
+        // Two lines inserted above: both move down.
+        st.apply_byte_edits(&[(0..0, "x\ny\n".into())]);
+        st.sync();
+        assert_eq!(st.breakpoints(), [3, 4]);
+        // Typing at the start of a breakpoint's line keeps it on that line.
+        let at = st.core.doc.rope().line_to_byte(3);
+        st.apply_byte_edits(&[(at..at, "  ".into())]);
+        st.sync();
+        assert_eq!(st.breakpoints(), [3, 4]);
+        assert!(!st.toggle_breakpoint(3));
+        assert_eq!(st.breakpoints(), [4]);
+    }
 
     #[test]
     fn tabs_count_as_four_columns() {

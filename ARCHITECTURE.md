@@ -49,8 +49,8 @@ One page. The decisions behind each part are in [docs/adr](docs/adr/).
 | ✅ `perox-core` | Command bus, access levels. Later: project model, documents, undo | GPL |
 | ✅ `perox-editor` | Code editor: rope, multi-cursor, tree-sitter highlighting, completion UI, snippets | GPL |
 | ✅ `perox-lsp` | rust-analyzer client | GPL |
-| ⏳ `perox-dap` | lldb-dap client (debugger) | GPL |
-| ✅ `perox-build` | cargo runs, JSON diagnostics, finding the toolchain | GPL |
+| ✅ `perox-dap` | Debug Adapter Protocol client and a pure session state machine; finds lldb-dap and the Rust formatters ([ADR 0012](docs/adr/0012-debugger.md)) | GPL |
+| ✅ `perox-build` | cargo runs, JSON diagnostics and artifacts, test discovery and libtest result parsing, finding the toolchain | GPL |
 | ✅ `perox-project` | Cargo projects and the file tree | GPL |
 | ✅ `perox-terminal` | Integrated terminal (alacritty_terminal + egui) | GPL |
 | ✅ `perox-icons` | Lucide SVG icons, tinted to the theme ([ADR 0010](docs/adr/0010-icons.md)) | MIT/Apache + ISC |

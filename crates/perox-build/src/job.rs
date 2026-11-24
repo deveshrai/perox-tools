@@ -53,11 +53,25 @@ pub struct Diagnostic {
     pub rendered: String,
 }
 
+/// An executable cargo produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Artifact {
+    pub package_id: String,
+    pub target: String,
+    /// `bin`, `example`, `test`, `lib` (for a library's test harness), …
+    pub kind: String,
+    /// Built as a test harness.
+    pub test: bool,
+    pub executable: PathBuf,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     /// A line for the Output panel (cargo's progress, the program's output, test results).
     Line(String),
     Diagnostic(Diagnostic),
+    /// A compiled executable (a binary, example or test harness).
+    Artifact(Artifact),
     Finished {
         success: bool,
     },
@@ -217,7 +231,20 @@ pub fn parse_stdout_line(line: &str, root: &Path) -> Vec<Event> {
             out.extend(rendered.lines().map(|l| Event::Line(l.to_owned())));
             out
         }
-        // Artifacts and build-script output aren't interesting in the Output panel.
+        Some("compiler-artifact") => match v["executable"].as_str() {
+            Some(exe) => vec![Event::Artifact(Artifact {
+                package_id: v["package_id"].as_str().unwrap_or_default().to_owned(),
+                target: v["target"]["name"].as_str().unwrap_or_default().to_owned(),
+                kind: v["target"]["kind"][0]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                test: v["profile"]["test"] == true,
+                executable: PathBuf::from(exe),
+            })],
+            None => Vec::new(),
+        },
+        // Build-script output isn't interesting in the Output panel.
         Some(_) => Vec::new(),
         None => vec![Event::Line(line.to_owned())],
     }
@@ -268,6 +295,13 @@ mod tests {
             vec![Event::Line("Hello, world!".into())]
         );
         assert!(parse_stdout_line(r#"{"reason":"compiler-artifact"}"#, Path::new("/")).is_empty());
+        let a = parse_stdout_line(
+            r#"{"reason":"compiler-artifact","package_id":"p","target":{"kind":["bin"],"name":"app"},"profile":{"test":false},"executable":"/t/debug/app"}"#,
+            Path::new("/"),
+        );
+        assert!(
+            matches!(&a[..], [Event::Artifact(x)] if x.kind == "bin" && x.executable == Path::new("/t/debug/app"))
+        );
     }
 
     #[test]

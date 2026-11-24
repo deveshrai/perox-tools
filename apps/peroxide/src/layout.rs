@@ -27,6 +27,8 @@ pub enum Pane {
     Terminal,
     SourceControl,
     Tests,
+    Debug,
+    DebugConsole,
 }
 
 /// Explorer on the left; editors above, Problems / Output / Activity below.
@@ -78,10 +80,13 @@ pub fn show_pane(tree: &mut Tree<Pane>, pane: Pane) {
                         | Pane::Terminal
                         | Pane::SourceControl
                         | Pane::Tests
+                        | Pane::DebugConsole
                 )
             };
             let sibling = if bottom(&pane) {
                 find_pane(tree, bottom)
+            } else if pane == Pane::Debug {
+                find_pane(tree, |p| *p == Pane::Explorer)
             } else {
                 find_pane(tree, |p| matches!(p, Pane::Editor(_)))
                     .or_else(|| find_pane(tree, |p| *p == Pane::Welcome))
@@ -121,6 +126,7 @@ pub struct PaneUi<'a> {
     pub activity: &'a Activity,
     pub lsp: &'a Lsp,
     pub build: &'a mut BuildState,
+    pub debug: &'a mut crate::debug::Debug,
     pub tree: Option<&'a perox_project::Node>,
     pub project_root: Option<&'a std::path::Path>,
     pub recent: &'a [std::path::PathBuf],
@@ -166,6 +172,8 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                 .as_ref()
                 .map_or("Terminal".to_owned(), |t| t.title.clone())
                 .into(),
+            Pane::Debug => "Debug".into(),
+            Pane::DebugConsole => "Debug Console".into(),
             Pane::Tests => match self.build.tests.counts().1 {
                 0 => "Tests".into(),
                 n => format!("Tests ({n} failed)").into(),
@@ -247,6 +255,8 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                         Pane::References => self.references_ui(ui),
                         Pane::SourceControl => self.source_control(ui),
                         Pane::Tests => self.tests_ui(ui),
+                        Pane::Debug => self.debug_ui(ui),
+                        Pane::DebugConsole => crate::debug::console(ui, self.debug),
                         Pane::Editor(_) | Pane::Terminal => {}
                     }
                 });
@@ -622,6 +632,9 @@ impl PaneUi<'_> {
                 PaneAction::Discover => self.actions.push(("test.discover", json!({}))),
                 PaneAction::Stop => self.actions.push(("build.stop", json!({}))),
                 PaneAction::Open(id) => self.actions.push(("test.go_to", harness(&id))),
+                PaneAction::Debug(id) => self
+                    .actions
+                    .push(("debug.start", json!({ "harness": id.0, "test": id.1 }))),
                 PaneAction::Select(id) => self.build.tests.selected = Some(id),
                 PaneAction::OpenAt(file, line) => {
                     // Paths in panics are relative to the package; try the project root.
@@ -632,6 +645,17 @@ impl PaneUi<'_> {
                     self.actions
                         .push(("file.open", json!({ "path": path, "line": line })));
                 }
+            }
+        }
+    }
+
+    fn debug_ui(&mut self, ui: &mut egui::Ui) {
+        for a in crate::debug::show(ui, self.debug, self.project_root) {
+            match a {
+                crate::debug::PaneAction::Command(id, args) => self.actions.push((id, args)),
+                crate::debug::PaneAction::Open(path, line) => self
+                    .actions
+                    .push(("file.open", json!({ "path": path, "line": line }))),
             }
         }
     }

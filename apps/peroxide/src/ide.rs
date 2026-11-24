@@ -35,6 +35,8 @@ pub struct BuildState {
     pub last: Option<(Kind, bool)>,
     /// The Test Explorer; it reads the output of test runs.
     pub tests: crate::testing::Tests,
+    /// Executables the current (or last) job built.
+    pub artifacts: Vec<perox_build::Artifact>,
 }
 
 impl BuildState {
@@ -59,6 +61,7 @@ impl BuildState {
                     self.output.push(l);
                 }
                 perox_build::Event::Diagnostic(d) => self.diagnostics.push(d),
+                perox_build::Event::Artifact(a) => self.artifacts.push(a),
                 perox_build::Event::Finished { success } => finished = Some(success),
             }
         }
@@ -90,7 +93,7 @@ fn opt_usize(inv: &Invocation, name: &str) -> Option<usize> {
 }
 
 /// Resolves a path argument against the project. Agents may only reach inside it.
-fn resolve(s: &AppState, inv: &Invocation, name: &str) -> Result<PathBuf, CommandError> {
+pub fn resolve(s: &AppState, inv: &Invocation, name: &str) -> Result<PathBuf, CommandError> {
     let raw = inv.str_arg(name)?;
     let root = s.project.as_ref().map(|p| p.root.clone());
     let path = match (&root, Path::new(raw).is_absolute()) {
@@ -176,6 +179,13 @@ pub fn open_project(s: &mut AppState, path: &Path) -> Result<Value, CommandError
     s.lsp.start(&project.root);
     s.build.diagnostics.clear();
     s.build.tests.reset();
+    let saved = s
+        .settings
+        .sessions
+        .get(&project.root)
+        .map(|x| x.breakpoints.clone())
+        .unwrap_or_default();
+    s.debug.reset(saved);
     let info = project_info(&project);
     s.status = format!("Opened {}", project.name);
     s.save_session(); // the project being left
@@ -249,6 +259,7 @@ pub fn start_build_with(
     s.build.job = Some(job);
     s.build.output.clear();
     s.build.diagnostics.clear();
+    s.build.artifacts.clear();
     s.build.output.push(format!("── cargo {} ──", kind.verb()));
     s.layout_requests.push(LayoutRequest::ShowOutput);
     s.status = format!("cargo {}…", kind.verb());

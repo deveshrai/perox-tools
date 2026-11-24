@@ -3,6 +3,7 @@
 mod app;
 mod code_behind;
 mod commands;
+mod debug;
 mod docs;
 mod git;
 mod icons;

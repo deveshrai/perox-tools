@@ -5,4 +5,4 @@ pub mod job;
 pub mod testing;
 pub mod tools;
 
-pub use job::{Diagnostic, Event, Job, Kind, Level};
+pub use job::{Artifact, Diagnostic, Event, Job, Kind, Level};

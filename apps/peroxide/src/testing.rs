@@ -511,6 +511,8 @@ pub enum PaneAction {
     Discover,
     Stop,
     Open(TestId),
+    /// Run one test under the debugger.
+    Debug(TestId),
     /// A file and 1-based line (where a failed test panicked).
     OpenAt(PathBuf, usize),
     Select(TestId),
@@ -794,6 +796,19 @@ fn draw_node(
             r.on_hover_text("Double-click to go to the test");
             if !key.is_empty() && run_button(ui, running, "Run this test") {
                 out.push(PaneAction::Run(Scope::Test(id.clone())));
+            }
+            if !key.is_empty()
+                && ui
+                    .add_enabled(
+                        !running,
+                        egui::Button::image(Icon::Bug.image(ui))
+                            .frame(false)
+                            .small(),
+                    )
+                    .on_hover_text("Debug this test")
+                    .clicked()
+            {
+                out.push(PaneAction::Debug(id.clone()));
             }
         });
     }

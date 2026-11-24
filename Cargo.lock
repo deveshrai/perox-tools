@@ -5052,6 +5052,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "perox-dap"
+version = "0.3.0"
+dependencies = [
+ "perox-build",
+ "serde_json",
+]
+
+[[package]]
 name = "perox-designer"
 version = "0.3.0"
 dependencies = [
@@ -5195,6 +5203,7 @@ dependencies = [
  "notify",
  "perox-build",
  "perox-core",
+ "perox-dap",
  "perox-designer",
  "perox-editor",
  "perox-icons",

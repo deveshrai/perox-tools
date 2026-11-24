@@ -42,6 +42,7 @@ impl PeroxApp {
         commands::register(&mut bus);
         ide::register(&mut bus);
         crate::testing::register(&mut bus);
+        crate::debug::register(&mut bus);
         let (mcp, calls) = McpController::new(bus.specs().cloned().collect(), ctx.clone());
         let mut state = AppState::new(Settings::load(), mcp, ctx.clone());
         if state.settings.mcp.start_on_launch {
@@ -314,6 +315,7 @@ impl PeroxApp {
                 item(ui, actions, "terminal.show");
                 item(ui, actions, "view.source_control");
                 item(ui, actions, "view.tests");
+                item(ui, actions, "view.debug");
                 item(ui, actions, "view.reset_layout");
             });
             ui.menu_button("Build", |ui| {
@@ -324,6 +326,17 @@ impl PeroxApp {
                 item(ui, actions, "build.clippy");
                 ui.separator();
                 item(ui, actions, "build.stop");
+            });
+            ui.menu_button("Debug", |ui| {
+                item(ui, actions, "debug.continue");
+                item(ui, actions, "debug.step_over");
+                item(ui, actions, "debug.step_in");
+                item(ui, actions, "debug.step_out");
+                item(ui, actions, "debug.pause");
+                item(ui, actions, "debug.stop");
+                ui.separator();
+                item(ui, actions, "debug.toggle_breakpoint");
+                item(ui, actions, "debug.clear_breakpoints");
             });
             ui.menu_button("Tools", |ui| {
                 let label = if self.state.mcp.is_on() {
@@ -383,15 +396,55 @@ impl PeroxApp {
                     actions.push(id);
                 }
             }
+            let debugging = self.state.debug.is_live() || self.state.debug.is_preparing();
+            if !debugging
+                && ui
+                    .add_enabled(
+                        has_project,
+                        egui::Button::image_and_text(Icon::BugPlay.image(ui), "Debug"),
+                    )
+                    .on_hover_text(tip("debug.continue"))
+                    .clicked()
+            {
+                actions.push("debug.continue");
+            }
             if ui
                 .add_enabled(
-                    running,
+                    running || debugging,
                     egui::Button::image_and_text(Icon::Square.image(ui), "Stop"),
                 )
-                .on_hover_text(tip("build.stop"))
+                .on_hover_text(tip("debug.stop"))
                 .clicked()
             {
-                actions.push("build.stop");
+                actions.push("debug.stop");
+            }
+            if debugging {
+                ui.separator();
+                let stopped = self.state.debug.is_stopped();
+                let (icon, id) = if stopped || !self.state.debug.is_live() {
+                    (Icon::Play, "debug.continue")
+                } else {
+                    (Icon::Pause, "debug.pause")
+                };
+                if ui
+                    .add(egui::Button::image(icon.image(ui)))
+                    .on_hover_text(tip(id))
+                    .clicked()
+                {
+                    actions.push(id);
+                }
+                for id in ["debug.step_over", "debug.step_in", "debug.step_out"] {
+                    if ui
+                        .add_enabled(
+                            stopped,
+                            egui::Button::image(icons::for_command(id).image(ui)),
+                        )
+                        .on_hover_text(tip(id))
+                        .clicked()
+                    {
+                        actions.push(id);
+                    }
+                }
             }
             ui.separator();
             match &self.state.project {
@@ -425,6 +478,7 @@ impl eframe::App for PeroxApp {
         // cargo.
         self.state.build.tests.poll();
         if let Some((kind, ok)) = self.state.build.poll() {
+            crate::debug::build_finished(&mut self.state, ok);
             if kind == perox_build::Kind::Test
                 && let Some(root) = self.state.project.as_ref().map(|p| p.root.clone())
             {
@@ -437,6 +491,8 @@ impl eframe::App for PeroxApp {
                 if ok { "finished" } else { "failed" }
             );
         }
+
+        crate::debug::update(&mut self.state);
 
         let mut actions: Vec<&'static str> = keymap::pressed(&ctx);
 
@@ -503,6 +559,7 @@ impl eframe::App for PeroxApp {
                 activity: &s.activity,
                 lsp: &s.lsp,
                 build: &mut s.build,
+                debug: &mut s.debug,
                 tree: s.tree.as_ref(),
                 project_root: s.project.as_ref().map(|p| p.root.as_path()),
                 recent: &s.settings.recent_projects,

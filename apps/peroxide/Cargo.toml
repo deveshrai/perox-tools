@@ -17,6 +17,7 @@ perox-editor.workspace = true
 perox-lsp.workspace = true
 perox-project.workspace = true
 perox-build.workspace = true
+perox-dap.workspace = true
 perox-designer.workspace = true
 perox-slint.workspace = true
 rfd.workspace = true

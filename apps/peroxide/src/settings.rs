@@ -19,6 +19,8 @@ pub struct Settings {
     pub format_on_save: bool,
     /// Open files per project root, restored when the project opens again.
     pub sessions: std::collections::BTreeMap<PathBuf, Session>,
+    /// The debug adapter to use instead of the lldb-dap PeroxIDE finds (ADR 0012).
+    pub debugger_adapter: Option<PathBuf>,
     /// Where these settings are saved. `None` (defaults, tests) never touches disk.
     #[serde(skip)]
     pub file: Option<PathBuf>,
@@ -30,6 +32,8 @@ pub struct Settings {
 pub struct Session {
     pub open: Vec<PathBuf>,
     pub active: Option<PathBuf>,
+    /// Breakpoints by file, 1-based lines.
+    pub breakpoints: std::collections::BTreeMap<PathBuf, Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

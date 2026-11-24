@@ -12,7 +12,7 @@ the device.
 > Status: **Phases 1 and 2 are done; forms now use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
 > It's a real Rust IDE with rust-analyzer, plus a form designer for `.slint` files.
 > **File → New GUI App** gives you a native-looking window to design, a button wired to
-> Rust code, an About dialog, and Run. Phase 3 (pro tooling) is under way: the Test Explorer is in; debugger next. See
+> Rust code, an About dialog, and Run. Phase 3 (pro tooling) is under way: the Test Explorer and the debugger are in. See
 > [docs/roadmap.md](docs/roadmap.md).
 
 ## Screenshots
@@ -51,6 +51,15 @@ Right: a new GUI app with a widget added in the designer.
   <img src="docs/screenshots/word-counter-app.png" alt="The word counter example app" width="48%">
   <img src="docs/screenshots/new-app.png" alt="A new app from the template" width="48%">
 </p>
+
+**Debugger.** Click left of a line number for a breakpoint, press F5. The program builds
+and runs under lldb-dap; when it stops you get the line, the call stack (standard library
+frames folded away), variables readable through Rust's own formatters, watches, and a
+console for expressions. A panic stops where it happened. F10, F11 and Shift+F11 step;
+any test can be debugged from the Test Explorer. macOS uses Xcode's lldb-dap; on Linux
+install `lldb`, on Windows LLVM ([ADR 0012](docs/adr/0012-debugger.md)).
+
+![Paused at a breakpoint](docs/screenshots/debugger.png)
 
 **Test Explorer.** Every test in the project (unit, integration and doc tests) by crate
 and module, with its last result. Run all, the failed ones, a module or one test; a

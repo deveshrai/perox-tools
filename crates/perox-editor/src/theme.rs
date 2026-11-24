@@ -22,6 +22,10 @@ pub struct Theme {
     pub vcs_added: Color32,
     pub vcs_modified: Color32,
     pub vcs_deleted: Color32,
+    pub breakpoint: Color32,
+    /// The line where the debugger stopped, and its arrow.
+    pub exec_line: Color32,
+    pub exec_arrow: Color32,
     dark: bool,
 }
 
@@ -47,6 +51,9 @@ impl Theme {
                 vcs_added: rgb(0x2ea043),
                 vcs_modified: rgb(0x0078d4),
                 vcs_deleted: rgb(0xf85149),
+                breakpoint: rgb(0xe51400),
+                exec_line: Color32::from_rgba_unmultiplied(255, 204, 0, 40),
+                exec_arrow: rgb(0xffcc00),
                 dark: true,
             }
         } else {
@@ -65,6 +72,9 @@ impl Theme {
                 vcs_added: rgb(0x1a7f37),
                 vcs_modified: rgb(0x0969da),
                 vcs_deleted: rgb(0xcf222e),
+                breakpoint: rgb(0xe51400),
+                exec_line: Color32::from_rgba_unmultiplied(255, 204, 0, 90),
+                exec_arrow: rgb(0xbf8700),
                 dark: false,
             }
         }

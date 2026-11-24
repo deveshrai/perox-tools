@@ -17,3 +17,4 @@ decision. Supersede it with a new one.
 | [0009](0009-toolchain-set-2026-11.md) | Toolchain Set 2026.11: basics vs add-ons | Accepted |
 | [0010](0010-icons.md) | Icons: Lucide SVGs, never emoji | Accepted |
 | [0011](0011-slint-for-user-apps.md) | Slint for user apps; `.slint` is the form format | Accepted |
+| [0012](0012-debugger.md) | Debugging through DAP, with lldb-dap | Accepted |

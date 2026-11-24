@@ -53,6 +53,7 @@ pub struct AppState {
     pub active_doc: Option<DocId>,
     pub lsp: Lsp,
     pub build: BuildState,
+    pub debug: crate::debug::Debug,
     pub recency: Recency,
     pub layout_requests: Vec<LayoutRequest>,
     pub open_dialog_requested: bool,
@@ -71,6 +72,7 @@ impl AppState {
             active_doc: None,
             lsp: Lsp::new(ctx.clone()),
             build: BuildState::default(),
+            debug: Default::default(),
             recency: Recency::default(),
             layout_requests: Vec::new(),
             open_dialog_requested: false,
@@ -118,9 +120,14 @@ impl AppState {
             .active_doc
             .and_then(|id| self.docs.get(id))
             .map(|d| d.path.clone());
-        self.settings
-            .sessions
-            .insert(root, crate::settings::Session { open, active });
+        self.settings.sessions.insert(
+            root,
+            crate::settings::Session {
+                open,
+                active,
+                breakpoints: self.debug.breakpoints.clone(),
+            },
+        );
         self.settings.save();
     }
 

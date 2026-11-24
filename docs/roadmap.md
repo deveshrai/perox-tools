@@ -105,7 +105,7 @@ including designer operations and form screenshots.
 | Part | State |
 |---|---|
 | Test Explorer: discovery, tree by target and module, run all / failed / module / one, failure output, `test.*` over MCP | ✅ |
-| Debugger | |
+| Debugger: lldb-dap over DAP, gutter breakpoints, stepping, call stack, variables with Rust formatters, watches, console, stop on panic, debug a test, `debug.*` over MCP ([ADR 0012](adr/0012-debugger.md)) | ✅ |
 | Full git: stage, unstage, discard, branches, log, push and pull | |
 | clippy and rustfmt integration | |
 | Form screenshots over MCP | |
