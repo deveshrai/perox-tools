@@ -1,0 +1,22 @@
+[package]
+name = "js-pad"
+description = "Sample PeroxIDE app: a small JavaScript editor in the spirit of Notepad, with a monospaced font, syntax highlighting, and a console that runs the code (Boa, a JavaScript engine in Rust). Built in PeroxIDE by an agent over MCP (see BUILDING.md)."
+version = "0.1.0"
+edition.workspace = true
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata.peroxide]
+display-name = "JS Pad"
+
+[dependencies]
+perox-ui.workspace = true
+slint = { version = "=1.19.0" }
+# Runs the JavaScript: an engine written in Rust.
+boa_engine = "=0.22.0"
+
+[build-dependencies]
+perox-slint = { workspace = true, features = ["build"] }
+
+[lints]
+workspace = true

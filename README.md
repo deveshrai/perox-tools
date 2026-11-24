@@ -265,6 +265,20 @@ cargo run -p barista
 
 ![Barista, a sample built in PeroxIDE](examples/barista/docs/app-brewing.png)
 
+## Sample app: JS Pad
+
+[examples/js-pad](examples/js-pad) is a small JavaScript editor in the spirit of Notepad:
+a monospaced font, highlighting as you type, and a console that runs the file (with Boa,
+a JavaScript engine in Rust) and evaluates more in its scope. The editor is a transparent
+TextInput over coloured runs of text. [BUILDING.md](examples/js-pad/BUILDING.md) has the
+record.
+
+```sh
+cargo run -p js-pad -- --example Classes --run
+```
+
+![JS Pad, a sample built in PeroxIDE](examples/js-pad/docs/app.png)
+
 ## Build and run
 
 ```sh

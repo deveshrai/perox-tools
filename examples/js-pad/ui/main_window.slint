@@ -1,0 +1,354 @@
+import { Button, HorizontalBox, LineEdit, VerticalBox, ComboBox, ScrollView } from "std-widgets.slint";
+import "fonts/JetBrainsMonoNL-Regular.ttf";
+
+// A run of highlighted code (or a line number): where it goes, in rows and columns, and its colour.
+export struct Run { row: int, col: int, text: string, color: color }
+// A line in the console.
+export struct ConsoleLine { text: string, color: color }
+
+// The main window. Design it in PeroxIDE (Design tab) or edit it here.
+export component MainWindow inherits Window {
+    title: "JS Pad";
+    preferred-width: 1100px;
+    preferred-height: 760px;
+
+    // What the Rust code reads and writes.
+
+    callback about_clicked();
+    callback code_edited();
+    callback caret_moved(offset: int);
+    callback indent(offset: int);
+    callback newline(offset: int);
+    callback scrolled();
+    callback repl(text: string);
+    callback example_picked(name: string);
+    callback new_file();
+    callback open_file();
+    callback save_file();
+    callback save_as();
+    callback run_code();
+    callback clear_console();
+    callback bigger();
+    callback smaller();
+    callback toggle_console();
+    in-out property <string> code: "function greet(name) {\n  // Template strings, numbers, keywords\n  const year = 2026;\n  return `Hello, ${name}! It is ${year}.`;\n}\n\nconsole.log(greet(\"PeroxIDE\"));\n";
+    in property <[Run]> runs: [];
+    in property <[Run]> line_numbers: [{ row: 0, col: 0, text: "1", color: #5c6370 }];
+    in property <int> line_count: 7;
+    in property <length> content_width: 600px;
+    in property <length> font_size: 14px;
+    in-out property <length> caret_x: 0px;
+    in-out property <length> caret_y: 0px;
+    in property <int> caret_after: 0;
+    in-out property <bool> blink: true;
+    in property <[ConsoleLine]> console: [{ text: "Hello, PeroxIDE! It is 2026.", color: #d7dae0 }];
+    in property <bool> console_open: true;
+    in property <string> file_name: "untitled.js";
+    in property <bool> modified: false;
+    in property <string> status: "Ready";
+    in property <string> position: "Ln 1, Col 1";
+    in property <[string]> examples: ["Examples…", "Hello", "Fibonacci", "Classes", "Sorting", "Promises"];
+    out property <length> char_w: measure.preferred-width / 40;
+    out property <length> line_h: measure.preferred-height - measure_one.preferred-height;
+    out property <length> scroll_y: -scroll.content-y;
+    out property <length> view_h: scroll.visible-height;
+    background: #15171c;
+
+    MenuBar {
+        Menu {
+            title: "File";
+            new_file_item := MenuItem {
+                shortcut: @keys(Control + N);
+                title: "New";
+                activated => { root.new_file(); }
+            }
+            open_file_item := MenuItem {
+                shortcut: @keys(Control + O);
+                title: "Open…";
+                activated => { root.open_file(); }
+            }
+            save_file_item := MenuItem {
+                shortcut: @keys(Control + S);
+                title: "Save";
+                activated => { root.save_file(); }
+            }
+            save_as_item := MenuItem {
+                shortcut: @keys(Control + Shift + S);
+                title: "Save As…";
+                activated => { root.save_as(); }
+            }
+        }
+        Menu {
+            title: "Run";
+            run_code_item := MenuItem {
+                shortcut: @keys(Control + R);
+                title: "Run";
+                activated => { root.run_code(); }
+            }
+            clear_console_item := MenuItem {
+                shortcut: @keys(Control + K);
+                title: "Clear Console";
+                activated => { root.clear_console(); }
+            }
+        }
+        Menu {
+            title: "View";
+            bigger_item := MenuItem {
+                shortcut: @keys(Control + "=");
+                title: "Bigger Text";
+                activated => { root.bigger(); }
+            }
+            smaller_item := MenuItem {
+                shortcut: @keys(Control + "-");
+                title: "Smaller Text";
+                activated => { root.smaller(); }
+            }
+            toggle_console_item := MenuItem {
+                shortcut: @keys(Control + J);
+                title: "Show or Hide Console";
+                activated => { root.toggle_console(); }
+            }
+        }
+    }
+    blinker := Timer {
+        interval: 530ms;
+        running: code.has-focus;
+        triggered => { root.blink = !root.blink; }
+    }
+    page := VerticalLayout {
+        spacing: 0px;
+        toolbar_box := Rectangle {
+            background: #1b1e24;
+            height: 48px;
+            tools := HorizontalLayout {
+                padding-bottom: 8px;
+                padding-left: 16px;
+                padding-right: 10px;
+                padding-top: 8px;
+                spacing: 10px;
+                Text {
+                    color: #e6e9ef;
+                    font-size: 14px;
+                    font-weight: 600;
+                    text: root.file_name;
+                    vertical-alignment: center;
+                }
+                dirty_dot := Rectangle {
+                    background: root.modified ? #e5c07b : transparent;
+                    border-radius: 4px;
+                    height: 8px;
+                    width: 8px;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    color: #7f8796;
+                    font-size: 12px;
+                    horizontal-alignment: right;
+                    horizontal-stretch: 1;
+                    text: root.status;
+                    vertical-alignment: center;
+                }
+                example_pick := ComboBox {
+                    model: root.examples;
+                    width: 170px;
+                    current-index: 0;
+                    selected(value) => { root.example_picked(value); }
+                }
+                run_button := Button {
+                    primary: true;
+                    text: "Run";
+                    clicked => { root.run_code(); }
+                }
+            }
+        }
+        editor_box := Rectangle {
+            background: #1b1e24;
+            vertical-stretch: 1;
+            measure := Text {
+                font-family: "JetBrains Mono NL";
+                font-size: root.font_size;
+                text: "0000000000000000000000000000000000000000\n0";
+                visible: false;
+            }
+            measure_one := Text {
+                font-family: "JetBrains Mono NL";
+                font-size: root.font_size;
+                text: "0";
+                visible: false;
+            }
+            scroll := ScrollView {
+                height: parent.height;
+                content-height: max(self.visible-height, root.line_count * root.line_h + 40px);
+                content-width: max(self.visible-width, root.content_width);
+                width: parent.width;
+                changed content-y => { root.scrolled(); }
+                content := Rectangle {
+                    height: scroll.content-height;
+                    width: scroll.content-width;
+                    gutter := Rectangle {
+                        background: #17191e;
+                        height: parent.height;
+                        width: 56px;
+                        x: 0;
+                        y: 0;
+                    }
+                    current_line := Rectangle {
+                        background: code.has-focus ? #ffffff08 : transparent;
+                        height: root.line_h;
+                        width: parent.width - 56px;
+                        x: 56px;
+                        y: 8px + root.caret_y;
+                    }
+                    for n in root.line_numbers : line_no := Text {
+                        color: n.color;
+                        font-family: "JetBrains Mono NL";
+                        font-size: root.font_size;
+                        horizontal-alignment: right;
+                        text: n.text;
+                        width: 46px;
+                        x: 0;
+                        y: 8px + n.row * root.line_h;
+                    }
+                    for r in root.runs : run := Text {
+                        color: r.color;
+                        font-family: "JetBrains Mono NL";
+                        font-size: root.font_size;
+                        text: r.text;
+                        x: 68px + r.col * root.char_w;
+                        y: 8px + r.row * root.line_h;
+                    }
+                    code := TextInput {
+                        color: transparent;
+                        font-family: "JetBrains Mono NL";
+                        font-size: root.font_size;
+                        height: parent.height - 16px;
+                        selection-background-color: #3d6fb466;
+                        selection-foreground-color: transparent;
+                        single-line: false;
+                        text <=> root.code;
+                        width: parent.width - 76px;
+                        wrap: no-wrap;
+                        x: 68px;
+                        y: 8px;
+                        edited => { root.code_edited(); }
+                        cursor-position-changed(position) => { root.caret_x = position.x; root.caret_y = position.y; root.blink = true; if position.y + root.line_h + 24px > -scroll.content-y + scroll.visible-height { scroll.content-y = -(position.y + root.line_h + 24px - scroll.visible-height); } if position.y < -scroll.content-y { scroll.content-y = -position.y; } if position.x + 96px > -scroll.content-x + scroll.visible-width { scroll.content-x = -(position.x + 96px - scroll.visible-width); } if position.x < -scroll.content-x { scroll.content-x = -position.x; } root.caret_moved(self.cursor-position-byte-offset); }
+                        key-pressed(event) => { if event.text == Key.Tab && !event.modifiers.shift { root.indent(self.cursor-position-byte-offset); self.set-selection-offsets(root.caret_after, root.caret_after); return accept; } if event.text == Key.Return { root.newline(self.cursor-position-byte-offset); self.set-selection-offsets(root.caret_after, root.caret_after); return accept; } return reject; }
+                    }
+                    caret := Rectangle {
+                        background: #ffcc66;
+                        height: root.line_h;
+                        visible: code.has-focus && root.blink;
+                        width: 2px;
+                        x: 68px + root.caret_x - 1px;
+                        y: 8px + root.caret_y;
+                    }
+                }
+            }
+        }
+        console_box := Rectangle {
+            background: #111317;
+            border-color: #ffffff10;
+            border-width: 1px;
+            clip: true;
+            height: root.console_open ? 230px : 0px;
+            animate height { duration: 220ms; easing: ease-out; }
+            console_col := VerticalLayout {
+                padding: 0px;
+                console_head := HorizontalLayout {
+                    padding-bottom: 2px;
+                    padding-left: 14px;
+                    padding-right: 8px;
+                    padding-top: 6px;
+                    spacing: 8px;
+                    Text {
+                        color: #7f8796;
+                        font-size: 11px;
+                        font-weight: 700;
+                        horizontal-stretch: 1;
+                        letter-spacing: 1.5px;
+                        text: "CONSOLE";
+                        vertical-alignment: center;
+                    }
+                    clear_button := Button { text: "Clear"; clicked => { root.clear_console(); } }
+                }
+                console_scroll := ScrollView {
+                    vertical-stretch: 1;
+                    console_lines := VerticalLayout {
+                        alignment: start;
+                        padding-bottom: 4px;
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        padding-top: 4px;
+                        spacing: 2px;
+                        changed height => { console_scroll.content-y = min(0px, console_scroll.visible-height - self.height); }
+                        for l in root.console : console_line := Text {
+                            color: l.color;
+                            font-family: "JetBrains Mono NL";
+                            font-size: 13px;
+                            text: l.text;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                repl_row := HorizontalLayout {
+                    padding-bottom: 8px;
+                    padding-left: 14px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    Text {
+                        color: #61afef;
+                        font-size: 18px;
+                        text: "›";
+                        vertical-alignment: center;
+                    }
+                    repl_input := LineEdit {
+                        font-family: "JetBrains Mono NL";
+                        horizontal-stretch: 1;
+                        placeholder-text: "Evaluate JavaScript, e.g. [1, 2, 3].map(x => x * x)";
+                        accepted(text) => { root.repl(text); self.text = ""; }
+                    }
+                }
+            }
+        }
+        status_bar := Rectangle {
+            background: #2b5fd9;
+            height: 26px;
+            status_row := HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 22px;
+                Text {
+                    color: #e8eeff;
+                    font-size: 12px;
+                    horizontal-stretch: 1;
+                    text: root.modified ? "Edited" : "Saved";
+                    vertical-alignment: center;
+                }
+                Text {
+                    color: #e8eeff;
+                    font-size: 12px;
+                    text: root.position;
+                    vertical-alignment: center;
+                }
+                Text {
+                    color: #e8eeff;
+                    font-size: 12px;
+                    text: "Spaces: 2";
+                    vertical-alignment: center;
+                }
+                Text {
+                    color: #e8eeff;
+                    font-size: 12px;
+                    text: "UTF-8";
+                    vertical-alignment: center;
+                }
+                Text {
+                    color: #e8eeff;
+                    font-size: 12px;
+                    text: "JavaScript";
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

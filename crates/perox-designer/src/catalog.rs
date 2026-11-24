@@ -214,8 +214,8 @@ pub const KINDS: &[Kind] = &[
         group: Group::Container,
         std: true,
         props: &[
-            p("viewport-width", Length, "Width of the scrolled content"),
-            p("viewport-height", Length, "Height of the scrolled content"),
+            p("content-width", Length, "Width of the scrolled content"),
+            p("content-height", Length, "Height of the scrolled content"),
         ],
         events: &[],
     },
