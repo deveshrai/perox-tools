@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds dist/PeroxIDE.app (and a zip of it) from a release build.
 # The app carries the runtime SDK in Contents/Resources/sdk so new GUI apps
-# can depend on perox-ui / perox-forms without the source tree.
+# can depend on perox-ui / perox-slint without the source tree.
 set -eu
 cd "$(dirname "$0")/.."
 
