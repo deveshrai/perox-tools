@@ -1662,6 +1662,16 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("view.toggle_intro", "Opening Animation", Access::Edit)
+                .description("Turns the opening animation (shown when PeroxIDE starts) off or on."),
+            |s, _| {
+                s.settings.skip_intro = !s.settings.skip_intro;
+                s.settings.save();
+                s.status = format!("Opening animation {}", if s.settings.skip_intro { "off" } else { "on" });
+                Ok(json!({ "opening_animation": !s.settings.skip_intro }))
+            },
+        ),
+        (
             CommandSpec::new("editor.toggle_format_on_save", "Format on Save", Access::Edit)
                 .description("Turns formatting Rust files on save on or off."),
             |s, _| {

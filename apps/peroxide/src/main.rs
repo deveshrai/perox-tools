@@ -8,6 +8,7 @@ mod docs;
 mod git;
 mod icons;
 mod ide;
+mod intro;
 mod keymap;
 mod layout;
 mod lsp;
@@ -19,6 +20,24 @@ mod templates;
 mod testing;
 mod watcher;
 
+/// The window and Dock icon, drawn by perox-brand.
+fn app_icon() -> eframe::egui::IconData {
+    let p = perox_brand::icon(256);
+    let rgba = p
+        .pixels()
+        .iter()
+        .flat_map(|c| {
+            let c = c.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    eframe::egui::IconData {
+        rgba,
+        width: p.width(),
+        height: p.height(),
+    }
+}
+
 fn main() -> eframe::Result {
     // `peroxide <folder or file>` opens that project.
     let open = std::env::args_os()
@@ -29,7 +48,8 @@ fn main() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("PeroxIDE")
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0]),
+            .with_min_inner_size([640.0, 400.0])
+            .with_icon(std::sync::Arc::new(app_icon())),
         // winit's default macOS menu quits the app directly on ⌘Q, skipping the
         // "save changes?" prompt. Without it, ⌘Q reaches PeroxIDE like any shortcut.
         #[cfg(target_os = "macos")]

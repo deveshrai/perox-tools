@@ -32,6 +32,10 @@ pub struct PeroxApp {
     tree: egui_tiles::Tree<Pane>,
     palette: Palette,
     mcp_page: McpPage,
+    /// The opening animation, while it plays.
+    intro: Option<crate::intro::Intro>,
+    /// The icon, for the About box.
+    about_icon: Option<egui::TextureHandle>,
 }
 
 impl PeroxApp {
@@ -64,7 +68,12 @@ impl PeroxApp {
             tree: layout::default_tree(),
             palette: Palette::default(),
             mcp_page: McpPage::default(),
+            intro: None,
+            about_icon: None,
         };
+        if !app.state.settings.skip_intro && std::env::var_os("PEROXIDE_NO_INTRO").is_none() {
+            app.intro = Some(crate::intro::Intro::new(ctx, 560.0));
+        }
         if let Some(path) = open {
             app.run_user("project.open", json!({ "path": path }));
             if path.is_file() {
@@ -336,6 +345,16 @@ impl PeroxApp {
                 item(ui, actions, "view.tests");
                 item(ui, actions, "view.debug");
                 item(ui, actions, "view.reset_layout");
+                ui.separator();
+                let label = if self.state.settings.skip_intro {
+                    "Turn On Opening Animation"
+                } else {
+                    "Turn Off Opening Animation"
+                };
+                if ui.button(label).clicked() {
+                    actions.push("view.toggle_intro");
+                    ui.close();
+                }
             });
             ui.menu_button("Build", |ui| {
                 item(ui, actions, "build.check");
@@ -679,9 +698,23 @@ impl eframe::App for PeroxApp {
                 .resizable(false)
                 .open(&mut self.state.show_about)
                 .show(&ctx, |ui| {
+                    let icon = self.about_icon.get_or_insert_with(|| {
+                        ctx.load_texture(
+                            "about-icon",
+                            crate::intro::image(&perox_brand::icon(256)),
+                            egui::TextureOptions::LINEAR,
+                        )
+                    });
+                    ui.add(egui::Image::new((icon.id(), egui::vec2(96.0, 96.0))));
                     ui.label(format!("PeroxIDE {}", env!("CARGO_PKG_VERSION")));
                     ui.label("GPL-3.0-or-later");
                 });
+        }
+
+        if let Some(intro) = &mut self.intro
+            && !intro.show(&ctx)
+        {
+            self.intro = None;
         }
 
         // Commands change what's on screen: draw the next frame now, not on the next input.

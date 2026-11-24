@@ -1,5 +1,7 @@
 # PeroxIDE
 
+<img src="assets/brand/icon-256.png" width="128" alt="PeroxIDE icon: a chrome bottle pouring liquid chrome onto a half-rusted anvil" align="right">
+
 **A complete RAD IDE for building GUI apps in Rust.** A drag-and-drop form
 designer with real layouts, a full code editor, a debugger and project
 management, all in one install with a pinned, tested Rust toolchain.
@@ -177,6 +179,13 @@ Packages are unsigned unless you give your certificates: on macOS set
 `PEROX_MACOS_SIGN_IDENTITY` (a Developer ID) and, to notarize, `PEROX_MACOS_NOTARY_PROFILE`.
 Unsigned apps still run; the OS asks once.
 
+**The icon and opening animation** are drawn in code (`crates/perox-brand`), so every size
+and frame comes from one drawing: a rusted anvil, a chrome bottle pouring liquid chrome
+onto it, and chrome spreading across the horn. The last frame is the icon. A key or click
+skips it; View → Turn Off Opening Animation stops it for good.
+
+![The opening animation](assets/brand/intro-frames.png)
+
 Claude Code can drive all of it, the designer included, over MCP ([docs/mcp.md](docs/mcp.md)).
 
 ## Sample app: Stock Viewer
@@ -252,6 +261,7 @@ crates/perox-editor/  the code editor (GPL-3.0-or-later)
 crates/perox-lsp/   the rust-analyzer client (GPL-3.0-or-later)
 crates/perox-project/ Cargo projects and the file tree (GPL-3.0-or-later)
 crates/perox-build/ running cargo (GPL-3.0-or-later)
+crates/perox-brand/ the icon and opening animation, drawn with tiny-skia (GPL-3.0-or-later)
 crates/perox-package/ Package App: .app/.dmg, .deb/AppImage, .msi/.zip (GPL-3.0-or-later)
 crates/perox-designer/ the form designer (GPL-3.0-or-later)
 crates/perox-slint/ .slint editing and the handlers codegen for build.rs (MIT OR Apache-2.0)

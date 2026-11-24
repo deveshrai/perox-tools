@@ -21,6 +21,8 @@ pub struct Settings {
     pub plain_check_on_save: bool,
     /// Open files per project root, restored when the project opens again.
     pub sessions: std::collections::BTreeMap<PathBuf, Session>,
+    /// Don't play the opening animation.
+    pub skip_intro: bool,
     /// The debug adapter to use instead of the lldb-dap PeroxIDE finds (ADR 0012).
     pub debugger_adapter: Option<PathBuf>,
     /// Where these settings are saved. `None` (defaults, tests) never touches disk.
