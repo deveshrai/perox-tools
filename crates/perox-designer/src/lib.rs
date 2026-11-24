@@ -957,7 +957,12 @@ impl Designer {
         let painter = ui.painter().with_clip_rect(content.expand(4.0));
         for (p, r) in rects {
             let Some(el) = c.at(p) else { continue };
-            if catalog::is_free(&el.kind) && self.selected.as_deref() == Some(p.as_slice()) {
+            // A window filled by one layout isn't placing anything freely.
+            let filled = el.children.len() == 1 && catalog::is_layout(&el.children[0].kind);
+            if catalog::is_free(&el.kind)
+                && !filled
+                && self.selected.as_deref() == Some(p.as_slice())
+            {
                 grid_dots(&painter, *r, accent.gamma_multiply(0.35));
             }
             if catalog::is_layout(&el.kind) && el.kind != "GroupBox" {
@@ -968,6 +973,45 @@ impl Designer {
                     StrokeKind::Inside,
                 );
             }
+        }
+        // Text that's empty here (bound to code, or blank): a faint dashed box with what
+        // it shows, so it can be found and selected.
+        for (p, r) in rects {
+            let Some(el) = c.at(p) else { continue };
+            if el.kind != "Text" {
+                continue;
+            }
+            let hint = match el.prop("text") {
+                Some(Value::Str(t)) if !t.is_empty() => continue,
+                Some(Value::Str(_)) | None => "(empty text)".to_owned(),
+                Some(v) => v.to_source(),
+            };
+            let box_ = if r.height() < 4.0 {
+                Rect::from_min_size(r.min, vec2(r.width().max(60.0), 16.0))
+            } else {
+                *r
+            };
+            let faint = ui.visuals().weak_text_color().gamma_multiply(0.7);
+            let pts = [
+                box_.left_top(),
+                box_.right_top(),
+                box_.right_bottom(),
+                box_.left_bottom(),
+                box_.left_top(),
+            ];
+            painter.extend(egui::Shape::dashed_line(
+                &pts,
+                Stroke::new(1.0, faint),
+                3.0,
+                3.0,
+            ));
+            painter.text(
+                box_.left_center() + vec2(4.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                hint,
+                egui::FontId::proportional(11.0),
+                faint,
+            );
         }
         if let Some(hover) = ui
             .ctx()
