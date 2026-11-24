@@ -343,6 +343,10 @@ pub struct Callback {
 pub struct PropertyDecl {
     pub name: String,
     pub ty: Option<String>,
+    /// `in`, `out`, `in-out`, `private`, or empty.
+    pub visibility: String,
+    /// `x` in `property <t> p <=> x;`
+    pub alias: Option<String>,
     pub span: Range<usize>,
 }
 
@@ -385,6 +389,19 @@ impl Component {
             }
         });
         best.map(|(_, p)| p)
+    }
+
+    /// The root property that exposes `target` (`name_edit.text`), if any.
+    pub fn exposing(&self, target: &str) -> Option<&PropertyDecl> {
+        let t = normalize(target);
+        self.properties
+            .iter()
+            .find(|p| p.alias.as_deref().is_some_and(|a| normalize(a) == t))
+    }
+
+    pub fn property(&self, name: &str) -> Option<&PropertyDecl> {
+        let n = normalize(name);
+        self.properties.iter().find(|p| normalize(&p.name) == n)
     }
 
     pub fn callback(&self, name: &str) -> Option<&Callback> {
@@ -636,12 +653,24 @@ fn build_component(
             }
             SyntaxKind::PropertyDeclaration => {
                 if let Some(n) = c.child_node(SyntaxKind::DeclaredIdentifier) {
+                    let span = trimmed(&c);
+                    let head = &src[span.start..trimmed(&n).start];
+                    let visibility = head
+                        .split_whitespace()
+                        .find(|w| matches!(*w, "in" | "out" | "in-out" | "private"))
+                        .unwrap_or_default()
+                        .to_owned();
                     properties.push(PropertyDecl {
                         name: src[trimmed(&n)].to_owned(),
                         ty: c
                             .child_node(SyntaxKind::Type)
                             .map(|t| src[trimmed(&t)].to_owned()),
-                        span: trimmed(&c),
+                        visibility,
+                        alias: c
+                            .child_node(SyntaxKind::TwoWayBinding)
+                            .and_then(|t| t.child_node(SyntaxKind::Expression))
+                            .map(|e| src[trimmed(&e)].to_owned()),
+                        span,
                     });
                 }
             }
@@ -813,6 +842,17 @@ export component MainWindow inherits Window {
             [(Some("text".into()), "string".into())]
         );
         assert_eq!(c.properties[0].name, "count");
+        assert_eq!(c.properties[0].visibility, "in-out");
+        let d = parse(
+            "export component A { in-out property <string> name <=> edit.text; edit := TextInput { } }",
+        );
+        let a = &d.components[0];
+        assert_eq!(a.properties[0].alias.as_deref(), Some("edit.text"));
+        assert_eq!(
+            a.exposing("edit.text").map(|p| p.name.as_str()),
+            Some("name")
+        );
+        assert!(a.property("name").is_some());
         let col = c.at(&[0]).unwrap();
         assert_eq!(col.kind, "VerticalLayout");
         assert_eq!(col.children.len(), 2, "the `for` isn't a child");

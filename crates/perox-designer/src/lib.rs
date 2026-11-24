@@ -65,6 +65,8 @@ pub struct Designer {
     pub preview: preview::Preview,
     /// Widget style for the preview (default: this OS's native style).
     pub style: Option<String>,
+    /// Preview in the dark colour scheme (default: like the IDE's theme).
+    pub dark: Option<bool>,
     /// The selected element's path (`[]` is the root).
     pub selected: Option<Vec<usize>>,
     /// Window size while the corner handle is being dragged.
@@ -404,6 +406,15 @@ impl Designer {
                 })
                 .response
                 .on_hover_text("Widget style for the preview. Apps use the native style of the OS they run on.");
+            let dark = self.dark.unwrap_or(ui.visuals().dark_mode);
+            let (icon, tip) = if dark {
+                (Icon::Moon, "Previewing the dark scheme; apps follow the OS. Click for light.")
+            } else {
+                (Icon::Sun, "Previewing the light scheme; apps follow the OS. Click for dark.")
+            };
+            if icon_button(ui, icon, tip).clicked() {
+                self.dark = Some(!dark);
+            }
             let names: Vec<String> = self.doc.components.iter().map(|c| c.name.clone()).collect();
             if names.len() > 1 {
                 let current = self.component_name();
@@ -622,7 +633,8 @@ impl Designer {
             path.to_owned()
         };
         let style = self.style();
-        self.preview.update(&shown, &path, &c.name, &style);
+        let dark = self.dark.unwrap_or(ui.visuals().dark_mode);
+        self.preview.update(&shown, &path, &c.name, &style, dark);
 
         let size = self.window_size();
         let is_window = c.is_window();
@@ -1267,6 +1279,7 @@ impl Designer {
                 if !spec.help.is_empty() {
                     r.on_hover_text(spec.help);
                 }
+                self.expose_toggle(ui, comp, el, path, spec, source, actions);
                 if let Some(v) = self.value_editor(ui, path, spec, value.as_ref()) {
                     self.apply(
                         actions,
@@ -1282,6 +1295,60 @@ impl Designer {
                     );
                 }
             });
+        }
+    }
+
+    /// The "use from code" toggle on a property row: exposes it as a root property
+    /// (`in-out property <t> id_prop <=> id.prop;`), so Rust gets `get_`/`set_`.
+    #[allow(clippy::too_many_arguments)]
+    fn expose_toggle(
+        &mut self,
+        ui: &mut egui::Ui,
+        comp: &str,
+        el: &Element,
+        path: &[usize],
+        spec: &PropSpec,
+        source: &str,
+        actions: &mut Vec<Action>,
+    ) {
+        let width = 16.0;
+        if path.is_empty() || catalog::slint_type(spec).is_none() {
+            ui.add_space(width + ui.spacing().item_spacing.x);
+            return;
+        }
+        let exposed = el.id.as_ref().and_then(|id| {
+            self.current()?
+                .exposing(&format!("{id}.{}", spec.name))
+                .map(|p| p.name.clone())
+        });
+        let tip = match &exposed {
+            Some(n) => {
+                let r = perox_slint::codegen::rust_name(n);
+                format!("Used from code: ui.get_{r}() and ui.set_{r}(…). Click to stop.")
+            }
+            None => "Use from code: adds get_/set_ methods for this property".to_owned(),
+        };
+        // Lit in the accent colour when code can use it, faint when not.
+        let color = if exposed.is_some() {
+            ui.visuals().selection.stroke.color
+        } else {
+            ui.visuals().weak_text_color().gamma_multiply(0.6)
+        };
+        let icon = Icon::Code
+            .colored(color)
+            .fit_to_exact_size(Vec2::splat(13.0));
+        let b = egui::Button::image(icon)
+            .frame(false)
+            .min_size(vec2(width, 0.0));
+        if ui.add(b).on_hover_text(tip).clicked() {
+            let result = match exposed {
+                Some(n) => edit::remove_property_decl(source, comp, &n),
+                None => match expose_property(source, comp, path, &spec.name) {
+                    Ok(new) => Ok(edit::diff(source, &new)),
+                    Err(e) => Err(e),
+                },
+            };
+            self.apply(actions, result);
         }
     }
 
@@ -1315,7 +1382,9 @@ impl Designer {
                     .iter()
                     .find(|(p, n, _)| p == path && *n == spec.name)
                     .and_then(|(_, _, v)| Value::parse(v).as_f64());
-                let mut n = live.or(value.and_then(Value::as_f64)).unwrap_or(0.0);
+                let current = live.or(value.and_then(Value::as_f64));
+                let unset = current.is_none();
+                let mut n = current.unwrap_or(0.0);
                 let mut dv = egui::DragValue::new(&mut n).speed(if kind == PropKind::Float {
                     0.05
                 } else {
@@ -1324,7 +1393,10 @@ impl Designer {
                 if kind == PropKind::Int {
                     dv = dv.fixed_decimals(0);
                 }
-                if !unit.is_empty() {
+                if unset {
+                    // Not set in the file: Slint decides (layout, style default).
+                    dv = dv.custom_formatter(|_, _| "auto".to_owned());
+                } else if !unit.is_empty() {
                     dv = dv.suffix(" px");
                 }
                 let r = ui.add(dv);
@@ -1349,7 +1421,9 @@ impl Designer {
                 }
             }
             PropKind::Bool => {
-                let mut b = value.and_then(Value::as_bool).unwrap_or(false);
+                // Unset: the documented default, e.g. "(true)" for `enabled`.
+                let default = spec.help.starts_with("(true)");
+                let mut b = value.and_then(Value::as_bool).unwrap_or(default);
                 ui.checkbox(&mut b, "").changed().then(|| b.to_string())
             }
             PropKind::Color => {
@@ -1589,6 +1663,50 @@ pub fn wire_event(
     )?;
     let s = work.clone();
     free::step(&mut work, edit::add_callback(&s, comp, method, &decl))?;
+    Ok(work)
+}
+
+/// Exposes property `prop` of the element at `path` to code: names the element if
+/// needed, then declares `in-out property <type> <id>_<prop> <=> <id>.<prop>;` on the
+/// component. Returns the new source.
+pub fn expose_property(
+    source: &str,
+    comp: &str,
+    path: &[usize],
+    prop: &str,
+) -> Result<String, EditError> {
+    let doc = perox_slint::parse(source);
+    let c = doc
+        .component(comp)
+        .ok_or_else(|| EditError::NoSuchComponent(comp.into()))?;
+    let el = c.at(path).ok_or(EditError::NoSuchElement)?;
+    if path.is_empty() {
+        return Err(EditError::Root);
+    }
+    let spec = catalog::kind(&el.kind)
+        .into_iter()
+        .flat_map(|k| k.props.iter())
+        .chain(catalog::COMMON)
+        .chain(catalog::FREE_CHILD)
+        .find(|p| p.name == prop);
+    let ty = spec.and_then(catalog::slint_type).ok_or_else(|| {
+        EditError::InvalidName(format!("{prop} (can't expose this property yet)"))
+    })?;
+    let mut work = source.to_owned();
+    let id = match &el.id {
+        Some(id) => id.clone(),
+        None => {
+            let id = unique_id(c, &catalog::snake(&el.kind));
+            free::step(&mut work, edit::set_id(source, comp, path, Some(&id)))?;
+            id
+        }
+    };
+    let name = format!("{id}_{prop}").replace('-', "_");
+    let s = work.clone();
+    free::step(
+        &mut work,
+        edit::expose_property(&s, comp, &name, ty, &format!("{id}.{prop}")),
+    )?;
     Ok(work)
 }
 

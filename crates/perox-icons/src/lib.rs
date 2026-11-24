@@ -98,6 +98,8 @@ pub enum Icon {
     ScrollText,
     SquareMousePointer,
     ToggleLeft,
+    Moon,
+    Sun,
     Zap,
 }
 
@@ -189,6 +191,8 @@ impl Icon {
         Icon::ScrollText,
         Icon::SquareMousePointer,
         Icon::ToggleLeft,
+        Icon::Moon,
+        Icon::Sun,
         Icon::Zap,
     ];
 
@@ -282,6 +286,8 @@ impl Icon {
             Icon::ScrollText => egui::include_image!("../icons/scroll-text.svg"),
             Icon::SquareMousePointer => egui::include_image!("../icons/square-mouse-pointer.svg"),
             Icon::ToggleLeft => egui::include_image!("../icons/toggle-left.svg"),
+            Icon::Moon => egui::include_image!("../icons/moon.svg"),
+            Icon::Sun => egui::include_image!("../icons/sun.svg"),
             Icon::Zap => egui::include_image!("../icons/zap.svg"),
         }
     }

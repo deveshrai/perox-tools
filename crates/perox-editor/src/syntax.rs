@@ -73,6 +73,7 @@ impl Hl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
     Rust,
+    Slint,
     Plain,
 }
 
@@ -80,6 +81,7 @@ impl Lang {
     pub fn from_path(path: &std::path::Path) -> Self {
         match path.extension().and_then(|e| e.to_str()) {
             Some("rs") => Lang::Rust,
+            Some("slint") => Lang::Slint,
             _ => Lang::Plain,
         }
     }
@@ -111,6 +113,25 @@ fn rust() -> &'static Highlighter {
     })
 }
 
+fn slint() -> &'static Highlighter {
+    static SLINT: OnceLock<Highlighter> = OnceLock::new();
+    SLINT.get_or_init(|| {
+        let language: Language = tree_sitter_slint::LANGUAGE.into();
+        let query = Query::new(&language, include_str!("../queries/slint-highlights.scm"))
+            .expect("bundled Slint highlight query compiles");
+        let map = query
+            .capture_names()
+            .iter()
+            .map(|n| Hl::from_capture(n))
+            .collect();
+        Highlighter {
+            language,
+            query,
+            map,
+        }
+    })
+}
+
 /// A parse tree kept in step with a document.
 pub struct Syntax {
     parser: Parser,
@@ -128,6 +149,7 @@ impl Syntax {
     pub fn new(lang: Lang, rope: &Rope) -> Option<Self> {
         let hl = match lang {
             Lang::Rust => rust(),
+            Lang::Slint => slint(),
             Lang::Plain => return None,
         };
         let mut parser = Parser::new();
@@ -274,8 +296,12 @@ mod tests {
     use crate::text::{Change, Document, EditKind};
 
     fn kinds(src: &str) -> Vec<(String, Hl)> {
+        kinds_in(Lang::Rust, src)
+    }
+
+    fn kinds_in(lang: Lang, src: &str) -> Vec<(String, Hl)> {
         let rope = Rope::from_str(src);
-        let s = Syntax::new(Lang::Rust, &rope).unwrap();
+        let s = Syntax::new(lang, &rope).unwrap();
         let spans = s.highlights(&rope, 0..rope.len_bytes());
         let mut out = Vec::new();
         for (line_no, line) in src.lines().enumerate() {
@@ -285,6 +311,29 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn highlights_slint() {
+        let k = kinds_in(
+            Lang::Slint,
+            "import { Button } from \"std-widgets.slint\";\n// note\nexport component Main inherits Window {\n    in-out property <string> name: \"x\";\n    callback go();\n    ok := Button { text: \"OK\"; width: 12px; clicked => { root.go(); } }\n}\n",
+        );
+        let find = |t: &str| k.iter().find(|(s, _)| s == t).map(|(_, h)| *h);
+        assert_eq!(find("import"), Some(Hl::Keyword), "{k:?}");
+        assert_eq!(find("component"), Some(Hl::Keyword));
+        assert_eq!(find("Main"), Some(Hl::Type));
+        assert_eq!(find("Button"), Some(Hl::Type));
+        assert_eq!(find("// note"), Some(Hl::Comment));
+        assert_eq!(find("\"OK\""), Some(Hl::String));
+        assert_eq!(find("12px"), Some(Hl::Number));
+        assert_eq!(find("text"), Some(Hl::Property));
+        assert_eq!(find("go"), Some(Hl::Function));
+        assert_eq!(find("root"), Some(Hl::SelfKw));
+        assert_eq!(
+            Lang::from_path(std::path::Path::new("a/b.slint")),
+            Lang::Slint
+        );
     }
 
     #[test]

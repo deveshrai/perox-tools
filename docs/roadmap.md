@@ -88,9 +88,10 @@ real Slint UI.
 
 **Done when:** everything Phase 2 could do works with `.slint`, and a new app looks native.
 
-Follow-ups: "expose property" in the inspector (`in-out property <=> id.prop`), `.slint`
-syntax highlighting in the Source view, light/dark preview, inspector shows defaults,
-multi-select, copy/paste, align/distribute, OS-level dialog modality when Slint has it.
+Since then: "use from code" toggle per property (`in-out property <=> id.prop`, also
+`designer.expose`), `.slint` highlighting in the Source view, light/dark preview, unset
+values show as "auto"/defaults. Next: multi-select, copy/paste, align/distribute;
+OS-level dialog modality when Slint has it.
 
 ### Phase 3: pro tooling ← *next*
 Debugger (lldb-dap on macOS/Linux; on Windows, lldb-dap or cppvsdbg, decided by ADR), test

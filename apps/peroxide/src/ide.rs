@@ -428,6 +428,45 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.expose", "Use Property from Code", Access::Edit)
+                .description("Makes an element's property readable and writable from Rust: names the element if needed and declares `in-out property <type> <id>_<prop> <=> <id>.<prop>;`, so the generated component gets get_<id>_<prop>() and set_<id>_<prop>(). With expose: false, removes that declaration.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "name": { "type": "string", "description": "The property, e.g. text, checked, value" },
+                    "expose": { "type": "boolean", "description": "Default true" }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
+                let prop = inv.str_arg("name")?;
+                if inv.args["expose"].as_bool() == Some(false) {
+                    let c = doc.component(&comp).ok_or_else(|| err("No component."))?;
+                    let target = c.at(&path).and_then(|e| e.id.clone()).map(|i| format!("{i}.{prop}"));
+                    let Some(decl) = target.and_then(|t| c.exposing(&t)) else {
+                        return Ok(json!({ "exposed": false }));
+                    };
+                    let edits = perox_slint::edit::remove_property_decl(&text, &comp, &decl.name).map_err(|e| err(e.to_string()))?;
+                    apply_form_edits(s, id, edits);
+                    return Ok(json!({ "exposed": false }));
+                }
+                let new = perox_designer::expose_property(&text, &comp, &path, prop).map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
+                let doc = perox_slint::parse(&new);
+                let name = doc
+                    .component(&comp)
+                    .and_then(|c| {
+                        let el = c.at(&path)?;
+                        c.exposing(&format!("{}.{prop}", el.id.as_ref()?)).map(|p| p.name.clone())
+                    })
+                    .unwrap_or_default();
+                let r = perox_slint::codegen::rust_name(&name);
+                Ok(json!({ "exposed": true, "property": name, "rust": [format!("get_{r}"), format!("set_{r}")] }))
+            },
+        ),
+        (
             CommandSpec::new("designer.go_to_handler", "Go to Element Handler", Access::Edit)
                 .description("Like double-clicking an event in the designer: wires the element's callback to `<id>_<event>` if it isn't yet, then shows the Rust method (adding it to the `impl <Component>Handlers` block).")
                 .params(path_schema(json!({ "component": { "type": "string" }, "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }), "event": { "type": "string" } }))),

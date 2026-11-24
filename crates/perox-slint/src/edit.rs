@@ -556,25 +556,66 @@ pub fn add_callback(
         .collect::<Vec<_>>()
         .join(", ");
     let line = format!("callback {name}({args});");
-    let root = &c.root;
     let after = c
         .callbacks
         .iter()
         .map(|cb| cb.span.end)
         .max()
         .or_else(|| c.properties.iter().map(|p| p.span.end).max());
+    Ok(vec![declare(src, c, after, &line)])
+}
+
+/// Inserts a declaration line at the top of a component: after `after`, else right
+/// after `{`.
+fn declare(src: &str, c: &Component, after: Option<usize>, line: &str) -> TextEdit {
+    let root = &c.root;
     if single_line(src, root) {
-        return Ok(vec![insert_member(src, root, &line)]);
+        return insert_member(src, root, line);
     }
     let indent = member_indent(src, root);
     let at = match after {
         Some(end) => line_end(src, end),
         None => root.open + 1,
     };
-    Ok(vec![TextEdit {
+    TextEdit {
         range: at..at,
         text: format!("\n{indent}{line}"),
-    }])
+    }
+}
+
+/// Exposes `target` (`name_edit.text`) to code as `in-out property <ty> name <=> target;`,
+/// after the component's other properties. Does nothing if `name` exists.
+pub fn expose_property(
+    src: &str,
+    comp: &str,
+    name: &str,
+    ty: &str,
+    target: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    check(&[name])?;
+    let doc = parse(src);
+    let c = component(&doc, comp)?;
+    if c.property(name).is_some() {
+        return Ok(Vec::new());
+    }
+    let line = format!("in-out property <{ty}> {name} <=> {target};");
+    let after = c
+        .properties
+        .iter()
+        .map(|p| p.span.end)
+        .max()
+        .or_else(|| c.callbacks.iter().map(|cb| cb.span.end).max());
+    Ok(vec![declare(src, c, after, &line)])
+}
+
+/// Removes a root property declaration.
+pub fn remove_property_decl(src: &str, comp: &str, name: &str) -> Result<Vec<TextEdit>, EditError> {
+    let doc = parse(src);
+    let c = component(&doc, comp)?;
+    Ok(c.property(name)
+        .map(|p| delete_member(src, p.span.clone()))
+        .into_iter()
+        .collect())
 }
 
 pub fn remove_callback(src: &str, comp: &str, name: &str) -> Result<Vec<TextEdit>, EditError> {
@@ -816,6 +857,24 @@ mod tests {
         assert!(add_callback(SRC, "Main", "go", &[]).unwrap().is_empty());
         let out = run(remove_callback(SRC, "Main", "go"));
         assert!(!out.contains("callback"), "{out}");
+    }
+
+    #[test]
+    fn exposing_properties() {
+        let out = run(expose_property(SRC, "Main", "a_text", "string", "a.text"));
+        assert!(
+            out.contains("    callback go();\n    in-out property <string> a_text <=> a.text;\n"),
+            "{out}"
+        );
+        let c = parse(&out).components.remove(0);
+        assert_eq!(c.exposing("a.text").unwrap().name, "a_text");
+        assert!(
+            expose_property(&out, "Main", "a_text", "string", "a.text")
+                .unwrap()
+                .is_empty()
+        );
+        let back = apply(&out, &remove_property_decl(&out, "Main", "a_text").unwrap());
+        assert_eq!(back, SRC);
     }
 
     #[test]

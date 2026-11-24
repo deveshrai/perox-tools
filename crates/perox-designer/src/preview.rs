@@ -54,6 +54,9 @@ pub fn native_style() -> &'static str {
     }
 }
 
+/// The alias the preview exports the std-widgets `Palette` under.
+const PALETTE: &str = "PeroxDesignPalette";
+
 pub const STYLES: &[&str] = &["fluent", "cupertino", "material", "cosmic"];
 
 #[derive(Default)]
@@ -65,6 +68,9 @@ pub struct Preview {
     /// Errors from the last compile (the previous picture stays up).
     pub diagnostics: Vec<String>,
     texture: Option<TextureHandle>,
+    /// The last rendered pixels (RGBA, premultiplied) and their width.
+    pixels: Vec<[u8; 4]>,
+    width: usize,
     /// Size and scale of the last render.
     rendered: Option<(Vec2, f32)>,
     path: PathBuf,
@@ -89,8 +95,9 @@ fn hash(parts: &[&str]) -> u64 {
 impl Preview {
     /// Rebuilds the component if the source, component or style changed. `path` is the
     /// file's location (for its imports); it needn't exist.
-    pub fn update(&mut self, source: &str, path: &Path, component: &str, style: &str) {
-        let key = hash(&[source, component, style, &path.to_string_lossy()]);
+    pub fn update(&mut self, source: &str, path: &Path, component: &str, style: &str, dark: bool) {
+        let scheme = if dark { "dark" } else { "light" };
+        let key = hash(&[source, component, style, scheme, &path.to_string_lossy()]);
         if self.built.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
@@ -99,8 +106,11 @@ impl Preview {
         let mut compiler = slint_interpreter::Compiler::default();
         compiler.set_style(style.to_owned());
         compiler.set_edition((1, 19));
-        let result =
-            spin_on::spin_on(compiler.build_from_source(source.to_owned(), path.to_owned()));
+        // A handle on the std widgets' palette, to pick light or dark. Appended, so every
+        // element's source offset stays the same.
+        let with_palette =
+            format!("{source}\nexport {{ Palette as {PALETTE} }} from \"std-widgets.slint\";\n");
+        let result = spin_on::spin_on(compiler.build_from_source(with_palette, path.to_owned()));
         self.diagnostics = result
             .diagnostics()
             .filter(|d| d.level() == slint_interpreter::DiagnosticLevel::Error)
@@ -130,6 +140,11 @@ impl Preview {
             // `show` makes the item tree live (layouts, rendering); nothing appears on
             // screen with this platform.
             let _ = instance.show();
+            let _ = instance.set_global_property(
+                PALETTE,
+                "color-scheme",
+                slint_interpreter::Value::EnumerationValue("ColorScheme".into(), scheme.into()),
+            );
             w.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
         }
         self.instance = Some(instance);
@@ -188,9 +203,12 @@ impl Preview {
         if drew || self.texture.is_none() {
             if pixels.len() == w * h {
                 let mut bytes = Vec::with_capacity(w * h * 4);
+                self.pixels.clear();
                 for p in &pixels {
                     bytes.extend_from_slice(&[p.red, p.green, p.blue, p.alpha]);
+                    self.pixels.push([p.red, p.green, p.blue, p.alpha]);
                 }
+                self.width = w;
                 let image = ColorImage::from_rgba_premultiplied([w, h], &bytes);
                 match &mut self.texture {
                     Some(t) => t.set(image, TextureOptions::LINEAR),
@@ -203,6 +221,11 @@ impl Preview {
             self.rendered = Some((size, scale));
         }
         self.texture.as_ref()
+    }
+
+    /// A pixel of the last render (for tests).
+    pub fn pixel(&self, x: usize, y: usize) -> Option<[u8; 4]> {
+        self.pixels.get(y * self.width + x).copied()
     }
 
     /// Where the element whose type name starts at `offset` was drawn, relative to the

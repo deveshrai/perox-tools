@@ -387,6 +387,21 @@ pub const DIALOG: Kind = Kind {
     events: &[],
 };
 
+/// The Slint type to expose a property as, or `None` if the inspector can't yet.
+pub fn slint_type(spec: &PropSpec) -> Option<&'static str> {
+    Some(match spec.kind {
+        Text => "string",
+        Length => "length",
+        Int => "int",
+        Float => "float",
+        Bool => "bool",
+        // Colors on elements are brushes (`color`, `background`, `border-color`…).
+        Color => "brush",
+        Items => "[string]",
+        Choice(_) | Source => return None,
+    })
+}
+
 /// Size properties every element accepts.
 pub const COMMON: &[PropSpec] = &[
     p("width", Length, "Fixed width"),

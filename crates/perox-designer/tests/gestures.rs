@@ -388,3 +388,62 @@ fn go_to_handler_declares_and_wires_a_callback() {
         h.designer.preview.diagnostics
     );
 }
+
+#[test]
+fn exposing_a_property_names_the_element_and_compiles() {
+    let src = "import { LineEdit, VerticalBox } from \"std-widgets.slint\";\nexport component Main inherits Window {\n    VerticalBox {\n        LineEdit { }\n    }\n}\n";
+    let mut h = Harness::new(src);
+    h.src = perox_designer::expose_property(&h.src, "Main", &[0, 0], "text").unwrap();
+    assert!(h.src.contains("line_edit1 := LineEdit { }"), "{}", h.src);
+    assert!(
+        h.src
+            .contains("in-out property <string> line_edit1_text <=> line_edit1.text;"),
+        "{}",
+        h.src
+    );
+    h.frame(vec![]);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
+    );
+    // Colours are brushes; booleans and lengths work too.
+    for (prop, ty) in [("enabled", "bool"), ("width", "length")] {
+        h.src = perox_designer::expose_property(&h.src, "Main", &[0, 0], prop).unwrap();
+        assert!(
+            h.src.contains(&format!("<{ty}> line_edit1_{prop} <=>")),
+            "{}",
+            h.src
+        );
+    }
+    h.frame(vec![]);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
+    );
+}
+
+#[test]
+fn the_preview_follows_the_dark_switch() {
+    for style in ["fluent", "cupertino"] {
+        let mut h = Harness::new(FORM);
+        h.designer.style = Some(style.into());
+        let lum = |h: &Harness| {
+            let p = h.designer.preview.pixel(390, 290).expect("rendered");
+            p[0] as u32 + p[1] as u32 + p[2] as u32
+        };
+        h.designer.dark = Some(false);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        let light = lum(&h);
+        h.designer.dark = Some(true);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        let dark = lum(&h);
+        assert!(
+            light > 500 && dark < 200,
+            "{style}: light {light}, dark {dark}"
+        );
+    }
+}
