@@ -274,6 +274,9 @@ impl PeroxApp {
                 item(ui, actions, "project.new_dialog");
                 item(ui, actions, "project.open_dialog");
                 ui.separator();
+                item(ui, actions, "form.new_window_dialog");
+                item(ui, actions, "form.new_dialog_dialog");
+                ui.separator();
                 item(ui, actions, "file.save");
                 item(ui, actions, "file.save_all");
                 item(ui, actions, "file.close");
@@ -606,6 +609,32 @@ impl eframe::App for PeroxApp {
                 .save_file()
         {
             self.run_user("project.new", json!({ "path": dir }));
+        }
+        if let Some(kind) = self.state.new_form_requested.take() {
+            let (title, file) = match kind {
+                crate::templates::FormKind::Window => (
+                    "New window: its file name becomes the type name",
+                    "tool_window.slint",
+                ),
+                crate::templates::FormKind::Dialog => (
+                    "New dialog: its file name becomes the type name",
+                    "settings_dialog.slint",
+                ),
+            };
+            let mut dialog = rfd::FileDialog::new()
+                .set_title(title)
+                .set_file_name(file)
+                .add_filter("Slint", &["slint"]);
+            if let Some(p) = &self.state.project {
+                dialog = dialog.set_directory(p.root.join("ui"));
+            }
+            if let Some(path) = dialog.save_file() {
+                let kind = match kind {
+                    crate::templates::FormKind::Window => "window",
+                    crate::templates::FormKind::Dialog => "dialog",
+                };
+                self.run_user("form.new", json!({ "path": path, "kind": kind }));
+            }
         }
         if std::mem::take(&mut self.state.open_dialog_requested)
             && let Some(dir) = rfd::FileDialog::new()

@@ -57,6 +57,8 @@ pub struct AppState {
     pub layout_requests: Vec<LayoutRequest>,
     pub open_dialog_requested: bool,
     pub new_dialog_requested: bool,
+    /// File > New Window… / New Dialog…: ask where to save it.
+    pub new_form_requested: Option<crate::templates::FormKind>,
     pub ctx: egui::Context,
 }
 
@@ -73,6 +75,7 @@ impl AppState {
             layout_requests: Vec::new(),
             open_dialog_requested: false,
             new_dialog_requested: false,
+            new_form_requested: None,
             ctx,
             settings,
             mcp,

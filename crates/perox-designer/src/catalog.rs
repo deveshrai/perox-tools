@@ -251,6 +251,21 @@ pub const KINDS: &[Kind] = &[
         events: &[e("edited", &[("text", "string")])],
     },
     Kind {
+        name: "StandardButton",
+        icon: Icon::RectangleHorizontal,
+        group: Group::Widget,
+        std: true,
+        props: &[p(
+            "kind",
+            Choice(&[
+                "ok", "cancel", "apply", "close", "reset", "help", "yes", "no", "abort", "retry",
+                "ignore",
+            ]),
+            "Label, icon and role in a Dialog",
+        )],
+        events: &[e("clicked", &[])],
+    },
+    Kind {
         name: "CheckBox",
         icon: Icon::SquareCheck,
         group: Group::Widget,
@@ -501,6 +516,7 @@ pub fn defaults(kind: &str) -> Vec<(String, String)> {
     match kind {
         "Text" => vec![s("text", "Label")],
         "Button" => vec![s("text", "Button")],
+        "StandardButton" => vec![n("kind", "ok")],
         "CheckBox" => vec![s("text", "Check box")],
         "Switch" => vec![s("text", "Switch")],
         "GroupBox" => vec![s("title", "Group")],
@@ -563,6 +579,7 @@ pub fn wants_id(kind: &str) -> bool {
             | "Text"
             | "ScrollView"
             | "Spinner"
+            | "StandardButton"
     )
 }
 

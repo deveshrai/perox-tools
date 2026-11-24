@@ -562,6 +562,36 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 Ok(json!({ "created": dir, "form": form }))
             },
         ),
+        (
+            CommandSpec::new("form.new", "New Window or Dialog", Access::Edit)
+                .description("Adds a window or dialog to the project: writes a new .slint file (the type name comes from the file name: settings_dialog.slint → SettingsDialog), exports it from the main .slint file so Rust can use it, and opens it in the designer. Dialogs get OK and Cancel and an `exec` method in Rust.")
+                .params(path_schema(json!({ "kind": { "type": "string", "enum": ["window", "dialog"], "description": "Default: dialog" } }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                if path.extension().is_none_or(|e| e != "slint") {
+                    return Err(err("The file must end in .slint."));
+                }
+                let kind = match inv.args["kind"].as_str() {
+                    Some("window") => crate::templates::FormKind::Window,
+                    _ => crate::templates::FormKind::Dialog,
+                };
+                let name = crate::templates::add_form(&path, kind).map_err(err)?;
+                if let Some(p) = &s.project {
+                    s.tree = Some(p.file_tree(20_000));
+                    s.files = p.files(50_000);
+                }
+                open_file(s, &path, None, None)?;
+                Ok(json!({ "created": rel(s, &path), "component": name }))
+            },
+        ),
+        (CommandSpec::new("form.new_window_dialog", "New Window…", Access::Edit).ui_only(), |s, _| {
+            s.new_form_requested = Some(crate::templates::FormKind::Window);
+            Ok(Value::Null)
+        }),
+        (CommandSpec::new("form.new_dialog_dialog", "New Dialog…", Access::Edit).ui_only(), |s, _| {
+            s.new_form_requested = Some(crate::templates::FormKind::Dialog);
+            Ok(Value::Null)
+        }),
         (CommandSpec::new("project.new_dialog", "New GUI App…", Access::Edit).ui_only(), |s, _| {
             s.new_dialog_requested = true;
             Ok(Value::Null)

@@ -2167,11 +2167,17 @@ fn window_chrome(ui: &egui::Ui, window: Rect, title: &str, is_window: bool, sele
                 v.widgets.inactive.bg_fill,
             );
         }
-        painter.text(
-            bar.center(),
-            egui::Align2::CENTER_CENTER,
-            title,
+        // Centred, but never over the three window buttons.
+        let galley = painter.layout_no_wrap(
+            title.to_owned(),
             egui::TextStyle::Body.resolve(ui.style()),
+            v.text_color(),
+        );
+        let min_x = bar.left() + 64.0;
+        let x = (bar.center().x - galley.size().x / 2.0).max(min_x);
+        painter.with_clip_rect(bar).galley(
+            Pos2::new(x, bar.center().y - galley.size().y / 2.0),
+            galley,
             v.text_color(),
         );
     }

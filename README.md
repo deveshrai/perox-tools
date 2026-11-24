@@ -39,6 +39,11 @@ fill in. rust-analyzer completes the generated `get_*`/`set_*` accessors like an
 
 ![Go to handler adds the Rust method](docs/screenshots/go-to-handler.png)
 
+**Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
+Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
+For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`
+shows the OS's own alert.
+
 **What runs.** Real native windows. Left: [examples/word-counter](examples/word-counter).
 Right: a new GUI app with a widget added in the designer.
 
