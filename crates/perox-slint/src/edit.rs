@@ -613,6 +613,31 @@ pub fn ensure_import(src: &str, name: &str, from: &str) -> Vec<TextEdit> {
     }]
 }
 
+/// Imports a file for its side effect, `import "fonts/Inter.ttf";` (fonts), after the
+/// other imports. Does nothing if it's imported already.
+pub fn ensure_file_import(src: &str, file: &str) -> Vec<TextEdit> {
+    let doc = parse(src);
+    if doc.imports.iter().any(|i| i.from == file) {
+        return Vec::new();
+    }
+    let line = format!("import {};\n", crate::syntax::quote(file));
+    let at = doc
+        .imports
+        .iter()
+        .map(|i| i.span.end)
+        .max()
+        .map_or(0, |end| (line_end(src, end) + 1).min(src.len()));
+    let text = if at == src.len() && !src.is_empty() && !src.ends_with('\n') {
+        format!("\n{line}")
+    } else {
+        line
+    };
+    vec![TextEdit {
+        range: at..at,
+        text,
+    }]
+}
+
 /// Declares `callback name(params);` on a component, after its other callbacks.
 /// Does nothing if it exists.
 pub fn add_callback(
@@ -827,6 +852,26 @@ mod tests {
             out.contains("        Menu { title: \"File\"; }\n        Menu { }\n"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn font_files_are_imported_once() {
+        let out = run(Ok(ensure_file_import(SRC, "fonts/Inter.ttf")));
+        assert!(
+            out.starts_with(
+                "import { Button } from \"std-widgets.slint\";\nimport \"fonts/Inter.ttf\";\n"
+            ),
+            "{out}"
+        );
+        let d = parse(&out);
+        assert!(
+            d.imports
+                .iter()
+                .any(|i| i.from == "fonts/Inter.ttf" && i.names.is_empty()),
+            "{:?}",
+            d.imports
+        );
+        assert!(ensure_file_import(&out, "fonts/Inter.ttf").is_empty());
     }
 
     #[test]

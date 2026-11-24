@@ -12,15 +12,21 @@ struct Harness {
     designer: Designer,
     src: String,
     opened: Opened,
+    path: std::path::PathBuf,
 }
 
 impl Harness {
     fn new(src: &str) -> Self {
+        Self::at(src, std::path::Path::new("main.slint"))
+    }
+
+    fn at(src: &str, path: &std::path::Path) -> Self {
         let mut h = Self {
             ctx: egui::Context::default(),
             designer: Designer::new(),
             src: src.to_owned(),
             opened: Vec::new(),
+            path: path.to_owned(),
         };
         h.frame(vec![]);
         h.frame(vec![]);
@@ -34,9 +40,9 @@ impl Harness {
             ..Default::default()
         };
         let mut actions = Vec::new();
-        let (designer, src) = (&mut self.designer, &self.src);
+        let (designer, src, path) = (&mut self.designer, &self.src, &self.path);
         let mut out = self.ctx.run_ui(input, |ui| {
-            actions = designer.show(ui, src, std::path::Path::new("main.slint"));
+            actions = designer.show(ui, src, path);
         });
         out.textures_delta.clear();
         for a in actions {
@@ -630,4 +636,48 @@ fn menus_preview_and_take_no_canvas_space() {
         h.rect(&[1]),
         window
     );
+}
+
+/// A 2×2 red PNG.
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x02, 0x00, 0x00, 0x00, 0xfd, 0xd4, 0x9a,
+    0x73, 0x00, 0x00, 0x00, 0x12, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+    0x44, 0x0c, 0x20, 0x02, 0x00, 0x2a, 0xf2, 0x05, 0xfb, 0x86, 0xbc, 0x11, 0x5b, 0x00, 0x00, 0x00,
+    0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+#[test]
+fn project_images_drag_onto_the_form_as_image_elements() {
+    let dir = std::env::temp_dir().join(format!("perox-images-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("images")).unwrap();
+    std::fs::write(dir.join("images/logo.png"), PNG).unwrap();
+    let mut h = Harness::at(FORM, &dir.join("main.slint"));
+    let row = h
+        .designer
+        .layout
+        .images
+        .iter()
+        .find(|(rel, _)| rel == "images/logo.png")
+        .expect("the image is in the palette")
+        .1;
+    let to = h.rect(&[0, 1]).center();
+    h.drag(row.center(), to);
+    assert!(
+        h.src
+            .contains("Image { source: @image-url(\"images/logo.png\"); }"),
+        "{}",
+        h.src
+    );
+    h.frame(vec![]);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
+    );
+    // A later plain Image from the palette doesn't inherit the source.
+    let from = h.palette("Image").center();
+    h.drag(from, to);
+    assert_eq!(h.src.matches("@image-url").count(), 1, "{}", h.src);
 }

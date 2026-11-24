@@ -13,6 +13,7 @@ pub mod drop;
 pub mod free;
 pub mod keys;
 pub mod preview;
+pub mod resources;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -97,6 +98,14 @@ pub struct Designer {
     palette_filter: String,
     /// The inspector key of a shortcut field waiting for a key press.
     recording: Option<String>,
+    /// The `.slint` file being designed (images and fonts are relative to its folder).
+    file: PathBuf,
+    /// Images in the form's folder, and when they were listed.
+    images: Option<(std::time::Instant, Vec<String>)>,
+    /// Extra properties for the element a palette drag will add (an image's `source`).
+    drag_extra: Vec<(String, String)>,
+    /// A font file to import along with the property edit being applied.
+    pending_import: Option<String>,
     /// The last edit that couldn't be made.
     pub error: Option<String>,
     /// Where things were drawn last frame (for tests and agents).
@@ -111,6 +120,8 @@ pub struct DrawnLayout {
     pub palette: Vec<(&'static str, Rect)>,
     /// Non-visual elements in the component tray.
     pub tray: Vec<(Vec<usize>, Rect)>,
+    /// The project's images in the palette (paths relative to the form).
+    pub images: Vec<(String, Rect)>,
     /// The window frame, title bar included.
     pub window: Option<Rect>,
 }
@@ -177,6 +188,13 @@ impl Designer {
     /// of the `.slint` file at `path` (used to resolve its imports).
     pub fn show(&mut self, ui: &mut egui::Ui, source: &str, path: &Path) -> Vec<Action> {
         self.sync(source);
+        if self.file != path {
+            self.file = path.to_owned();
+            self.images = None;
+        }
+        if DragAndDrop::payload::<Drag>(ui.ctx()).is_none() {
+            self.drag_extra.clear();
+        }
         let mut actions = Vec::new();
         let base = ui.scope_id().with("designer");
 
@@ -316,7 +334,67 @@ impl Designer {
                         );
                     }
                 }
+                let images = self.project_images();
+                self.layout.images.clear();
+                if !images.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Images").small().weak())
+                        .on_hover_text("Images in this form's folder. Drag one onto the form.");
+                    for rel in images {
+                        let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
+                        if !filter.is_empty() && !name.to_lowercase().contains(&filter) {
+                            continue;
+                        }
+                        let r = palette_row(ui, Icon::FileImage, &name);
+                        self.layout.images.push((rel.clone(), r.rect));
+                        if r.drag_started() {
+                            DragAndDrop::set_payload(ui.ctx(), Drag::New("Image"));
+                            self.drag_extra = vec![("source".into(), resources::image_url(&rel))];
+                        }
+                        if r.double_clicked() {
+                            self.drag_extra = vec![("source".into(), resources::image_url(&rel))];
+                            self.insert_at_selection(source, "Image", actions);
+                        }
+                        r.on_hover_ui(|ui| {
+                            ui.label(&rel);
+                            let full = self.form_dir().join(&rel);
+                            ui.add(
+                                egui::Image::new(format!("file://{}", full.display()))
+                                    .max_size(vec2(160.0, 120.0)),
+                            );
+                        });
+                    }
+                }
             });
+    }
+
+    /// The folder of the `.slint` file being designed.
+    fn form_dir(&self) -> PathBuf {
+        self.file
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    }
+
+    /// Images in the form's folder, listed again every few seconds.
+    fn project_images(&mut self) -> Vec<String> {
+        let fresh = self
+            .images
+            .as_ref()
+            .is_some_and(|(t, _)| t.elapsed() < std::time::Duration::from_secs(3));
+        if !fresh {
+            let dir = self.form_dir();
+            let list = if dir.as_os_str().is_empty() {
+                Vec::new()
+            } else {
+                resources::images(&dir)
+            };
+            self.images = Some((std::time::Instant::now(), list));
+        }
+        self.images
+            .as_ref()
+            .map(|(_, l)| l.clone())
+            .unwrap_or_default()
     }
 
     /// Double-click in the palette: into the selected container, else after the selected
@@ -393,6 +471,9 @@ impl Designer {
         };
         let mut props = catalog::defaults(kind);
         props.extend_from_slice(extra);
+        if kind == "Image" {
+            props.extend(self.drag_extra.iter().cloned());
+        }
         let (kind, id) = match catalog::template(kind) {
             Some((real, name)) => (
                 real,
@@ -871,6 +952,31 @@ impl Designer {
     // ---- canvas ----
 
     /// The source with live (being-dragged) values applied, for the preview.
+    /// Asks for an image or font file and brings it into the form's folder (`sub`:
+    /// `images` or `fonts`). Returns its path relative to the form.
+    fn choose_resource(&mut self, sub: &str) -> Option<String> {
+        let dir = self.form_dir();
+        let exts = if sub == "fonts" {
+            resources::FONT_EXTENSIONS
+        } else {
+            resources::IMAGE_EXTENSIONS
+        };
+        let file = rfd::FileDialog::new()
+            .add_filter(if sub == "fonts" { "Fonts" } else { "Images" }, exts)
+            .set_directory(&dir)
+            .pick_file()?;
+        match resources::import_file(&file, &dir, sub) {
+            Ok(rel) => {
+                self.images = None;
+                Some(rel)
+            }
+            Err(e) => {
+                self.error = Some(format!("Couldn't copy {}: {e}", file.display()));
+                None
+            }
+        }
+    }
+
     /// The component tray: elements not drawn on the form (timers, the menu bar), as
     /// chips to select. Shown when there are any, or while one is being dragged in.
     fn tray(&mut self, ui: &mut egui::Ui, base: Id) {
@@ -1883,10 +1989,27 @@ impl Designer {
                 }
                 self.expose_toggle(ui, comp, el, path, spec, source, actions);
                 if let Some(v) = self.value_editor(ui, path, spec, value.as_ref()) {
-                    self.apply(
-                        actions,
-                        edit::set_property(source, comp, path, &spec.name, &v),
-                    );
+                    match self.pending_import.take() {
+                        // A new font: the property and its `import` in one undo step.
+                        Some(file) => {
+                            let mut work = source.to_owned();
+                            let result = free::step(
+                                &mut work,
+                                edit::set_property(source, comp, path, &spec.name, &v),
+                            )
+                            .map(|()| {
+                                let e = edit::ensure_file_import(&work, &file);
+                                edit::apply(&work, &e)
+                            });
+                            self.apply_text(actions, source, result);
+                        }
+                        None => {
+                            self.apply(
+                                actions,
+                                edit::set_property(source, comp, path, &spec.name, &v),
+                            );
+                        }
+                    }
                 }
                 if value.is_some()
                     && small_icon_button(ui, Icon::X, "Reset to the default").clicked()
@@ -1963,6 +2086,9 @@ impl Designer {
         let kind = match (spec.kind, value) {
             (PropKind::Keys, Some(Value::Expr(e))) if keys::inner(e).is_some() => PropKind::Keys,
             (PropKind::Keys, None) => PropKind::Keys,
+            (PropKind::Image, Some(Value::Expr(e))) if resources::image_path(e).is_some() => {
+                PropKind::Image
+            }
             (_, Some(Value::Expr(_))) => PropKind::Source,
             (k, _) => k,
         };
@@ -2021,6 +2147,77 @@ impl Designer {
                     self.recording = Some(key.clone());
                 }
                 None
+            }
+            PropKind::Image => {
+                let current = match value {
+                    Some(Value::Expr(e)) => resources::image_path(e),
+                    _ => None,
+                };
+                let shown = current
+                    .as_deref()
+                    .map(|c| c.rsplit('/').next().unwrap_or(c).to_owned())
+                    .unwrap_or_else(|| "none".into());
+                let mut picked = None;
+                egui::ComboBox::from_id_salt(&key)
+                    .selected_text(shown)
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for rel in self.project_images() {
+                            if ui
+                                .selectable_label(current.as_deref() == Some(rel.as_str()), &rel)
+                                .clicked()
+                            {
+                                picked = Some(resources::image_url(&rel));
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Choose a file…").clicked() {
+                            picked = self
+                                .choose_resource("images")
+                                .map(|rel| resources::image_url(&rel));
+                        }
+                    });
+                picked
+            }
+            PropKind::Font => {
+                let current = value.and_then(Value::as_str).map(str::to_owned);
+                let fonts = resources::imported_fonts(&self.doc, &self.form_dir());
+                let mut picked = None;
+                egui::ComboBox::from_id_salt(&key)
+                    .selected_text(current.clone().unwrap_or_else(|| "default".into()))
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for (family, file) in &fonts {
+                            if ui
+                                .selectable_label(
+                                    current.as_deref() == Some(family.as_str()),
+                                    family,
+                                )
+                                .on_hover_text(file.as_str())
+                                .clicked()
+                            {
+                                picked = Some(perox_slint::syntax::quote(family));
+                            }
+                        }
+                        if !fonts.is_empty() {
+                            ui.separator();
+                        }
+                        if ui.button("Add a font file…").clicked()
+                            && let Some(rel) = self.choose_resource("fonts")
+                        {
+                            match resources::font_family(&self.form_dir().join(&rel)) {
+                                Some(family) => {
+                                    self.pending_import = Some(rel);
+                                    picked = Some(perox_slint::syntax::quote(&family));
+                                }
+                                None => {
+                                    self.error =
+                                        Some(format!("{rel} isn't a font file Slint can read"))
+                                }
+                            }
+                        }
+                    });
+                picked
             }
             PropKind::Duration => {
                 // Shown and edited in milliseconds; written as `2s` when it's whole seconds.

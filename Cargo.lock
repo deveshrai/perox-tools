@@ -5069,9 +5069,11 @@ dependencies = [
  "i-slint-core",
  "perox-icons",
  "perox-slint",
+ "rfd",
  "slint",
  "slint-interpreter",
  "spin_on",
+ "ttf-parser",
 ]
 
 [[package]]

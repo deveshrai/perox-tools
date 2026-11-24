@@ -63,6 +63,8 @@ pub fn for_command(id: &str) -> Icon {
         "designer.open_handler" => Icon::ArrowRight,
         "designer.add_widget" => Icon::Plus,
         "designer.actions" => Icon::ListChecks,
+        "designer.resources" => Icon::FileImage,
+        "designer.add_resource" => Icon::FileImage,
         "designer.set_action" => Icon::Zap,
         "designer.use_action" => Icon::Zap,
         "designer.go_to_handler" => Icon::ArrowRight,

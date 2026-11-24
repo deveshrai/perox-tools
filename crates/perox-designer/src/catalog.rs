@@ -33,6 +33,10 @@ pub enum PropKind {
     Duration,
     /// `keys`: a shortcut, `@keys(Control + O)`; recorded from a key press.
     Keys,
+    /// `image`: `@image-url("images/x.png")`, picked from the project's images.
+    Image,
+    /// A font family name (`string`), from the fonts the file imports.
+    Font,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +114,11 @@ const GRID: &[PropSpec] = &[
 
 const FONT: &[PropSpec] = &[
     p("text", Text, ""),
+    p(
+        "font-family",
+        Font,
+        "An imported font, or the window's default",
+    ),
     p("font-size", Length, ""),
     p("font-weight", Int, "100–900 (400 normal, 700 bold)"),
     p("color", Color, ""),
@@ -218,6 +227,7 @@ pub const KINDS: &[Kind] = &[
             p("primary", Bool, "The default action's look"),
             p("checkable", Bool, "Stays down when clicked"),
             p("checked", Bool, ""),
+            p("icon", Image, "Shown before the text"),
         ],
         events: &[e("clicked", &[])],
     },
@@ -408,7 +418,7 @@ pub const KINDS: &[Kind] = &[
         group: Group::Widget,
         std: false,
         props: &[
-            p("source", Source, "@image-url(\"path.png\")"),
+            p("source", Image, "An image in the project"),
             p(
                 "image-fit",
                 Choice(&["fill", "contain", "cover", "preserve"]),
@@ -454,7 +464,7 @@ pub const KINDS: &[Kind] = &[
         props: &[
             p("title", Text, ""),
             p("enabled", Bool, "(true)"),
-            p("icon", Source, "@image-url(\"icon.png\")"),
+            p("icon", Image, ""),
         ],
         events: &[],
     },
@@ -469,7 +479,7 @@ pub const KINDS: &[Kind] = &[
             p("enabled", Bool, "(true)"),
             p("checkable", Bool, "Toggles `checked` when chosen"),
             p("checked", Bool, ""),
-            p("icon", Source, "@image-url(\"icon.png\")"),
+            p("icon", Image, ""),
         ],
         events: &[e("activated", &[])],
     },
@@ -514,7 +524,13 @@ pub const WINDOW: Kind = Kind {
         p("min-width", Length, ""),
         p("min-height", Length, ""),
         p("background", Color, ""),
-        p("icon", Source, "@image-url(\"icon.png\")"),
+        p("icon", Image, ""),
+        p(
+            "default-font-family",
+            Font,
+            "Font for all text in the window",
+        ),
+        p("default-font-size", Length, ""),
     ],
     events: &[],
 };
@@ -541,6 +557,8 @@ pub fn slint_type(spec: &PropSpec) -> Option<&'static str> {
         Items => "[string]",
         Data(ty) => ty,
         Duration => "duration",
+        Image => "image",
+        Font => "string",
         Choice(_) | Source | Keys => return None,
     })
 }

@@ -60,6 +60,12 @@ plain Slint, so it works without PeroxIDE too.
 
 ![The Actions list on a window](docs/screenshots/actions.png)
 
+**Images and fonts.** An image or icon property offers the project's images, or *Choose
+a file…*, which copies it into `ui/images/` and writes `@image-url("images/logo.png")`.
+The palette lists the project's images too: drag one onto the form. A font property's
+*Add a font file…* copies the font into `ui/fonts/`, adds `import "fonts/X.ttf";` and
+picks its family. Slint builds them into the app, so nothing needs installing.
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`

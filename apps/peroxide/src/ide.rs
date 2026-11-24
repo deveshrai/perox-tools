@@ -460,6 +460,52 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.resources", "Form Resources", Access::Read)
+                .description("Images in a .slint file's folder (paths for @image-url, relative to the file) and the fonts it imports, with their family names.")
+                .params(path_schema(json!({}))),
+            |s, inv| {
+                let (_, text) = form_text(s, inv)?;
+                let path = resolve(s, inv, "path")?;
+                let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+                let doc = perox_slint::parse(&text);
+                let fonts: Vec<_> = perox_designer::resources::imported_fonts(&doc, &dir)
+                    .into_iter()
+                    .map(|(family, file)| json!({ "family": family, "file": file }))
+                    .collect();
+                Ok(json!({ "images": perox_designer::resources::images(&dir), "fonts": fonts }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.add_resource", "Add Image or Font", Access::Edit)
+                .description("Brings an image (png, jpg, svg, gif, webp) or font (ttf, otf) file into the .slint file's folder (copied to images/ or fonts/ unless it's already inside) so the app embeds it. Images: returns the `@image-url(...)` expression to set as `source` or `icon`. Fonts: adds `import \"fonts/X.ttf\";` to the file and returns the family name for `font-family` / `default-font-family`.")
+                .params(path_schema(json!({ "file": { "type": "string", "description": "Absolute path of the image or font file" } }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let path = resolve(s, inv, "path")?;
+                let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+                let file = std::path::PathBuf::from(inv.str_arg("file")?);
+                use perox_designer::resources as r;
+                // Only real images and fonts: this reads outside the project.
+                if r::is_font(&file) {
+                    let family = r::font_family(&file).ok_or_else(|| err("Not a font file Slint can read."))?;
+                    let rel = r::import_file(&file, &dir, "fonts").map_err(|e| err(e.to_string()))?;
+                    apply_form_edits(s, id, perox_slint::edit::ensure_file_import(&text, &rel));
+                    Ok(json!({ "file": rel, "family": family }))
+                } else if r::is_image(&file) {
+                    let head = std::fs::read(&file).map_err(|e| err(e.to_string()))?;
+                    let svg = file.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+                    let ok = if svg { String::from_utf8_lossy(&head[..head.len().min(512)]).contains("<svg") || String::from_utf8_lossy(&head[..head.len().min(512)]).contains("<?xml") } else { image::guess_format(&head).is_ok() };
+                    if !ok {
+                        return Err(err("Not an image file."));
+                    }
+                    let rel = r::import_file(&file, &dir, "images").map_err(|e| err(e.to_string()))?;
+                    Ok(json!({ "file": rel, "expression": r::image_url(&rel) }))
+                } else {
+                    Err(err("Give an image (png, jpg, svg, gif, webp, bmp) or a font (ttf, otf, ttc)."))
+                }
+            },
+        ),
+        (
             CommandSpec::new("designer.actions", "Form Actions", Access::Read)
                 .description("A component's actions: callbacks without parameters, which menu items and buttons share. For each: name, its `<name>_enabled` property if it can be disabled, and the elements that run it (paths).")
                 .params(path_schema(json!({ "component": { "type": "string" } }))),

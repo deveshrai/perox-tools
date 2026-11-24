@@ -17,6 +17,8 @@ perox-slint.workspace = true
 slint = { workspace = true, features = ["renderer-software"] }
 slint-interpreter = { workspace = true, features = ["internal-highlight"] }
 spin_on = "0.1"
+rfd.workspace = true
+ttf-parser.workspace = true
 
 [lints]
 workspace = true
