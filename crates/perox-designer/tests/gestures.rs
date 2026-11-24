@@ -29,7 +29,7 @@ impl Harness {
 
     fn frame(&mut self, events: Vec<Event>) {
         let input = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 1200.0))),
             events,
             ..Default::default()
         };
@@ -542,7 +542,7 @@ fn non_visual_elements_go_to_the_root_and_show_in_the_tray() {
         "no tray without components"
     );
     let from = h.palette("Timer").center();
-    assert!(from.y < 900.0, "Timer is visible in the palette: {from:?}");
+    assert!(from.y < 1200.0, "Timer is visible in the palette: {from:?}");
     // Dropped on a button inside the layout: still goes to the root, before the layout.
     let to = h.rect(&[0, 1]).center();
     h.drag(from, to);

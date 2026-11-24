@@ -134,6 +134,32 @@ fn member_indent(src: &str, el: &Element) -> String {
 /// Inserts a member line (`name: value;`, a handler) into `el`: after its last property,
 /// handler or declaration that comes before its child elements.
 fn insert_member(src: &str, el: &Element, line: &str) -> TextEdit {
+    // Properties read best before the element's handlers.
+    let first_child = el
+        .children
+        .iter()
+        .map(|c| c.span.start)
+        .min()
+        .unwrap_or(usize::MAX);
+    let first_handler = (!line.contains("=>"))
+        .then(|| el.handlers.iter().map(|h| h.span.start).min())
+        .flatten()
+        .filter(|h| *h < first_child);
+    if let Some(h) = first_handler {
+        if single_line(src, el) {
+            return TextEdit {
+                range: h..h,
+                text: format!("{line} "),
+            };
+        }
+        if starts_line(src, h) {
+            let at = line_start(src, h);
+            return TextEdit {
+                range: at..at,
+                text: format!("{}{line}\n", indent_at(src, h)),
+            };
+        }
+    }
     if single_line(src, el) {
         // `Button { text: "OK"; }` → `Button { text: "OK"; enabled: false; }`
         let inner = src[el.open + 1..el.close].trim_end();

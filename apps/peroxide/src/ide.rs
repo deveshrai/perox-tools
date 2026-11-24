@@ -398,7 +398,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.add_widget", "Add Element", Access::Edit)
-                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea; menus: MenuBar (in a Window, goes first) Menu (title) MenuItem (title, shortcut: \"@keys(Control + O)\", event activated) MenuSeparator ContextMenuArea (its Menu goes first, then the content it covers); non-visual: Timer (interval: \"500ms\", running, event triggered; goes at the top of the root). Or any component (other std-widgets ones are imported too). Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
+                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea; ToolBar (a HorizontalBox named toolbar, for buttons that run actions: see designer.use_action); menus: MenuBar (in a Window, goes first) Menu (title) MenuItem (title, shortcut: \"@keys(Control + O)\", event activated) MenuSeparator ContextMenuArea (its Menu goes first, then the content it covers); non-visual: Timer (interval: \"500ms\", running, event triggered; goes at the top of the root). Or any component (other std-widgets ones are imported too). Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
                 .params(path_schema(json!({
                     "component": { "type": "string" },
                     "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
@@ -427,11 +427,26 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     let src = v.as_str().ok_or_else(|| err(format!("`{k}` must be a string with a .slint expression")))?;
                     props.push((k.clone(), src.to_owned()));
                 }
+                // Templates (ToolBar): a real element with its defaults and name.
+                let template = perox_designer::catalog::template(kind);
+                if template.is_some() {
+                    for (k, v) in perox_designer::catalog::defaults(kind).into_iter().rev() {
+                        if !props.iter().any(|(p, _)| *p == k) {
+                            props.insert(0, (k, v));
+                        }
+                    }
+                }
+                let kind = template.map_or(kind, |(real, _)| real);
                 // Like the designer: widgets code talks to get an id.
-                let auto = doc
-                    .component(&comp)
-                    .filter(|_| perox_designer::catalog::wants_id(kind))
-                    .map(|c| perox_designer::unique_id(c, &perox_designer::catalog::snake(kind)));
+                let auto = match template {
+                    Some((_, name)) => doc.component(&comp).map(|c| {
+                        if c.find(name).is_none() { name.to_owned() } else { perox_designer::unique_id(c, name) }
+                    }),
+                    None => doc
+                        .component(&comp)
+                        .filter(|_| perox_designer::catalog::wants_id(kind))
+                        .map(|c| perox_designer::unique_id(c, &perox_designer::catalog::snake(kind))),
+                };
                 let wid = inv.args["id"].as_str().or(auto.as_deref());
                 let mut work = text.clone();
                 perox_designer::free::step(&mut work, perox_slint::edit::add_element(&text, &comp, &parent, index, kind, wid, &props))
@@ -442,6 +457,70 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 let mut path = parent;
                 path.push(index.min(count));
                 Ok(json!({ "added": path_key(&path), "id": wid }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.actions", "Form Actions", Access::Read)
+                .description("A component's actions: callbacks without parameters, which menu items and buttons share. For each: name, its `<name>_enabled` property if it can be disabled, and the elements that run it (paths).")
+                .params(path_schema(json!({ "component": { "type": "string" } }))),
+            |s, inv| {
+                let (_, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let c = doc.component(&comp).ok_or_else(|| err(format!("No component `{comp}`.")))?;
+                let list: Vec<_> = perox_designer::actions::list(c)
+                    .into_iter()
+                    .map(|a| json!({ "name": a.name, "enabled": a.enabled, "users": a.users.iter().map(|p| path_key(p)).collect::<Vec<_>>() }))
+                    .collect();
+                Ok(json!({ "actions": list }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.set_action", "Set Form Action", Access::Edit)
+                .description("Declares an action (`callback name();`, a method of the generated <Component>Handlers trait) if it's missing, and sets whether it can be disabled: `in-out property <bool> name_enabled: true;` that every element running it binds `enabled` to, so Rust's `set_name_enabled(false)` greys out its menu items and buttons together.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "name": { "type": "string" },
+                    "can_disable": { "type": "boolean", "description": "Default: false" }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let name = inv.str_arg("name")?.replace('-', "_");
+                let on = inv.args["can_disable"].as_bool().unwrap_or(false);
+                let new = perox_designer::actions::add(&text, &comp, &name, false)
+                    .and_then(|t| perox_designer::actions::set_can_disable(&t, &comp, &name, on))
+                    .map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
+                Ok(json!({ "action": name, "enabled": on.then(|| perox_designer::actions::enabled_name(&name)) }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.use_action", "Use Form Action", Access::Edit)
+                .description("Makes an element run an action: its trigger event (clicked, activated, …) forwards to the action's callback and its `enabled` follows the action's flag. Give `widget` for an existing element, or `parent` and `kind` (MenuItem in a Menu, Button in a toolbar) to add a new one captioned after the action.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "action": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "kind": { "type": "string", "description": "With parent: MenuItem or Button" }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let action = inv.str_arg("action")?;
+                let (new, path) = if let Some(w) = inv.args["widget"].as_str() {
+                    let path = widget_path(&doc, &comp, w)?;
+                    (perox_designer::actions::use_action(&text, &comp, &path, action).map_err(|e| err(e.to_string()))?, path)
+                } else {
+                    let parent = widget_path(&doc, &comp, inv.str_arg("parent")?)?;
+                    let kind = inv.args["kind"].as_str().unwrap_or("Button");
+                    perox_designer::actions::add_user(&text, &comp, &parent, kind, action).map_err(|e| err(e.to_string()))?
+                };
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
+                Ok(json!({ "widget": path_key(&path) }))
             },
         ),
         (

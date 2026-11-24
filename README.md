@@ -50,6 +50,16 @@ screen.
 
 ![Menus, a timer in the component tray, and a recorded shortcut](docs/screenshots/menus.png)
 
+**Actions and toolbars.** A command used from a menu and a toolbar is an *action*: a
+callback on the window, plus, if it can be switched off, an `in-out property <bool>
+clear_enabled`. Select the window to list its actions and tick *can be disabled*. On a
+menu, *Add item for…* adds a menu item that runs an action; on a toolbar (**ToolBar** in
+the palette), *Add button for…* does the same with a button. In Rust,
+`ui.set_clear_enabled(false)` greys out the menu item and the button together. It's all
+plain Slint, so it works without PeroxIDE too.
+
+![The Actions list on a window](docs/screenshots/actions.png)
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`

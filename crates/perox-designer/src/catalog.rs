@@ -431,6 +431,14 @@ pub const KINDS: &[Kind] = &[
         events: &[e("clicked", &[]), e("double-clicked", &[])],
     },
     Kind {
+        name: "ToolBar",
+        icon: Icon::LayoutDashboard,
+        group: Group::Menu,
+        std: true,
+        props: BOX,
+        events: &[],
+    },
+    Kind {
         name: "MenuBar",
         icon: Icon::PanelTop,
         group: Group::Menu,
@@ -698,6 +706,11 @@ pub fn defaults(kind: &str) -> Vec<(String, String)> {
         "Menu" => vec![s("title", "Menu")],
         "MenuItem" => vec![s("title", "Item")],
         "Timer" => vec![n("interval", "1s")],
+        "ToolBar" => vec![
+            n("alignment", "start"),
+            n("padding", "4px"),
+            n("spacing", "4px"),
+        ],
         _ => Vec::new(),
     }
 }
@@ -711,6 +724,15 @@ pub fn free_default_size(kind: &str) -> Option<(f64, f64)> {
         "StandardListView" | "TextEdit" => Some((160.0, 120.0)),
         "StandardTableView" => Some((260.0, 140.0)),
         "Path" => Some((160.0, 100.0)),
+        _ => None,
+    }
+}
+
+/// Palette entries that are templates of a real element: `ToolBar` is a `HorizontalBox`
+/// with toolbar spacing, named `toolbar`.
+pub fn template(kind: &str) -> Option<(&'static str, &'static str)> {
+    match kind {
+        "ToolBar" => Some(("HorizontalBox", "toolbar")),
         _ => None,
     }
 }

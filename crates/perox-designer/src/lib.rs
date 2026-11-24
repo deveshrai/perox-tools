@@ -7,6 +7,7 @@
 //!
 //! The canvas is drawn by Slint itself ([`preview`]), so what you see is what runs.
 
+pub mod actions;
 pub mod catalog;
 pub mod drop;
 pub mod free;
@@ -390,9 +391,22 @@ impl Designer {
         } else {
             (parent, index)
         };
-        let id = catalog::wants_id(kind).then(|| unique_id(c, &catalog::snake(kind)));
         let mut props = catalog::defaults(kind);
         props.extend_from_slice(extra);
+        let (kind, id) = match catalog::template(kind) {
+            Some((real, name)) => (
+                real,
+                Some(if c.find(name).is_none() {
+                    name.to_owned()
+                } else {
+                    unique_id(c, name)
+                }),
+            ),
+            None => (
+                kind,
+                catalog::wants_id(kind).then(|| unique_id(c, &catalog::snake(kind))),
+            ),
+        };
         let count = c.at(parent).map_or(0, |p| p.children.len());
         let mut work = source.to_owned();
         let result = free::step(
@@ -1613,6 +1627,7 @@ impl Designer {
         }
 
         self.menu_buttons(ui, &el, &path, source, actions);
+        self.action_rows(ui, &c, &el, &path, source, actions);
         let known: Vec<PropSpec> = spec.map(|k| k.props.to_vec()).unwrap_or_default();
         ui.add_space(4.0);
         if !known.is_empty() {
@@ -1675,6 +1690,124 @@ impl Designer {
                 .show(ui, |ui| {
                     self.events(ui, &c, &el, &path, events, source, actions)
                 });
+        }
+    }
+
+    /// Actions (see [`actions`]): on the root, the list with "can be disabled" and a
+    /// field for a new one; on a button or menu item, which action it runs; on a menu or
+    /// a toolbar, "add an entry for this action".
+    fn action_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Component,
+        el: &Element,
+        path: &[usize],
+        source: &str,
+        out: &mut Vec<Action>,
+    ) {
+        let list = actions::list(c);
+        let comp = c.name.clone();
+        let apply = |this: &mut Self, out: &mut Vec<Action>, r: Result<String, EditError>| {
+            this.apply_text(out, source, r);
+        };
+        if path.is_empty() {
+            egui::CollapsingHeader::new("Actions")
+                .default_open(true)
+                .show(ui, |ui| {
+                    if list.is_empty() {
+                        ui.weak("Commands that menu items and buttons share.");
+                    }
+                    for a in &list {
+                        ui.horizontal(|ui| {
+                            label_cell(ui, RichText::new(&a.name).strong()).on_hover_text(
+                                format!("callback {}(); used by {} element(s)", a.name, a.users.len()),
+                            );
+                            let mut on = a.enabled.is_some();
+                            if ui
+                                .checkbox(&mut on, "can be disabled")
+                                .on_hover_text(format!(
+                                    "Adds `in-out property <bool> {}` and binds `enabled` of everything that runs it",
+                                    actions::enabled_name(&a.name)
+                                ))
+                                .changed()
+                            {
+                                apply(self, out, actions::set_can_disable(source, &comp, &a.name, on));
+                            }
+                            ui.weak(match a.users.len() {
+                                1 => "1 use".to_owned(),
+                                n => format!("{n} uses"),
+                            });
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        label_cell(ui, RichText::new("New action").weak());
+                        if let Some(name) = self.text_field(ui, "#new-action", "", false) {
+                            let name = name.trim().replace('-', "_");
+                            if !name.is_empty() {
+                                apply(self, out, actions::add(source, &comp, &name, false));
+                            }
+                        }
+                    });
+                });
+            return;
+        }
+        if let Some(event) = actions::trigger(&el.kind)
+            && !list.is_empty()
+            && matches!(el.kind.as_str(), "Button" | "MenuItem")
+        {
+            let current = el
+                .handler(event)
+                .and_then(|h| h.forwards_to())
+                .filter(|f| list.iter().any(|a| a.name == *f))
+                .map(str::to_owned);
+            ui.horizontal(|ui| {
+                label_cell(ui, RichText::new("Action"))
+                    .on_hover_text("Run one of the form's actions (and follow its enabled flag)");
+                egui::ComboBox::from_id_salt(format!("{path:?}/action"))
+                    .selected_text(current.clone().unwrap_or_else(|| "none".into()))
+                    .show_ui(ui, |ui| {
+                        for a in &list {
+                            if ui
+                                .selectable_label(
+                                    current.as_deref() == Some(a.name.as_str()),
+                                    &a.name,
+                                )
+                                .clicked()
+                            {
+                                apply(self, out, actions::use_action(source, &comp, path, &a.name));
+                            }
+                        }
+                    });
+            });
+        }
+        let entry = match el.kind.as_str() {
+            "Menu" => Some(("MenuItem", "Add item for")),
+            k if catalog::is_layout(k) && catalog::is_horizontal(k) => {
+                Some(("Button", "Add button for"))
+            }
+            _ => None,
+        };
+        if let Some((kind, label)) = entry
+            && !list.is_empty()
+        {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(format!("{path:?}/add-for"))
+                    .selected_text(format!("{label}…"))
+                    .show_ui(ui, |ui| {
+                        for a in &list {
+                            if ui.selectable_label(false, &a.name).clicked() {
+                                match actions::add_user(source, &comp, path, kind, &a.name) {
+                                    Ok((text, new)) => {
+                                        if self.apply_text(out, source, Ok(text)) {
+                                            self.selected = Some(new);
+                                        }
+                                    }
+                                    Err(e) => self.error = Some(e.to_string()),
+                                }
+                            }
+                        }
+                    });
+            });
         }
     }
 

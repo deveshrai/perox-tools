@@ -130,7 +130,7 @@ inheritance, tab order. Each part uses what Slint 1.19 already has, so the resul
 |---|---|---|
 | Non-visual components: a tray under the canvas | `Timer` | ✅ |
 | Menus: menu bar editor, context menus, recorded shortcuts, Go to handler | `MenuBar`, `Menu`, `MenuItem`, `ContextMenuArea` | ✅ |
-| Actions and toolbars: one handler and one enabled flag shared by menu items and toolbar buttons | root callbacks and properties | |
+| Actions and toolbars: one handler and one enabled flag shared by menu items and toolbar buttons | root callbacks and properties | ✅ |
 | Resources: images and fonts copied into the project, image picker | `@image-url`, `import "font.ttf"` | |
 | Themes: app style and colour scheme per project, previewed | Slint styles, `Palette` | |
 | i18n: translatable text, string extraction, translation editor, preview in a language | `@tr()`, gettext `.po`, bundled translations | |
