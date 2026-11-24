@@ -1,6 +1,6 @@
 # 0008. Designer previews run out of process
 
-- **Status:** Accepted
+- **Status:** Accepted (amended by [0011](0011-slint-for-user-apps.md))
 - **Date:** 2026-11-17
 
 ## Context

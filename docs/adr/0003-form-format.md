@@ -1,6 +1,6 @@
 # 0003. `.pxui` declarative forms + Rust code-behind
 
-- **Status:** Accepted
+- **Status:** Superseded by [0011](0011-slint-for-user-apps.md)
 - **Date:** 2026-11-17
 
 ## Context

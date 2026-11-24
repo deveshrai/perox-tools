@@ -1,6 +1,6 @@
 # 0001. egui for the IDE and for user apps
 
-- **Status:** Accepted
+- **Status:** Accepted for the IDE; for user apps superseded by [0011](0011-slint-for-user-apps.md)
 - **Date:** 2026-11-17
 
 ## Context

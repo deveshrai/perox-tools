@@ -70,7 +70,25 @@ hand-edit the `.pxui`, and run it.
 | File → New GUI App (template with form, code-behind, `build.rs`) | ✅ |
 | `.pxui` formatter, multi-select, copy/paste, align/distribute, inspector shows defaults, live preview window | follow-ups |
 
-### Phase 3: pro tooling ← *next*
+### Phase 2b: forms on Slint ← *now* ([ADR 0011](adr/0011-slint-for-user-apps.md))
+User apps move to Slint; `.slint` replaces `.pxui`. The designer keeps its gestures
+(palette, move, resize, free placement, layouts, inspector, Go to handler) but renders the
+real Slint UI.
+
+| Part | State |
+|---|---|
+| `perox-slint`: `.slint` element tree with spans, text-preserving edits | |
+| Handlers codegen (`MainWindowHandlers`, `connect`) and `build.rs` helper | |
+| `perox-ui` runtime: message boxes (native), dialogs with `exec` | |
+| Designer canvas rendered by `slint-interpreter`, hit-testing, selection | |
+| Designer gestures ported: drop, move, resize, free placement, layouts | |
+| Inspector, events, Go to handler on Slint callbacks | |
+| New GUI App template (with About dialog / `AboutSlint`), word-counter example | |
+| MCP `designer.*` commands, docs, screenshots | |
+
+**Done when:** everything Phase 2 could do works with `.slint`, and a new app looks native.
+
+### Phase 3: pro tooling
 Debugger (lldb-dap on macOS/Linux; on Windows, lldb-dap or cppvsdbg, decided by ADR), test
 explorer, full git, clippy and rustfmt integration, all major features exposed over MCP,
 including designer operations and form screenshots.

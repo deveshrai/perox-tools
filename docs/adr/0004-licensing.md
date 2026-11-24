@@ -1,6 +1,6 @@
 # 0004. GPL-3.0 IDE, MIT/Apache runtime, CLA
 
-- **Status:** Accepted (**get legal review before selling anything**)
+- **Status:** Accepted (**get legal review before selling anything**) (amended by [0011](0011-slint-for-user-apps.md))
 - **Date:** 2026-11-17
 
 ## Context
