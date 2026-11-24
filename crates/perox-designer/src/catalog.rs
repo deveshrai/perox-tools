@@ -29,6 +29,10 @@ pub enum PropKind {
     /// Data of a known Slint type (`[[StandardListViewItem]]`), edited as an expression;
     /// the type lets it be used from code.
     Data(&'static str),
+    /// `duration` (`500ms`, `2s`), edited in milliseconds.
+    Duration,
+    /// `keys`: a shortcut, `@keys(Control + O)`; recorded from a key press.
+    Keys,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +67,10 @@ pub enum Group {
     Layout,
     Container,
     Widget,
+    /// Menu bar, menus, items, context menus.
+    Menu,
+    /// Not drawn on the form (Timer): shown in the component tray under it.
+    NonVisual,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -422,6 +430,68 @@ pub const KINDS: &[Kind] = &[
         )],
         events: &[e("clicked", &[]), e("double-clicked", &[])],
     },
+    Kind {
+        name: "MenuBar",
+        icon: Icon::PanelTop,
+        group: Group::Menu,
+        std: false,
+        props: &[],
+        events: &[],
+    },
+    Kind {
+        name: "Menu",
+        icon: Icon::SquareMenu,
+        group: Group::Menu,
+        std: false,
+        props: &[
+            p("title", Text, ""),
+            p("enabled", Bool, "(true)"),
+            p("icon", Source, "@image-url(\"icon.png\")"),
+        ],
+        events: &[],
+    },
+    Kind {
+        name: "MenuItem",
+        icon: Icon::Menu,
+        group: Group::Menu,
+        std: false,
+        props: &[
+            p("title", Text, ""),
+            p("shortcut", Keys, "Menu bar items only"),
+            p("enabled", Bool, "(true)"),
+            p("checkable", Bool, "Toggles `checked` when chosen"),
+            p("checked", Bool, ""),
+            p("icon", Source, "@image-url(\"icon.png\")"),
+        ],
+        events: &[e("activated", &[])],
+    },
+    Kind {
+        name: "MenuSeparator",
+        icon: Icon::SeparatorHorizontal,
+        group: Group::Menu,
+        std: false,
+        props: &[],
+        events: &[],
+    },
+    Kind {
+        name: "ContextMenuArea",
+        icon: Icon::MousePointerClick,
+        group: Group::Menu,
+        std: false,
+        props: &[p("enabled", Bool, "(true)")],
+        events: &[],
+    },
+    Kind {
+        name: "Timer",
+        icon: Icon::Timer,
+        group: Group::NonVisual,
+        std: false,
+        props: &[
+            p("interval", Duration, "Time between triggers"),
+            p("running", Bool, "(true)"),
+        ],
+        events: &[e("triggered", &[])],
+    },
 ];
 
 pub const WINDOW: Kind = Kind {
@@ -462,7 +532,8 @@ pub fn slint_type(spec: &PropSpec) -> Option<&'static str> {
         Color => "brush",
         Items => "[string]",
         Data(ty) => ty,
-        Choice(_) | Source => return None,
+        Duration => "duration",
+        Choice(_) | Source | Keys => return None,
     })
 }
 
@@ -541,13 +612,39 @@ pub fn takes_one_child(kind: &str) -> bool {
 
 /// Kinds that accept children; `TabWidget` takes only `Tab`s, and `Tab` goes nowhere else.
 pub fn accepts(parent: &str, child: &str) -> bool {
-    match parent {
-        "TabWidget" => child == "Tab",
-        _ if child == "Tab" => false,
-        "Window" | "Dialog" | "PopupWindow" | "Rectangle" | "Tab" | "TouchArea" | "GroupBox"
-        | "ScrollView" | "Flickable" => true,
+    match (parent, child) {
+        ("MenuBar", _) => child == "Menu",
+        ("Menu", _) => matches!(child, "Menu" | "MenuItem" | "MenuSeparator"),
+        (_, "MenuBar") => parent == "Window",
+        // A context menu's own menu goes in its area; elsewhere a Menu means nothing.
+        ("ContextMenuArea", "Menu") => true,
+        (_, "Menu" | "MenuItem" | "MenuSeparator") => false,
+        ("TabWidget", _) => child == "Tab",
+        (_, "Tab") => false,
+        (
+            "Window" | "Dialog" | "PopupWindow" | "Rectangle" | "Tab" | "TouchArea" | "GroupBox"
+            | "ScrollView" | "Flickable" | "ContextMenuArea",
+            _,
+        ) => true,
         _ => is_layout(parent),
     }
+}
+
+/// Elements that aren't drawn on the form, shown in the component tray instead: they
+/// live at the top of the root, out of any layout.
+pub fn is_non_visual(kind: &str) -> bool {
+    matches!(kind, "Timer" | "MenuBar")
+}
+
+/// Menus and their items: no place on the canvas of their own (the menu bar is drawn
+/// by Slint above the content).
+pub fn is_menu_part(kind: &str) -> bool {
+    matches!(kind, "MenuBar" | "Menu" | "MenuItem" | "MenuSeparator")
+}
+
+/// Has no size or position of its own (no geometry properties in the inspector).
+pub fn has_geometry(kind: &str) -> bool {
+    !is_non_visual(kind) && !is_menu_part(kind)
 }
 
 /// Is a container that places children by `x`/`y`.
@@ -598,6 +695,9 @@ pub fn defaults(kind: &str) -> Vec<(String, String)> {
         "Slider" => vec![n("value", "50")],
         "ProgressIndicator" => vec![n("progress", "0.5")],
         "Rectangle" => vec![n("border-width", "1px"), n("border-color", "#80808080")],
+        "Menu" => vec![s("title", "Menu")],
+        "MenuItem" => vec![s("title", "Item")],
+        "Timer" => vec![n("interval", "1s")],
         _ => Vec::new(),
     }
 }
@@ -651,6 +751,10 @@ pub fn wants_id(kind: &str) -> bool {
             | "ScrollView"
             | "Spinner"
             | "StandardButton"
+            | "MenuBar"
+            | "Menu"
+            | "MenuSeparator"
+            | "ContextMenuArea"
     )
 }
 
@@ -674,5 +778,12 @@ mod tests {
         assert!(!is_free("VerticalBox") && !is_free("Button"));
         assert_eq!(kebab("StandardListView"), "standard-list-view");
         assert_eq!(snake("LineEdit"), "line_edit");
+        assert!(accepts("Window", "MenuBar") && !accepts("Dialog", "MenuBar"));
+        assert!(!accepts("VerticalBox", "MenuBar") && !accepts("VerticalBox", "MenuItem"));
+        assert!(accepts("MenuBar", "Menu") && !accepts("MenuBar", "MenuItem"));
+        assert!(accepts("Menu", "MenuItem") && accepts("Menu", "Menu"));
+        assert!(accepts("ContextMenuArea", "Menu") && accepts("ContextMenuArea", "VerticalBox"));
+        assert!(!accepts("MenuItem", "Text"));
+        assert!(is_non_visual("Timer") && !has_geometry("MenuItem") && has_geometry("Button"));
     }
 }

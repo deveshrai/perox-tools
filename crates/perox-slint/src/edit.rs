@@ -376,12 +376,18 @@ fn insert_child_edit(src: &str, parent: &Element, index: usize, body: &str) -> T
     let indent = member_indent(src, parent);
     let text = reindent(body, "", &indent);
     if single_line(src, parent) {
-        // Open the one-line parent up: the child goes on its own line before `}`.
+        // Open the one-line parent up: what it had goes on its own line, then the child,
+        // then `}`.
         let parent_indent = indent_at(src, parent.span.start);
-        let inner_end = parent.open + 1 + src[parent.open + 1..parent.close].trim_end().len();
+        let inner = src[parent.open + 1..parent.close].trim();
+        let had = if inner.is_empty() {
+            String::new()
+        } else {
+            format!("\n{indent}{inner}")
+        };
         return TextEdit {
-            range: inner_end..parent.close,
-            text: format!("\n{text}\n{parent_indent}"),
+            range: parent.open + 1..parent.close,
+            text: format!("{had}\n{text}\n{parent_indent}"),
         };
     }
     match parent.children.get(index) {
@@ -765,6 +771,36 @@ mod tests {
         let d = parse(&out);
         assert!(d.errors.is_empty(), "{out}\n{:?}", d.errors);
         out
+    }
+
+    #[test]
+    fn a_child_opens_a_one_line_parent_onto_lines() {
+        let src = "export component W inherits Window {\n    MenuBar {\n        Menu { title: \"File\"; }\n    }\n}\n";
+        let out = apply(
+            src,
+            &add_element(
+                src,
+                "W",
+                &[0, 0],
+                usize::MAX,
+                "MenuItem",
+                Some("open"),
+                &[("title".into(), "\"Open\"".into())],
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            out,
+            "export component W inherits Window {\n    MenuBar {\n        Menu {\n            title: \"File\";\n            open := MenuItem { title: \"Open\"; }\n        }\n    }\n}\n"
+        );
+        let out = apply(
+            src,
+            &add_element(src, "W", &[0], usize::MAX, "Menu", None, &[]).unwrap(),
+        );
+        assert!(
+            out.contains("        Menu { title: \"File\"; }\n        Menu { }\n"),
+            "{out}"
+        );
     }
 
     #[test]

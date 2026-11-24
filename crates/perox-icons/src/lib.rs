@@ -36,6 +36,11 @@ macro_rules! icons {
 
 icons! {
     Table => "table",
+    Timer => "timer",
+    Menu => "menu",
+    SquareMenu => "square-menu",
+    Keyboard => "keyboard",
+    MousePointerClick => "mouse-pointer-click",
     ChartSpline => "chart-spline",
     AlignCenterHorizontal => "align-center-horizontal",
     AlignStartHorizontal => "align-start-horizontal",

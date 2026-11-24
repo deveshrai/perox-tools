@@ -10,6 +10,7 @@
 pub mod catalog;
 pub mod drop;
 pub mod free;
+pub mod keys;
 pub mod preview;
 
 use std::collections::HashMap;
@@ -93,6 +94,8 @@ pub struct Designer {
     /// Inspector text fields while they're being edited.
     buffers: HashMap<String, String>,
     palette_filter: String,
+    /// The inspector key of a shortcut field waiting for a key press.
+    recording: Option<String>,
     /// The last edit that couldn't be made.
     pub error: Option<String>,
     /// Where things were drawn last frame (for tests and agents).
@@ -105,6 +108,8 @@ pub struct DrawnLayout {
     /// Every element on the canvas that's showing, parents first.
     pub elements: Vec<(Vec<usize>, Rect)>,
     pub palette: Vec<(&'static str, Rect)>,
+    /// Non-visual elements in the component tray.
+    pub tray: Vec<(Vec<usize>, Rect)>,
     /// The window frame, title bar included.
     pub window: Option<Rect>,
 }
@@ -197,6 +202,7 @@ impl Designer {
             });
         egui::CentralPanel::default().show(ui, |ui| {
             self.toolbar(ui, source, &mut actions);
+            self.tray(ui, base);
             self.canvas(ui, source, path, &mut actions);
         });
         self.keyboard(ui, source, &mut actions);
@@ -287,6 +293,8 @@ impl Designer {
                     ("Layouts", catalog::Group::Layout),
                     ("Containers", catalog::Group::Container),
                     ("Widgets", catalog::Group::Widget),
+                    ("Menus", catalog::Group::Menu),
+                    ("Non-visual", catalog::Group::NonVisual),
                 ] {
                     ui.add_space(6.0);
                     ui.label(RichText::new(title).small().weak());
@@ -313,13 +321,20 @@ impl Designer {
     /// Double-click in the palette: into the selected container, else after the selected
     /// element, else into the root's single layout.
     fn insert_at_selection(&mut self, source: &str, kind: &str, actions: &mut Vec<Action>) {
+        if catalog::is_non_visual(kind) {
+            self.add(source, kind, &[], usize::MAX, &[], actions);
+            return;
+        }
         let Some(c) = self.current() else { return };
         let mut sel = self.selected.clone().unwrap_or_default();
+        let visual: Vec<usize> = (0..c.root.children.len())
+            .filter(|&i| catalog::has_geometry(&c.root.children[i].kind))
+            .collect();
         if sel.is_empty()
-            && c.root.children.len() == 1
-            && catalog::accepts(&c.root.children[0].kind, kind)
+            && visual.len() == 1
+            && catalog::accepts(&c.root.children[visual[0]].kind, kind)
         {
-            sel = vec![0];
+            sel = vec![visual[0]];
         }
         let (parent, index) = match c.at(&sel) {
             Some(el) if catalog::accepts(&el.kind, kind) => (sel.clone(), el.children.len()),
@@ -352,6 +367,29 @@ impl Designer {
     ) {
         let Some(c) = self.current() else { return };
         let comp = c.name.clone();
+        // Non-visual elements live at the top of the root: the menu bar first, then
+        // timers, before anything drawn.
+        let (parent, index) = if catalog::is_non_visual(kind) {
+            if kind == "MenuBar"
+                && (c.root.kind != "Window" || c.root.children.iter().any(|e| e.kind == "MenuBar"))
+            {
+                self.error = Some(if c.root.kind == "Window" {
+                    "This window already has a menu bar".into()
+                } else {
+                    "Only a Window can have a menu bar".into()
+                });
+                return;
+            }
+            let lead = c
+                .root
+                .children
+                .iter()
+                .take_while(|e| catalog::is_non_visual(&e.kind))
+                .count();
+            (&[][..], if kind == "MenuBar" { 0 } else { lead })
+        } else {
+            (parent, index)
+        };
         let id = catalog::wants_id(kind).then(|| unique_id(c, &catalog::snake(kind)));
         let mut props = catalog::defaults(kind);
         props.extend_from_slice(extra);
@@ -819,6 +857,64 @@ impl Designer {
     // ---- canvas ----
 
     /// The source with live (being-dragged) values applied, for the preview.
+    /// The component tray: elements not drawn on the form (timers, the menu bar), as
+    /// chips to select. Shown when there are any, or while one is being dragged in.
+    fn tray(&mut self, ui: &mut egui::Ui, base: Id) {
+        self.layout.tray.clear();
+        let Some(c) = self.current().cloned() else {
+            return;
+        };
+        let mut items: Vec<(Vec<usize>, String, String)> = Vec::new();
+        c.root.walk(&mut Vec::new(), &mut |el, p| {
+            if catalog::is_non_visual(&el.kind) {
+                items.push((
+                    p.to_vec(),
+                    el.kind.clone(),
+                    el.id.clone().unwrap_or_default(),
+                ));
+            }
+        });
+        let incoming = DragAndDrop::payload::<Drag>(ui.ctx()).and_then(|d| match &*d {
+            Drag::New(k) if catalog::is_non_visual(k) => Some(*k),
+            _ => None,
+        });
+        if items.is_empty() && incoming.is_none() {
+            return;
+        }
+        egui::Panel::bottom(base.with("tray"))
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.add_space(3.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Components").small().weak())
+                        .on_hover_text("Parts of the form that aren't drawn on it");
+                    for (path, kind, id) in &items {
+                        let selected = self.selected.as_deref() == Some(path.as_slice());
+                        let label = if id.is_empty() {
+                            kind.clone()
+                        } else {
+                            id.clone()
+                        };
+                        let r = ui
+                            .add(
+                                egui::Button::image_and_text(catalog::icon(kind).image(ui), label)
+                                    .selected(selected),
+                            )
+                            .on_hover_text(kind.as_str());
+                        self.layout.tray.push((path.clone(), r.rect));
+                        if r.clicked() {
+                            self.selected = Some(path.clone());
+                            self.error = None;
+                        }
+                    }
+                    if let Some(k) = incoming {
+                        ui.label(RichText::new(format!("Drop to add a {k}")).italics().weak());
+                    }
+                });
+                ui.add_space(3.0);
+            });
+    }
+
     fn shown_source(&self, source: &str) -> String {
         let comp = self.component_name();
         let mut work = source.to_owned();
@@ -927,7 +1023,7 @@ impl Designer {
                 .unwrap_or_else(|| c.clone());
             let mut rects: Vec<(Vec<usize>, Rect)> = vec![(Vec::new(), content)];
             shown_c.root.walk(&mut Vec::new(), &mut |el, p| {
-                if p.is_empty() {
+                if p.is_empty() || !catalog::has_geometry(&el.kind) {
                     return;
                 }
                 if let Some(r) = self.preview.rect_at_offset(el.kind_span.start) {
@@ -1094,6 +1190,22 @@ impl Designer {
         let Some(c) = self.current().cloned() else {
             return;
         };
+        if let Drag::New(k) = &*drag
+            && catalog::is_non_visual(k)
+        {
+            // Not placed anywhere in particular: it joins the tray.
+            ui.painter().rect_stroke(
+                content,
+                2.0,
+                Stroke::new(2.0, ui.visuals().selection.bg_fill),
+                StrokeKind::Inside,
+            );
+            if ui.input(|i| i.pointer.any_released()) {
+                DragAndDrop::clear_payload(ui.ctx());
+                self.add(source, k, &[], usize::MAX, &[], actions);
+            }
+            return;
+        }
         let (kind, moving) = match &*drag {
             Drag::New(k) => ((*k).to_owned(), None),
             Drag::Move(p) => match c.at(p) {
@@ -1500,6 +1612,7 @@ impl Designer {
             });
         }
 
+        self.menu_buttons(ui, &el, &path, source, actions);
         let known: Vec<PropSpec> = spec.map(|k| k.props.to_vec()).unwrap_or_default();
         ui.add_space(4.0);
         if !known.is_empty() {
@@ -1509,18 +1622,19 @@ impl Designer {
                     self.prop_rows(ui, &c.name, &el, &path, &known, source, actions)
                 });
         }
-        let free_child = self.in_free_parent(&path);
+        let geometry = catalog::has_geometry(&el.kind);
+        let free_child = geometry && self.in_free_parent(&path);
         let mut layout: Vec<PropSpec> = Vec::new();
         if free_child {
             layout.extend_from_slice(catalog::FREE_CHILD);
         }
-        if !path.is_empty() {
+        if !path.is_empty() && geometry {
             layout.extend_from_slice(catalog::COMMON);
         }
-        if parent_kind.as_deref().is_some_and(catalog::is_layout) {
+        if geometry && parent_kind.as_deref().is_some_and(catalog::is_layout) {
             layout.extend_from_slice(catalog::LAYOUT_CHILD);
         }
-        if parent_kind.as_deref().is_some_and(catalog::is_grid) {
+        if geometry && parent_kind.as_deref().is_some_and(catalog::is_grid) {
             layout.extend_from_slice(catalog::GRID_CHILD);
         }
         if !layout.is_empty() {
@@ -1562,6 +1676,53 @@ impl Designer {
                     self.events(ui, &c, &el, &path, events, source, actions)
                 });
         }
+    }
+
+    /// Building menus: a menu bar takes menus; a menu takes items, separators and
+    /// submenus; a context menu area takes its one menu. New entries go last and are
+    /// selected, ready to be named.
+    fn menu_buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        el: &Element,
+        path: &[usize],
+        source: &str,
+        actions: &mut Vec<Action>,
+    ) {
+        let offers: &[(&'static str, &str, Icon)] = match el.kind.as_str() {
+            "MenuBar" => &[("Menu", "Add menu", Icon::SquareMenu)],
+            "Menu" => &[
+                ("MenuItem", "Add item", Icon::Menu),
+                ("MenuSeparator", "Add separator", Icon::SeparatorHorizontal),
+                ("Menu", "Add submenu", Icon::SquareMenu),
+            ],
+            "ContextMenuArea" if !el.children.iter().any(|c| c.kind == "Menu") => {
+                &[("Menu", "Add its menu", Icon::SquareMenu)]
+            }
+            "Window" if path.is_empty() && !el.children.iter().any(|c| c.kind == "MenuBar") => {
+                &[("MenuBar", "Add menu bar", Icon::PanelTop)]
+            }
+            _ => &[],
+        };
+        if offers.is_empty() {
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (kind, label, icon) in offers {
+                if ui
+                    .add(egui::Button::image_and_text(icon.image(ui), *label))
+                    .clicked()
+                {
+                    // A context menu's menu goes first, before the content it covers.
+                    let index = if el.kind == "ContextMenuArea" {
+                        0
+                    } else {
+                        usize::MAX
+                    };
+                    self.add(source, kind, path, index, &[], actions);
+                }
+            }
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1667,10 +1828,93 @@ impl Designer {
         let key = format!("{path:?}/{}", spec.name);
         // A value the editor can't show (an expression) is edited as source.
         let kind = match (spec.kind, value) {
+            (PropKind::Keys, Some(Value::Expr(e))) if keys::inner(e).is_some() => PropKind::Keys,
+            (PropKind::Keys, None) => PropKind::Keys,
             (_, Some(Value::Expr(_))) => PropKind::Source,
             (k, _) => k,
         };
         match kind {
+            PropKind::Keys => {
+                let current = match value {
+                    Some(Value::Expr(e)) => keys::inner(e).unwrap_or_default().to_owned(),
+                    _ => String::new(),
+                };
+                if self.recording.as_deref() == Some(key.as_str()) {
+                    let press = ui.input(|i| {
+                        i.events.iter().find_map(|e| match e {
+                            egui::Event::Key {
+                                key,
+                                pressed: true,
+                                modifiers,
+                                ..
+                            } => Some((*key, *modifiers)),
+                            _ => None,
+                        })
+                    });
+                    let r = ui.add(
+                        egui::Button::new(RichText::new("Press a shortcut…").italics())
+                            .selected(true),
+                    );
+                    if let Some((k, m)) = press {
+                        self.recording = None;
+                        if k == egui::Key::Escape && m.is_none() {
+                            return None;
+                        }
+                        // Don't let the press also act in the designer (Delete, arrows).
+                        ui.input_mut(|i| {
+                            i.events.retain(|e| !matches!(e, egui::Event::Key { .. }))
+                        });
+                        return keys::from_press(k, m).map(|t| keys::expr(&t));
+                    }
+                    if r.clicked() || r.clicked_elsewhere() {
+                        self.recording = None;
+                    }
+                    return None;
+                }
+                let shown = if current.is_empty() {
+                    "none".to_owned()
+                } else {
+                    keys::display(&current, cfg!(target_os = "macos"))
+                };
+                let r = ui.button(shown).on_hover_text(format!(
+                    "Click, then press the shortcut (Esc cancels). In the file: {}",
+                    if current.is_empty() {
+                        "unset".into()
+                    } else {
+                        keys::expr(&current)
+                    }
+                ));
+                if r.clicked() {
+                    self.recording = Some(key.clone());
+                }
+                None
+            }
+            PropKind::Duration => {
+                // Shown and edited in milliseconds; written as `2s` when it's whole seconds.
+                let current = match value {
+                    Some(Value::Num(n, unit)) => Some(match unit.as_str() {
+                        "s" => n * 1000.0,
+                        _ => *n,
+                    }),
+                    _ => None,
+                };
+                let mut n = current.unwrap_or(1000.0);
+                let r = ui.add(
+                    egui::DragValue::new(&mut n)
+                        .speed(10.0)
+                        .range(0.0..=f64::MAX)
+                        .fixed_decimals(0)
+                        .suffix(" ms"),
+                );
+                (r.changed() && !r.dragged() || r.drag_stopped()).then(|| {
+                    let ms = n.round().max(0.0) as i64;
+                    if ms % 1000 == 0 && ms > 0 {
+                        format!("{}s", ms / 1000)
+                    } else {
+                        format!("{ms}ms")
+                    }
+                })
+            }
             PropKind::Text => {
                 let current = value.and_then(Value::as_str).unwrap_or_default().to_owned();
                 self.text_field(ui, &key, &current, false)
@@ -2118,6 +2362,14 @@ fn tree_node(
     };
     if let Some(id) = name {
         RichText::new(format!("{id}  ")).strong().append_to(
+            &mut text,
+            style,
+            egui::FontSelection::Default,
+            Align::Center,
+        );
+    } else if let Some(caption) = el.str_prop("title").or_else(|| el.str_prop("text")) {
+        // Unnamed menus, tabs and labels: their caption tells them apart.
+        RichText::new(format!("\u{201c}{caption}\u{201d}  ")).append_to(
             &mut text,
             style,
             egui::FontSelection::Default,

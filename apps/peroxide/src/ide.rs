@@ -398,7 +398,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.add_widget", "Add Element", Access::Edit)
-                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea, or any component (other std-widgets ones are imported too). Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
+                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea; menus: MenuBar (in a Window, goes first) Menu (title) MenuItem (title, shortcut: \"@keys(Control + O)\", event activated) MenuSeparator ContextMenuArea (its Menu goes first, then the content it covers); non-visual: Timer (interval: \"500ms\", running, event triggered; goes at the top of the root). Or any component (other std-widgets ones are imported too). Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
                 .params(path_schema(json!({
                     "component": { "type": "string" },
                     "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
@@ -411,14 +411,22 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 let (id, text) = form_text(s, inv)?;
                 let doc = perox_slint::parse(&text);
                 let comp = component_name(&doc, inv)?;
-                let parent = widget_path(&doc, &comp, inv.str_arg("parent")?)?;
-                let index = opt_usize(inv, "index").unwrap_or(usize::MAX);
+                let kind = inv.str_arg("kind")?;
+                // Like the designer: non-visual elements live at the top of the root.
+                let (parent, default_index) = if perox_designer::catalog::is_non_visual(kind) {
+                    let lead = doc.component(&comp).map_or(0, |c| {
+                        c.root.children.iter().take_while(|e| perox_designer::catalog::is_non_visual(&e.kind)).count()
+                    });
+                    (Vec::new(), if kind == "MenuBar" { 0 } else { lead })
+                } else {
+                    (widget_path(&doc, &comp, inv.str_arg("parent")?)?, usize::MAX)
+                };
+                let index = opt_usize(inv, "index").unwrap_or(default_index);
                 let mut props = Vec::new();
                 for (k, v) in inv.args["props"].as_object().into_iter().flatten() {
                     let src = v.as_str().ok_or_else(|| err(format!("`{k}` must be a string with a .slint expression")))?;
                     props.push((k.clone(), src.to_owned()));
                 }
-                let kind = inv.str_arg("kind")?;
                 // Like the designer: widgets code talks to get an id.
                 let auto = doc
                     .component(&comp)

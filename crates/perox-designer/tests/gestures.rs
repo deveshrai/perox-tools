@@ -533,3 +533,101 @@ fn copy_and_paste_elements() {
         h.designer.preview.diagnostics
     );
 }
+
+#[test]
+fn non_visual_elements_go_to_the_root_and_show_in_the_tray() {
+    let mut h = Harness::new(FORM);
+    assert!(
+        h.designer.layout.tray.is_empty(),
+        "no tray without components"
+    );
+    let from = h.palette("Timer").center();
+    assert!(from.y < 900.0, "Timer is visible in the palette: {from:?}");
+    // Dropped on a button inside the layout: still goes to the root, before the layout.
+    let to = h.rect(&[0, 1]).center();
+    h.drag(from, to);
+    let c = parse(&h.src);
+    assert_eq!(c.root.children[0].kind, "Timer", "{}", h.src);
+    assert_eq!(c.root.children[0].id.as_deref(), Some("timer1"));
+    assert!(
+        h.src.contains("timer1 := Timer { interval: 1s; }"),
+        "{}",
+        h.src
+    );
+    assert_eq!(c.root.children[1].kind, "VerticalBox");
+    // Not on the canvas, but in the tray, and clicking it there selects it.
+    h.frame(vec![]);
+    assert!(
+        h.designer
+            .layout
+            .elements
+            .iter()
+            .all(|(p, _)| p != &vec![0])
+    );
+    let chip = h
+        .designer
+        .layout
+        .tray
+        .iter()
+        .find(|(p, _)| p == &vec![0])
+        .expect("in the tray")
+        .1;
+    h.designer.selected = None;
+    h.click(chip.center());
+    assert_eq!(h.designer.selected, Some(vec![0]));
+
+    // The menu bar goes first; a second one is refused.
+    let from = h.palette("MenuBar").center();
+    let to = h.rect(&[1]).center();
+    h.drag(from, to);
+    let c = parse(&h.src);
+    assert_eq!(c.root.children[0].kind, "MenuBar", "{}", h.src);
+    assert_eq!(c.root.children[1].kind, "Timer");
+    let before = h.src.clone();
+    let from = h.palette("MenuBar").center();
+    let to = h.rect(&[2]).center();
+    h.drag(from, to);
+    assert_eq!(h.src, before);
+    assert_eq!(
+        h.designer.error.as_deref(),
+        Some("This window already has a menu bar")
+    );
+    // Layout elements are still hit where they were drawn (paths moved by two).
+    assert!(
+        h.designer
+            .layout
+            .elements
+            .iter()
+            .any(|(p, _)| p == &vec![2, 1])
+    );
+}
+
+#[test]
+fn menus_preview_and_take_no_canvas_space() {
+    let src = "import { VerticalBox, Button } from \"std-widgets.slint\";\nexport component Main inherits Window {\n    width: 300px;\n    height: 200px;\n    MenuBar {\n        Menu {\n            title: \"File\";\n            open := MenuItem { title: \"Open\"; shortcut: @keys(Control + O); }\n        }\n    }\n    VerticalBox { b := Button { text: \"B\"; } }\n}\n";
+    let h = Harness::new(src);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
+    );
+    let paths: Vec<_> = h
+        .designer
+        .layout
+        .elements
+        .iter()
+        .map(|(p, _)| p.clone())
+        .collect();
+    assert!(
+        !paths.iter().any(|p| p.first() == Some(&0) && !p.is_empty()),
+        "{paths:?}"
+    );
+    // The content sits under Slint's menu bar.
+    let window = h.rect(&[]);
+    assert!(
+        h.rect(&[1]).top() > window.top() + 10.0,
+        "{:?} {:?}",
+        h.rect(&[1]),
+        window
+    );
+}

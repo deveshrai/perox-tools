@@ -122,8 +122,23 @@ CI leg covers macOS and Linux; Windows needs another pass before a Windows relea
 
 ### Phase 4: RAD depth
 Third-party components and the preview host, non-visual components, menus, actions and
-toolbars, resources, themes, i18n (Fluent), model/view and data-aware controls (sqlx), form
-inheritance, tab order.
+toolbars, resources, themes, i18n, model/view and data-aware controls (sqlx), form
+inheritance, tab order. Each part uses what Slint 1.19 already has, so the result is plain
+`.slint` that also works without PeroxIDE.
+
+| Part | Built on | State |
+|---|---|---|
+| Non-visual components: a tray under the canvas | `Timer` | ✅ |
+| Menus: menu bar editor, context menus, recorded shortcuts, Go to handler | `MenuBar`, `Menu`, `MenuItem`, `ContextMenuArea` | ✅ |
+| Actions and toolbars: one handler and one enabled flag shared by menu items and toolbar buttons | root callbacks and properties | |
+| Resources: images and fonts copied into the project, image picker | `@image-url`, `import "font.ttf"` | |
+| Themes: app style and colour scheme per project, previewed | Slint styles, `Palette` | |
+| i18n: translatable text, string extraction, translation editor, preview in a language | `@tr()`, gettext `.po`, bundled translations | |
+| Model/view and data-aware controls: list and table models, SQLite queries into tables | `VecModel`, `sqlx` in `perox-ui` | |
+| Form inheritance: new form from an existing one; inherited elements shown, not editable | `inherits` | |
+| Tab order: show the focus order on the canvas and change it | element order | |
+| Component libraries: the project's own components and `.slint` libraries in the palette | `import`, library paths | |
+| Windows pass: CI back on, fixes | | |
 
 ### Phase 5: ship
 Toolchain Sets per OS ([ADR 0005](adr/0005-toolchain-sets.md)), installers

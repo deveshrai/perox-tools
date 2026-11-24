@@ -40,6 +40,16 @@ fill in. rust-analyzer completes the generated `get_*`/`set_*` accessors like an
 
 ![Go to handler adds the Rust method](docs/screenshots/go-to-handler.png)
 
+**Menus and non-visual components.** Drop a **MenuBar** on a window and build it from
+the inspector: *Add menu*, *Add item*, *Add separator*, *Add submenu*. Click a shortcut
+field and press the keys (⌘G is written as `@keys(Control + G)`, which is Ctrl+G on
+Windows and Linux). An item's `activated` event goes to a handler like a button's
+`clicked`. A **Timer** isn't drawn on the form, so it sits in the component tray under the
+canvas, with the menu bar. On macOS the menu becomes the real menu bar at the top of the
+screen.
+
+![Menus, a timer in the component tray, and a recorded shortcut](docs/screenshots/menus.png)
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`
