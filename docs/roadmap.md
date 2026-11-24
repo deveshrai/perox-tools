@@ -110,6 +110,12 @@ including designer operations and form screenshots.
 | clippy and rustfmt: clippy lints as you save (rust-analyzer, with quick fixes; switchable to plain check), Apply Clippy Fixes, Format Project, Check Formatting | ✅ |
 | Form screenshots over MCP: `designer.screenshot` renders any `.slint` component to PNG in any style, light or dark | ✅ |
 
+Then a test of the whole: Claude Code built a sample app, [Stock Viewer](../examples/stock-viewer),
+inside PeroxIDE over MCP ([how](../examples/stock-viewer/BUILDING.md)). It found and fixed
+four designer gaps and added `StandardTableView` and `Path` to the palette. Still open:
+removing a property or callback declaration from the designer, and offering to remove a
+handler whose callback is gone.
+
 Every part is checked three ways before it's ticked: automated tests, a live run of the IDE
 driven over MCP (with screenshots), and CI. The Windows CI job is paused for now, so the
 CI leg covers macOS and Linux; Windows needs another pass before a Windows release.

@@ -80,6 +80,13 @@ failure shows its output and a link to where it panicked. View → Test Explorer
 
 Claude Code can drive all of it, the designer included, over MCP ([docs/mcp.md](docs/mcp.md)).
 
+**Sample: [Stock Viewer](examples/stock-viewer).** A stock lookup app (quote, chart,
+history, company details, links) that Claude Code built inside PeroxIDE over MCP: the
+window in the form designer, the code written, tested and linted through the IDE.
+[How it was built](examples/stock-viewer/BUILDING.md), step by step.
+
+![Stock Viewer, a sample built in PeroxIDE](examples/stock-viewer/docs/app-aapl.png)
+
 ## Build and run
 
 ```sh

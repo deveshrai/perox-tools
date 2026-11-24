@@ -1,0 +1,166 @@
+import { Button, HorizontalBox, LineEdit, VerticalBox, ComboBox, Spinner, GroupBox, Slider, StandardTableView } from "std-widgets.slint";
+
+// The main window. Design it in PeroxIDE (Design tab) or edit it here.
+export component MainWindow inherits Window {
+    title: "Stock Viewer";
+    preferred-width: 960px;
+    preferred-height: 720px;
+
+    callback about_clicked();
+    callback lookup_clicked();
+    callback ticker_edit_accepted(text: string);
+    callback range_box_selected(current-value: string);
+    callback yahoo_link_clicked();
+    callback sec_link_clicked();
+    callback filing_link_clicked();
+    callback website_link_clicked();
+    in-out property <string> ticker_edit_text <=> ticker_edit.text;
+    in-out property <int> range_box_current_index <=> range_box.current-index;
+    in-out property <bool> busy_visible <=> busy.visible;
+    in-out property <string> status_text <=> status.text;
+    in-out property <string> company_name_text <=> company_name.text;
+    in-out property <string> price_text <=> price.text;
+    in-out property <string> change_text <=> change.text;
+    in-out property <string> day_range_text <=> day_range.text;
+    in-out property <string> year_range_text <=> year_range.text;
+    in-out property <string> volume_text <=> volume.text;
+    in-out property <[[StandardListViewItem]]> history_table_rows <=> history_table.rows;
+    in-out property <bool> yahoo_link_enabled <=> yahoo_link.enabled;
+    in-out property <bool> sec_link_enabled <=> sec_link.enabled;
+    in-out property <bool> filing_link_enabled <=> filing_link.enabled;
+    in-out property <bool> website_link_enabled <=> website_link.enabled;
+    in-out property <string> chart_line_commands: "";
+    in-out property <string> company_details_text <=> company_details.text;
+
+    VerticalBox {
+        HorizontalBox {
+            padding: 0px;
+            ticker_edit := LineEdit {
+                horizontal-stretch: 1;
+                placeholder-text: "Ticker, e.g. AAPL";
+                accepted(text) => { root.ticker_edit_accepted(text); }
+            }
+            range_box := ComboBox {
+                current-index: 2;
+                model: ["1 month", "3 months", "6 months", "1 year", "5 years"];
+                selected(current-value) => { root.range_box_selected(current-value); }
+                width: 150px;
+            }
+            lookup := Button {
+                primary: true;
+                text: "Look Up";
+                clicked => { root.lookup_clicked(); }
+            }
+            busy := Spinner {
+                indeterminate: true;
+                visible: false;
+            }
+        }
+        status := Text {
+            color: #808080;
+            text: "Type a ticker symbol and press Look Up.";
+        }
+        info_row := HorizontalBox { padding: 0px;
+            quote_box := GroupBox {
+                horizontal-stretch: 1;
+                title: "Quote";
+                quote_lines := VerticalBox {
+                    alignment: start;
+                    padding: 0px;
+                    company_name := Text {
+                        font-size: 22px;
+                        font-weight: 700;
+                        text: "—";
+                    }
+                    price := Text {
+                        font-size: 28px;
+                        font-weight: 700;
+                        text: "";
+                    }
+                    change := Text {
+                        font-weight: 600;
+                        text: "";
+                    }
+                    day_range := Text { text: ""; }
+                    year_range := Text { text: ""; }
+                    volume := Text { text: ""; }
+                }
+            }
+            company_box := GroupBox {
+                horizontal-stretch: 1;
+                title: "Company";
+                company_lines := VerticalBox {
+                    alignment: start;
+                    padding: 0px;
+                    company_details := Text {
+                        text: "";
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+        chart_box := GroupBox {
+            title: "Closing price";
+            vertical-stretch: 1;
+            chart_area := Rectangle {
+                background: #5fa8ec18;
+                border-radius: 6px;
+                min-height: 180px;
+                chart_line := Path {
+                    commands: root.chart_line_commands;
+                    height: parent.height;
+                    stroke: #3b82f6;
+                    stroke-width: 2px;
+                    viewbox-height: 100;
+                    viewbox-width: 1000;
+                    width: parent.width;
+                }
+            }
+        }
+        bottom_row := HorizontalBox {
+            padding: 0px;
+            vertical-stretch: 1;
+            history_box := GroupBox {
+                horizontal-stretch: 3;
+                title: "Daily history";
+                history_table := StandardTableView {
+                    columns: [{ title: "Date" }, { title: "Open" }, { title: "High" }, { title: "Low" }, { title: "Close" }, { title: "Volume" }];
+                    rows: [];
+                }
+            }
+            links_box := GroupBox {
+                horizontal-stretch: 1;
+                title: "Links";
+                link_list := VerticalBox {
+                    alignment: start;
+                    padding: 0px;
+                    yahoo_link := Button {
+                        enabled: false;
+                        text: "Yahoo Finance page";
+                        clicked => { root.yahoo_link_clicked(); }
+                    }
+                    sec_link := Button {
+                        enabled: false;
+                        text: "SEC filings";
+                        clicked => { root.sec_link_clicked(); }
+                    }
+                    filing_link := Button {
+                        enabled: false;
+                        text: "Latest annual report (10-K)";
+                        clicked => { root.filing_link_clicked(); }
+                    }
+                    website_link := Button {
+                        enabled: false;
+                        text: "Company website";
+                        clicked => { root.website_link_clicked(); }
+                    }
+                }
+            }
+        }
+        HorizontalBox {
+            padding: 0px;
+            alignment: end;
+            about := Button { text: "About"; clicked => { root.about_clicked(); } }
+        }
+    }
+}

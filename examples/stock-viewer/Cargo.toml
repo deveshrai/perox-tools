@@ -1,0 +1,20 @@
+[package]
+name = "stock-viewer"
+description = "Sample PeroxIDE app: look up a stock's quote, chart, history and company details. Built in PeroxIDE by an agent over MCP (see BUILDING.md)."
+version = "0.1.0"
+edition.workspace = true
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+perox-ui.workspace = true
+slint = { version = "=1.19.0" }
+serde_json.workspace = true
+ureq = "=3.5.2"
+webbrowser = "=1.2.7"
+
+[build-dependencies]
+perox-slint = { workspace = true, features = ["build"] }
+
+[lints]
+workspace = true
