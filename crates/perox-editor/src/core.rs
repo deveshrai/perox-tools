@@ -279,6 +279,22 @@ impl EditorCore {
         is_snippet: bool,
         extra: Vec<Change>,
     ) {
+        // Multi-line snippets: later lines start at this line's indentation, as in
+        // other editors.
+        let indented;
+        let text = if is_snippet && text.contains('\n') {
+            let line = self.doc.pos_of(self.sels.primary().head).line;
+            let indent: String = self
+                .doc
+                .line_text(line)
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            indented = text.replace('\n', &format!("\n{indent}"));
+            indented.as_str()
+        } else {
+            text
+        };
         let (plain, stops) = if is_snippet {
             let s = Snippet::parse(text);
             (s.text.clone(), Some(s))
@@ -1014,5 +1030,12 @@ mod tests {
         let mut e = ed("pr|\npr|\n");
         e.insert_completion(2, 0, "println!", false, vec![]);
         assert_eq!(show(&e), "println!|\nprintln!|\n");
+    }
+
+    #[test]
+    fn multi_line_snippets_follow_the_line_indent() {
+        let mut e = ed("fn f() {\n    msg|\n}\n");
+        e.insert_completion(3, 0, "if ok(${1:x}) {\n    $0\n}", true, vec![]);
+        assert_eq!(e.text(), "fn f() {\n    if ok(x) {\n        \n    }\n}\n");
     }
 }

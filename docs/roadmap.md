@@ -92,7 +92,8 @@ Since then: "use from code" toggle per property (`in-out property <=> id.prop`, 
 `designer.expose`), `.slint` highlighting in the Source view, light/dark preview, unset
 values show as "auto"/defaults; Shift/Cmd-click multi-select with align and distribute;
 copy, cut, paste and duplicate (Cmd+D) of elements, renaming clashing ids; File → New
-Window… / New Dialog… (exported from `app.slint`, dialogs with OK/Cancel and `exec`).
+Window… / New Dialog… (exported from `app.slint`, dialogs with OK/Cancel and `exec`);
+snippets `msgbox`, `msgwarn`, `msgerror`, `msgconfirm`, `msgask`, `dialog` in Rust code.
 Still to come:
 OS-level dialog modality when Slint has it.
 

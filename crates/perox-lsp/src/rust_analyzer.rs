@@ -150,7 +150,9 @@ pub fn initialize_params(root: &Path) -> Value {
                 "postfix": { "enable": true },
                 "callable": { "snippets": "fill_arguments" },
                 "privateEditable": { "enable": true },
-                "limit": 200
+                "limit": 200,
+                // PeroxIDE app snippets; each only appears where its crate is a dependency.
+                "snippets": { "custom": perox_snippets() }
             },
             "imports": { "granularity": { "group": "module" }, "prefix": "plain" },
             "semanticHighlighting": { "strings": { "enable": false } },
@@ -166,6 +168,28 @@ pub fn initialize_params(root: &Path) -> Value {
             // the compiler check on save instead.
             "diagnostics": { "experimental": { "enable": false } }
         }
+    })
+}
+
+/// Snippets for PeroxIDE apps (rust-analyzer's custom snippet format). `requires`
+/// keeps them out of projects that don't use `perox_ui`.
+fn perox_snippets() -> serde_json::Value {
+    let snip = |prefix: &str, body: &str, description: &str| {
+        serde_json::json!({
+            "prefix": prefix,
+            "body": body,
+            "description": description,
+            "requires": "perox_ui",
+            "scope": "expr"
+        })
+    };
+    serde_json::json!({
+        "Message box": snip("msgbox", "perox_ui::msgbox::info(ui, \"${1:Title}\", \"${2:Message}\");", "A native information message box"),
+        "Message box: warning": snip("msgwarn", "perox_ui::msgbox::warning(ui, \"${1:Title}\", \"${2:Message}\");", "A native warning message box"),
+        "Message box: error": snip("msgerror", "perox_ui::msgbox::error(ui, \"${1:Title}\", \"${2:Message}\");", "A native error message box"),
+        "Message box: OK/Cancel": snip("msgconfirm", "if perox_ui::msgbox::confirm(ui, \"${1:Title}\", \"${2:Are you sure?}\") {\n    $0\n}", "OK / Cancel; true for OK"),
+        "Message box: Yes/No": snip("msgask", "if perox_ui::msgbox::ask(ui, \"${1:Title}\", \"${2:Question?}\") {\n    $0\n}", "Yes / No; true for Yes"),
+        "Show dialog": snip("dialog", "if let Ok(dialog) = ${1:SettingsDialog}::new() {\n    let _ = dialog.exec(Some(slint::ComponentHandle::window(ui)), move |result| {\n        if result.accepted() {\n            $0\n        }\n    });\n}", "Show a .slint Dialog over this window and handle OK")
     })
 }
 
