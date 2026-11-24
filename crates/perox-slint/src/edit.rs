@@ -1,0 +1,829 @@
+//! Designer operations as minimal text edits on a `.slint` document. Setting a property
+//! replaces only its value; adding an element inserts lines at the right indentation;
+//! nothing else (comments, blank lines, hand formatting) changes.
+//!
+//! Elements are addressed by component name and path (see [`crate::syntax`]).
+
+use std::ops::Range;
+
+use crate::syntax::{Component, Element, parse};
+
+/// Replace `range` (bytes) with `text`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEdit {
+    pub range: Range<usize>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditError {
+    NoSuchComponent(String),
+    NoSuchElement,
+    /// Moving an element into itself or one of its children.
+    IntoItself,
+    InvalidName(String),
+    /// The component's root can't be removed, moved or named.
+    Root,
+}
+
+impl std::fmt::Display for EditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditError::NoSuchComponent(c) => write!(f, "no component `{c}` in this file"),
+            EditError::NoSuchElement => write!(f, "no such element"),
+            EditError::IntoItself => write!(f, "an element can't be moved into itself"),
+            EditError::InvalidName(n) => write!(
+                f,
+                "`{n}` isn't a valid name (letters, digits, - and _; not starting with a digit)"
+            ),
+            EditError::Root => write!(f, "that isn't possible on the component's root"),
+        }
+    }
+}
+
+impl std::error::Error for EditError {}
+
+/// Applies edits (non-overlapping, any order) to `src`.
+pub fn apply(src: &str, edits: &[TextEdit]) -> String {
+    let mut sorted: Vec<&TextEdit> = edits.iter().collect();
+    sorted.sort_by_key(|e| std::cmp::Reverse(e.range.start));
+    let mut out = src.to_owned();
+    for e in sorted {
+        out.replace_range(e.range.clone(), &e.text);
+    }
+    out
+}
+
+/// A Slint identifier: letters, digits, `_`, `-`; not starting with a digit or `-`.
+pub fn is_valid_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && !matches!(name, "root" | "parent" | "self" | "true" | "false")
+}
+
+fn check(names: &[&str]) -> Result<(), EditError> {
+    match names.iter().find(|n| !is_valid_name(n)) {
+        Some(n) => Err(EditError::InvalidName((*n).into())),
+        None => Ok(()),
+    }
+}
+
+/// `kind` may be dotted (`Lib.Widget`).
+fn check_kind(kind: &str) -> Result<(), EditError> {
+    if kind.split('.').all(is_valid_name) {
+        Ok(())
+    } else {
+        Err(EditError::InvalidName(kind.into()))
+    }
+}
+
+fn line_start(src: &str, offset: usize) -> usize {
+    src[..offset].rfind('\n').map_or(0, |i| i + 1)
+}
+
+fn line_end(src: &str, offset: usize) -> usize {
+    src[offset..].find('\n').map_or(src.len(), |i| offset + i)
+}
+
+fn indent_at(src: &str, offset: usize) -> String {
+    let start = line_start(src, offset);
+    src[start..]
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
+}
+
+/// True if only whitespace precedes `offset` on its line.
+fn starts_line(src: &str, offset: usize) -> bool {
+    src[line_start(src, offset)..offset].trim().is_empty()
+}
+
+/// The indentation unit used in this file (first indented line), default 4 spaces.
+fn indent_unit(src: &str) -> String {
+    src.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            l.chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect::<String>()
+        })
+        .find(|i| !i.is_empty())
+        .unwrap_or_else(|| "    ".into())
+}
+
+fn single_line(src: &str, el: &Element) -> bool {
+    !src[el.open..el.close].contains('\n')
+}
+
+/// Indentation for members of `el`.
+fn member_indent(src: &str, el: &Element) -> String {
+    match el
+        .member_spans()
+        .into_iter()
+        .map(|r| r.start)
+        .find(|o| starts_line(src, *o))
+    {
+        Some(o) => indent_at(src, o),
+        None => indent_at(src, el.span.start) + &indent_unit(src),
+    }
+}
+
+/// Inserts a member line (`name: value;`, a handler) into `el`: after its last property,
+/// handler or declaration that comes before its child elements.
+fn insert_member(src: &str, el: &Element, line: &str) -> TextEdit {
+    if single_line(src, el) {
+        // `Button { text: "OK"; }` → `Button { text: "OK"; enabled: false; }`
+        let inner = src[el.open + 1..el.close].trim_end();
+        let at = el.open + 1 + inner.len();
+        return TextEdit {
+            range: at..el.close,
+            text: format!(" {line} "),
+        };
+    }
+    let first_child = el
+        .children
+        .iter()
+        .map(|c| c.span.start)
+        .min()
+        .unwrap_or(usize::MAX);
+    let last = el
+        .member_spans()
+        .into_iter()
+        .filter(|r| r.start < first_child && !el.children.iter().any(|c| c.span == *r))
+        .map(|r| r.end)
+        .max();
+    let indent = member_indent(src, el);
+    let at = match last {
+        Some(end) => line_end(src, end),
+        None => el.open + 1,
+    };
+    TextEdit {
+        range: at..at,
+        text: format!("\n{indent}{line}"),
+    }
+}
+
+/// Deletes a member's text: its whole line if it's alone there, else just itself and the
+/// space after it.
+fn delete_member(src: &str, span: Range<usize>) -> TextEdit {
+    let ls = line_start(src, span.start);
+    let le = line_end(src, span.end);
+    let after = src[span.end..le].trim();
+    if src[ls..span.start].trim().is_empty() && (after.is_empty() || after.starts_with("//")) {
+        let end = if le < src.len() { le + 1 } else { le };
+        return TextEdit {
+            range: ls..end,
+            text: String::new(),
+        };
+    }
+    let rest = &src[span.end..];
+    let end = span.end + (rest.len() - rest.trim_start_matches(' ').len());
+    TextEdit {
+        range: span.start..end,
+        text: String::new(),
+    }
+}
+
+fn component<'a>(doc: &'a crate::Document, name: &str) -> Result<&'a Component, EditError> {
+    doc.component(name)
+        .ok_or_else(|| EditError::NoSuchComponent(name.into()))
+}
+
+fn element<'a>(c: &'a Component, path: &[usize]) -> Result<&'a Element, EditError> {
+    c.at(path).ok_or(EditError::NoSuchElement)
+}
+
+/// Sets (or adds) a property to an expression (`"OK"`, `12px`, `root.width / 2`).
+pub fn set_property(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    name: &str,
+    value: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    check(&[name])?;
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    Ok(vec![match el.props.iter().find(|p| p.name == name) {
+        Some(p) => TextEdit {
+            range: p.value_span.clone(),
+            text: value.into(),
+        },
+        None => insert_member(src, el, &format!("{name}: {value};")),
+    }])
+}
+
+pub fn remove_property(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    name: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    Ok(el
+        .props
+        .iter()
+        .find(|p| p.name == name)
+        .map(|p| delete_member(src, p.span.clone()))
+        .into_iter()
+        .collect())
+}
+
+/// Sets what a callback does: `event(params) => { body }`.
+pub fn set_handler(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    event: &str,
+    params: &[&str],
+    body: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    check(&[event])?;
+    check(params)?;
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    let args = if params.is_empty() {
+        String::new()
+    } else {
+        format!("({})", params.join(", "))
+    };
+    let text = format!("{event}{args} => {{ {} }}", body.trim());
+    Ok(vec![match el.handlers.iter().find(|h| h.event == event) {
+        Some(h) => TextEdit {
+            range: h.span.clone(),
+            text,
+        },
+        None => insert_member(src, el, &text),
+    }])
+}
+
+pub fn remove_handler(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    event: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    Ok(el
+        .handlers
+        .iter()
+        .find(|h| h.event == event)
+        .map(|h| delete_member(src, h.span.clone()))
+        .into_iter()
+        .collect())
+}
+
+/// Changes an element's type (`VerticalBox` → `Rectangle`), keeping its id, members and
+/// formatting.
+pub fn set_kind(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    kind: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    check_kind(kind)?;
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    Ok(vec![TextEdit {
+        range: el.kind_span.clone(),
+        text: kind.into(),
+    }])
+}
+
+/// Names (or renames) an element; `None` removes the name.
+pub fn set_id(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    id: Option<&str>,
+) -> Result<Vec<TextEdit>, EditError> {
+    if let Some(n) = id {
+        check(&[n])?;
+    }
+    if path.is_empty() {
+        return Err(EditError::Root);
+    }
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    Ok(match (&el.id_span, id) {
+        (Some(s), Some(n)) => vec![TextEdit {
+            range: s.clone(),
+            text: n.into(),
+        }],
+        (Some(s), None) => vec![TextEdit {
+            range: s.start..el.kind_span.start,
+            text: String::new(),
+        }],
+        (None, Some(n)) => vec![TextEdit {
+            range: el.kind_span.start..el.kind_span.start,
+            text: format!("{n} := "),
+        }],
+        (None, None) => Vec::new(),
+    })
+}
+
+/// A new element's source at `indent`: one line if it has at most one property.
+pub fn element_source(
+    kind: &str,
+    id: Option<&str>,
+    props: &[(String, String)],
+    indent: &str,
+    unit: &str,
+) -> String {
+    let head = match id {
+        Some(i) => format!("{i} := {kind}"),
+        None => kind.to_owned(),
+    };
+    match props {
+        [] => format!("{indent}{head} {{ }}"),
+        [(n, v)] => format!("{indent}{head} {{ {n}: {v}; }}"),
+        many => {
+            let mut s = format!("{indent}{head} {{\n");
+            for (n, v) in many {
+                s.push_str(&format!("{indent}{unit}{n}: {v};\n"));
+            }
+            s.push_str(&format!("{indent}}}"));
+            s
+        }
+    }
+}
+
+/// Re-indents a block so its first line starts at `to`, and later lines lose `from`.
+fn reindent(block: &str, from: &str, to: &str) -> String {
+    block
+        .lines()
+        .enumerate()
+        .map(|(i, l)| {
+            if i == 0 {
+                format!("{to}{}", l.trim_start())
+            } else if let Some(rest) = l.strip_prefix(from) {
+                format!("{to}{rest}")
+            } else {
+                l.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Where a new child goes in `parent` at `index`, and the text to put there.
+fn insert_child_edit(src: &str, parent: &Element, index: usize, body: &str) -> TextEdit {
+    let indent = member_indent(src, parent);
+    let text = reindent(body, "", &indent);
+    if single_line(src, parent) {
+        // Open the one-line parent up: the child goes on its own line before `}`.
+        let parent_indent = indent_at(src, parent.span.start);
+        let inner_end = parent.open + 1 + src[parent.open + 1..parent.close].trim_end().len();
+        return TextEdit {
+            range: inner_end..parent.close,
+            text: format!("\n{text}\n{parent_indent}"),
+        };
+    }
+    match parent.children.get(index) {
+        // Before an existing child: on the line above it and its comments.
+        Some(next) if starts_line(src, next.span.start) => {
+            let mut at = line_start(src, next.span.start);
+            while at > 0 {
+                let prev = line_start(src, at - 1);
+                let line = src[prev..at].trim();
+                if line.starts_with("//") || (line.starts_with("/*") && line.ends_with("*/")) {
+                    at = prev;
+                } else {
+                    break;
+                }
+            }
+            TextEdit {
+                range: at..at,
+                text: format!("{text}\n"),
+            }
+        }
+        Some(next) => TextEdit {
+            range: next.span.start..next.span.start,
+            text: format!("{}\n{indent}", text.trim_start()),
+        },
+        // At the end: before the closing brace's line.
+        None => {
+            if starts_line(src, parent.close) {
+                let close_line = line_start(src, parent.close);
+                TextEdit {
+                    range: close_line..close_line,
+                    text: format!("{text}\n"),
+                }
+            } else {
+                TextEdit {
+                    range: parent.close..parent.close,
+                    text: format!("\n{text}\n{}", indent_at(src, parent.span.start)),
+                }
+            }
+        }
+    }
+}
+
+/// Adds an element as child `index` of `parent` (`usize::MAX`: at the end). Property
+/// values are expressions.
+pub fn add_element(
+    src: &str,
+    comp: &str,
+    parent: &[usize],
+    index: usize,
+    kind: &str,
+    id: Option<&str>,
+    props: &[(String, String)],
+) -> Result<Vec<TextEdit>, EditError> {
+    check_kind(kind)?;
+    if let Some(i) = id {
+        check(&[i])?;
+    }
+    let doc = parse(src);
+    let p = element(component(&doc, comp)?, parent)?;
+    let body = element_source(kind, id, props, "", &indent_unit(src));
+    Ok(vec![insert_child_edit(
+        src,
+        p,
+        index.min(p.children.len()),
+        &body,
+    )])
+}
+
+pub fn remove_element(src: &str, comp: &str, path: &[usize]) -> Result<Vec<TextEdit>, EditError> {
+    if path.is_empty() {
+        return Err(EditError::Root);
+    }
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    Ok(vec![delete_member(src, el.span.clone())])
+}
+
+/// Moves an element to child `index` of `to_parent` (indices as before the move).
+pub fn move_element(
+    src: &str,
+    comp: &str,
+    from: &[usize],
+    to_parent: &[usize],
+    index: usize,
+) -> Result<Vec<TextEdit>, EditError> {
+    if from.is_empty() {
+        return Err(EditError::Root);
+    }
+    if to_parent.starts_with(from) {
+        return Err(EditError::IntoItself);
+    }
+    let doc = parse(src);
+    let c = component(&doc, comp)?;
+    let el = element(c, from)?;
+    let parent = element(c, to_parent)?;
+    if from[..from.len() - 1] == *to_parent
+        && (index == from[from.len() - 1] || index == from[from.len() - 1] + 1)
+    {
+        return Ok(Vec::new());
+    }
+    let block = &src[el.span.clone()];
+    let body = reindent(block, &indent_at(src, el.span.start), "");
+    let remove = delete_member(src, el.span.clone());
+    let insert = insert_child_edit(src, parent, index.min(parent.children.len()), &body);
+    if remove.range.start < insert.range.end && insert.range.start < remove.range.end {
+        return Err(EditError::IntoItself);
+    }
+    Ok(vec![remove, insert])
+}
+
+/// Makes sure `name` is imported from `from` (`"std-widgets.slint"`).
+pub fn ensure_import(src: &str, name: &str, from: &str) -> Vec<TextEdit> {
+    let doc = parse(src);
+    if doc.imports_name(name, from) {
+        return Vec::new();
+    }
+    if let Some(close) = doc
+        .imports
+        .iter()
+        .find(|i| i.from == from)
+        .and_then(|i| i.list_close)
+    {
+        let inner_end = src[..close].trim_end().len();
+        let sep = if src[..inner_end].ends_with('{') || src[..inner_end].ends_with(',') {
+            " "
+        } else {
+            ", "
+        };
+        return vec![TextEdit {
+            range: inner_end..inner_end,
+            text: format!("{sep}{name}"),
+        }];
+    }
+    let line = format!("import {{ {name} }} from \"{from}\";\n");
+    let at = doc
+        .imports
+        .iter()
+        .map(|i| i.span.end)
+        .max()
+        .map_or(0, |end| (line_end(src, end) + 1).min(src.len()));
+    let text = if at == src.len() && !src.is_empty() && !src.ends_with('\n') {
+        format!("\n{line}")
+    } else {
+        line
+    };
+    vec![TextEdit {
+        range: at..at,
+        text,
+    }]
+}
+
+/// Declares `callback name(params);` on a component, after its other callbacks.
+/// Does nothing if it exists.
+pub fn add_callback(
+    src: &str,
+    comp: &str,
+    name: &str,
+    params: &[(Option<&str>, &str)],
+) -> Result<Vec<TextEdit>, EditError> {
+    check(&[name])?;
+    let doc = parse(src);
+    let c = component(&doc, comp)?;
+    if c.callback(name).is_some() {
+        return Ok(Vec::new());
+    }
+    let args = params
+        .iter()
+        .map(|(n, t)| match n {
+            Some(n) => format!("{n}: {t}"),
+            None => (*t).to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let line = format!("callback {name}({args});");
+    let root = &c.root;
+    let after = c
+        .callbacks
+        .iter()
+        .map(|cb| cb.span.end)
+        .max()
+        .or_else(|| c.properties.iter().map(|p| p.span.end).max());
+    if single_line(src, root) {
+        return Ok(vec![insert_member(src, root, &line)]);
+    }
+    let indent = member_indent(src, root);
+    let at = match after {
+        Some(end) => line_end(src, end),
+        None => root.open + 1,
+    };
+    Ok(vec![TextEdit {
+        range: at..at,
+        text: format!("\n{indent}{line}"),
+    }])
+}
+
+pub fn remove_callback(src: &str, comp: &str, name: &str) -> Result<Vec<TextEdit>, EditError> {
+    let doc = parse(src);
+    let c = component(&doc, comp)?;
+    Ok(c.callback(name)
+        .map(|cb| delete_member(src, cb.span.clone()))
+        .into_iter()
+        .collect())
+}
+
+/// One edit that turns `old` into `new`: the changed middle, between the common prefix
+/// and suffix. For multi-step designer operations computed on a working copy.
+pub fn diff(old: &str, new: &str) -> Vec<TextEdit> {
+    if old == new {
+        return Vec::new();
+    }
+    let mut start = old
+        .bytes()
+        .zip(new.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
+        start -= 1;
+    }
+    let max_suffix = old.len().min(new.len()) - start;
+    let mut suffix = old
+        .bytes()
+        .rev()
+        .zip(new.bytes().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
+        suffix -= 1;
+    }
+    vec![TextEdit {
+        range: start..old.len() - suffix,
+        text: new[start..new.len() - suffix].to_owned(),
+    }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SRC: &str = "import { Button } from \"std-widgets.slint\";\n// header\nexport component Main inherits Window {\n    title: \"Hi\";   // keep me\n    callback go();\n\n    VerticalLayout {\n        a := Text { text: \"A\"; }\n        /* between */\n        b := Text { text: \"B\"; }\n    }\n}\n";
+
+    fn run(edits: Result<Vec<TextEdit>, EditError>) -> String {
+        let out = apply(SRC, &edits.unwrap());
+        let d = parse(&out);
+        assert!(d.errors.is_empty(), "{out}\n{:?}", d.errors);
+        out
+    }
+
+    #[test]
+    fn changing_a_value_touches_only_the_value() {
+        let out = run(set_property(SRC, "Main", &[], "title", "\"Hello\""));
+        assert_eq!(out, SRC.replace("\"Hi\"", "\"Hello\""));
+    }
+
+    #[test]
+    fn new_property_goes_after_the_last_member_before_children() {
+        let out = run(set_property(SRC, "Main", &[], "width", "400px"));
+        assert!(
+            out.contains("    callback go();\n    width: 400px;\n\n    VerticalLayout"),
+            "{out}"
+        );
+        let out = run(set_property(SRC, "Main", &[0], "spacing", "8px"));
+        assert!(
+            out.contains("    VerticalLayout {\n        spacing: 8px;\n        a := Text"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn one_line_elements_stay_on_one_line() {
+        let out = run(set_property(SRC, "Main", &[0, 0], "color", "#ff0000"));
+        assert!(
+            out.contains("a := Text { text: \"A\"; color: #ff0000; }"),
+            "{out}"
+        );
+        let back = apply(
+            &out,
+            &remove_property(&out, "Main", &[0, 0], "color").unwrap(),
+        );
+        assert_eq!(back, SRC);
+    }
+
+    #[test]
+    fn removing_a_property_removes_its_line() {
+        let out = run(remove_property(SRC, "Main", &[], "title"));
+        assert!(!out.contains("title") && !out.contains("keep me"), "{out}");
+        assert!(out.contains("{\n    callback go();"), "{out}");
+    }
+
+    #[test]
+    fn adding_elements_at_any_position() {
+        let props = vec![("text".to_owned(), "\"Go\"".to_owned())];
+        let out = run(add_element(
+            SRC,
+            "Main",
+            &[0],
+            1,
+            "Button",
+            Some("go-btn"),
+            &props,
+        ));
+        assert!(out.contains("        a := Text { text: \"A\"; }\n        go-btn := Button { text: \"Go\"; }\n        /* between */\n        b := Text"), "{out}");
+        let out = run(add_element(
+            SRC,
+            "Main",
+            &[0],
+            usize::MAX,
+            "Rectangle",
+            None,
+            &[],
+        ));
+        assert!(
+            out.contains("        b := Text { text: \"B\"; }\n        Rectangle { }\n    }"),
+            "{out}"
+        );
+        let two = vec![
+            ("text".to_owned(), "\"x\"".to_owned()),
+            ("enabled".to_owned(), "false".to_owned()),
+        ];
+        let out = run(add_element(
+            SRC,
+            "Main",
+            &[],
+            usize::MAX,
+            "Button",
+            Some("ok"),
+            &two,
+        ));
+        assert!(
+            out.contains(
+                "    ok := Button {\n        text: \"x\";\n        enabled: false;\n    }\n}"
+            ),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn adding_into_an_empty_or_one_line_container() {
+        let src = "export component W inherits Window {\n    HorizontalLayout { }\n}\n";
+        let out = apply(
+            src,
+            &add_element(src, "W", &[0], 0, "Text", None, &[]).unwrap(),
+        );
+        assert_eq!(
+            out,
+            "export component W inherits Window {\n    HorizontalLayout {\n        Text { }\n    }\n}\n"
+        );
+    }
+
+    #[test]
+    fn removing_and_moving_elements_keeps_the_rest() {
+        let out = run(remove_element(SRC, "Main", &[0, 0]));
+        assert_eq!(out, SRC.replace("        a := Text { text: \"A\"; }\n", ""));
+        let out = run(move_element(SRC, "Main", &[0, 1], &[], usize::MAX));
+        assert!(
+            out.contains("    }\n    b := Text { text: \"B\"; }\n}"),
+            "{out}"
+        );
+        assert!(out.contains("/* between */"));
+        assert_eq!(
+            move_element(SRC, "Main", &[0], &[0, 0], 0),
+            Err(EditError::IntoItself)
+        );
+        assert_eq!(remove_element(SRC, "Main", &[]), Err(EditError::Root));
+    }
+
+    #[test]
+    fn handlers_ids_and_kinds() {
+        let out = run(set_handler(
+            SRC,
+            "Main",
+            &[0, 1],
+            "pointer-event",
+            &["e"],
+            "root.go();",
+        ));
+        assert!(
+            out.contains("b := Text { text: \"B\"; pointer-event(e) => { root.go(); } }"),
+            "{out}"
+        );
+        let doc = parse(&out);
+        let h = doc.components[0]
+            .at(&[0, 1])
+            .unwrap()
+            .handler("pointer-event")
+            .unwrap();
+        assert_eq!(h.forwards_to(), Some("go"));
+        let out2 = apply(
+            &out,
+            &remove_handler(&out, "Main", &[0, 1], "pointer-event").unwrap(),
+        );
+        assert_eq!(out2, SRC);
+        let out = run(set_id(SRC, "Main", &[0], Some("column")));
+        assert!(out.contains("    column := VerticalLayout {"));
+        let out = run(set_id(SRC, "Main", &[0, 0], None));
+        assert!(out.contains("        Text { text: \"A\"; }"));
+        assert!(matches!(
+            set_id(SRC, "Main", &[0], Some("9x")),
+            Err(EditError::InvalidName(_))
+        ));
+        let out = run(set_kind(SRC, "Main", &[0], "HorizontalLayout"));
+        assert!(out.contains("    HorizontalLayout {\n"));
+    }
+
+    #[test]
+    fn imports_and_callbacks() {
+        let out = apply(SRC, &ensure_import(SRC, "LineEdit", "std-widgets.slint"));
+        assert!(
+            out.starts_with("import { Button, LineEdit } from \"std-widgets.slint\";\n"),
+            "{out}"
+        );
+        assert!(ensure_import(&out, "Button", "std-widgets.slint").is_empty());
+        let out = apply(SRC, &ensure_import(SRC, "Card", "card.slint"));
+        assert!(out.starts_with("import { Button } from \"std-widgets.slint\";\nimport { Card } from \"card.slint\";\n// header"), "{out}");
+        let bare = "export component A inherits Window { }";
+        let out = apply(bare, &ensure_import(bare, "Button", "std-widgets.slint"));
+        assert_eq!(
+            out,
+            "import { Button } from \"std-widgets.slint\";\nexport component A inherits Window { }"
+        );
+
+        let out = run(add_callback(
+            SRC,
+            "Main",
+            "save-clicked",
+            &[(Some("name"), "string")],
+        ));
+        assert!(
+            out.contains("    callback go();\n    callback save-clicked(name: string);\n"),
+            "{out}"
+        );
+        assert!(add_callback(SRC, "Main", "go", &[]).unwrap().is_empty());
+        let out = run(remove_callback(SRC, "Main", "go"));
+        assert!(!out.contains("callback"), "{out}");
+    }
+
+    #[test]
+    fn diff_is_minimal_and_char_safe() {
+        let a = "héllo wörld";
+        let b = "héllo wörlds";
+        assert_eq!(apply(a, &diff(a, b)), b);
+        assert_eq!(apply(b, &diff(b, a)), a);
+        assert!(diff(a, a).is_empty());
+    }
+}
