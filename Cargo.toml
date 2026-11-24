@@ -24,6 +24,7 @@ perox-terminal = { path = "crates/perox-terminal" }
 perox-ui = { path = "crates/perox-ui" }
 perox-designer = { path = "crates/perox-designer" }
 perox-slint = { path = "crates/perox-slint" }
+perox-package = { path = "crates/perox-package" }
 perox-dap = { path = "crates/perox-dap" }
 # Slint, pinned exactly: the designer uses its internal APIs (ADR 0011).
 slint = { version = "=1.19.0", default-features = false, features = ["std", "compat-1-2"] }

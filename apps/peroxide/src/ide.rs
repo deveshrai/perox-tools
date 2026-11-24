@@ -26,6 +26,9 @@ pub enum LayoutRequest {
 }
 
 /// The current cargo job and what it printed.
+/// From the packaging thread: `Ok(log line)`, then `Err(result)` at the end.
+pub type PackMsg = Result<String, Result<Vec<PathBuf>, String>>;
+
 #[derive(Debug, Default)]
 pub struct BuildState {
     pub job: Option<Job>,
@@ -37,11 +40,42 @@ pub struct BuildState {
     pub tests: crate::testing::Tests,
     /// Executables the current (or last) job built.
     pub artifacts: Vec<perox_build::Artifact>,
+    /// Package these once the release build that's running succeeds (Build › Package App).
+    pub package_after: Option<(PathBuf, Vec<perox_package::Format>)>,
+    /// Packaging running on a thread: its log lines, then the result.
+    pub packaging: Option<std::sync::mpsc::Receiver<PackMsg>>,
+    /// What the last packaging made, or why it failed.
+    pub packaged: Option<Result<Vec<PathBuf>, String>>,
 }
 
 impl BuildState {
     pub fn running(&self) -> Option<Kind> {
         self.job.as_ref().map(|j| j.kind)
+    }
+
+    /// Collects packaging's log; returns the result when it finished this frame.
+    pub fn poll_packaging(&mut self) -> Option<Result<Vec<PathBuf>, String>> {
+        let rx = self.packaging.as_ref()?;
+        let mut done = None;
+        while let Ok(m) = rx.try_recv() {
+            match m {
+                Ok(line) => self.output.push(line),
+                Err(result) => done = Some(result),
+            }
+        }
+        let result = done?;
+        self.packaging = None;
+        match &result {
+            Ok(files) => self
+                .output
+                .push(format!("── packaged: {} file(s) ──", files.len())),
+            Err(e) => {
+                self.output.push(e.clone());
+                self.output.push("── packaging failed ──".into());
+            }
+        }
+        self.packaged = Some(result.clone());
+        Some(result)
     }
 
     /// Collects new output; returns `Some(success)` when the job finished this frame.
@@ -271,6 +305,110 @@ pub fn start_build_with(
     Ok(
         json!({ "started": format!("cargo {}", kind.verb()), "hint": "Call build.output (or problems.list) for results; build.status says when it's done." }),
     )
+}
+
+/// Build › Package App: a release build, then the packages (see [`package_built`]).
+fn start_package(
+    s: &mut AppState,
+    app: Option<PathBuf>,
+    formats: Vec<perox_package::Format>,
+) -> Result<Value, CommandError> {
+    let root = s
+        .project
+        .as_ref()
+        .map(|p| p.root.clone())
+        .ok_or_else(|| err("No project is open."))?;
+    let has_package = |dir: &Path| {
+        std::fs::read_to_string(dir.join("Cargo.toml"))
+            .is_ok_and(|t| t.lines().any(|l| l.trim() == "[package]"))
+    };
+    // The app: the one named, else the project, else (in a workspace) the package of
+    // the file being edited.
+    let app = match app {
+        Some(a) => a,
+        None if has_package(&root) => root.clone(),
+        None => s
+            .active_doc
+            .and_then(|id| s.docs.get(id))
+            .and_then(|d| {
+                d.path
+                    .ancestors()
+                    .take_while(|a| a.starts_with(&root))
+                    .find(|a| has_package(a))
+                    .map(Path::to_path_buf)
+            })
+            .ok_or_else(|| {
+                err("This is a workspace: open a file of the app to package (or pass `path`, its folder).")
+            })?,
+    };
+    // Fail early on an app that can't be packaged.
+    let info = perox_package::AppInfo::load(&app, &root.join("target")).map_err(err)?;
+    let mut args: Vec<String> = vec!["--release".into()];
+    if app != root {
+        args.extend(["-p".into(), info.name.clone()]);
+    }
+    let started = start_build_with(s, Kind::Build, &args)?;
+    s.build.package_after = Some((app, formats.clone()));
+    s.build.packaged = None;
+    let names: Vec<&str> = formats.iter().map(|f| f.name()).collect();
+    Ok(json!({
+        "started": started["started"],
+        "app": info.display_name,
+        "formats": names,
+        "hint": "A release build, then packaging. build.status shows `packaging` while it runs and `packaged` (the files, in target/peroxide/package) when done."
+    }))
+}
+
+/// Called when a build finishes: if it was Package App's release build, packages it.
+pub fn package_built(s: &mut AppState, ok: bool) {
+    let Some((app, formats)) = s.build.package_after.take() else {
+        return;
+    };
+    if !ok {
+        s.build.packaged = Some(Err(
+            "The release build failed, so nothing was packaged.".into()
+        ));
+        return;
+    }
+    let mut info = match perox_package::AppInfo::load(&app, &app.join("target")) {
+        Ok(i) => i,
+        Err(e) => {
+            s.build.output.push(e.clone());
+            s.build.packaged = Some(Err(e));
+            return;
+        }
+    };
+    // The build says where it put the executable (a workspace's target folder, say).
+    if let Some(a) = s
+        .build
+        .artifacts
+        .iter()
+        .find(|a| a.kind == "bin" && !a.test && a.target == info.bin)
+    {
+        info.binary = a.executable.clone();
+    }
+    let root = s.project.as_ref().map_or(app.clone(), |p| p.root.clone());
+    let out = root.join("target").join("peroxide").join("package");
+    let (tx, rx) = std::sync::mpsc::channel();
+    s.build.packaging = Some(rx);
+    s.build.output.push(String::new());
+    s.build.output.push(format!(
+        "── packaging {} {} ──",
+        info.display_name, info.version
+    ));
+    s.status = "Packaging…".into();
+    let ctx = s.ctx.clone();
+    std::thread::spawn(move || {
+        let log_tx = tx.clone();
+        let log_ctx = ctx.clone();
+        let mut log = move |l: &str| {
+            let _ = log_tx.send(Ok(l.to_owned()));
+            log_ctx.request_repaint();
+        };
+        let result = perox_package::package(&info, &out, &formats, &mut log);
+        let _ = tx.send(Err(result));
+        ctx.request_repaint();
+    });
 }
 
 type Handler = fn(&mut AppState, &Invocation) -> Result<Value, CommandError>;
@@ -1606,6 +1744,32 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         (build("build.test", "Run Tests", "Runs `cargo test`; results also go to the Test Explorer (test.results)."), |s, _| crate::testing::run(s, crate::testing::Scope::All)),
         (build("build.clippy", "Clippy", "Runs `cargo clippy` for lints."), |s, _| start_build(s, Kind::Clippy)),
         (
+            CommandSpec::new("build.package", "Package App…", Access::Execute)
+                .description("Makes installable packages of the app: a release build (`cargo build --release`), then, by default, what this OS makes: a .app and .dmg on macOS, a .deb (and an AppImage if appimagetool is installed) on Linux, an .msi (if WiX is installed) and a .zip on Windows. Into target/peroxide/package. Name, identifier, publisher and icon come from [package.metadata.peroxide] in Cargo.toml. Signs and notarizes on macOS when PEROX_MACOS_SIGN_IDENTITY / PEROX_MACOS_NOTARY_PROFILE are set.")
+                .params(json!({ "type": "object", "properties": {
+                    "formats": { "type": "array", "items": { "type": "string", "enum": ["app", "dmg", "deb", "appimage", "msi", "zip"] } },
+                    "path": { "type": "string", "description": "The app's folder, in a workspace (default: the project, else the package of the file being edited)" }
+                } })),
+            |s, inv| {
+                let formats = match inv.args.get("formats").and_then(Value::as_array) {
+                    Some(a) => a
+                        .iter()
+                        .map(|f| {
+                            f.as_str()
+                                .and_then(perox_package::Format::parse)
+                                .ok_or_else(|| err(format!("Unknown package format {f}")))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    None => perox_package::host_formats(),
+                };
+                let app = match inv.args.get("path") {
+                    Some(_) => Some(resolve(s, inv, "path")?),
+                    None => None,
+                };
+                start_package(s, app, formats)
+            },
+        ),
+        (
             build("build.clippy_fix", "Apply Clippy Fixes", "Saves all files and runs `cargo clippy --fix`, which applies the lints' machine-applicable suggestions to the files. Review the result with git.diff."),
             |s, _| {
                 let args: Vec<String> = ["--fix", "--allow-dirty", "--allow-staged"].map(String::from).to_vec();
@@ -1650,6 +1814,11 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 Ok(json!({
                     "running": s.build.running().map(Kind::verb),
                     "last": s.build.last.map(|(k, ok)| json!({ "command": k.verb(), "success": ok })),
+                    "packaging": s.build.packaging.is_some() || s.build.package_after.is_some(),
+                    "packaged": s.build.packaged.as_ref().map(|r| match r {
+                        Ok(files) => json!({ "files": files.iter().map(|f| rel(s, f)).collect::<Vec<_>>() }),
+                        Err(e) => json!({ "error": e }),
+                    }),
                     "errors": s.build.diagnostics.iter().filter(|d| d.level == perox_build::Level::Error).count(),
                     "warnings": s.build.diagnostics.iter().filter(|d| d.level == perox_build::Level::Warning).count()
                 }))

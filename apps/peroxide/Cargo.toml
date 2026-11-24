@@ -21,6 +21,7 @@ perox-dap.workspace = true
 perox-designer.workspace = true
 perox-ui = { workspace = true, features = ["sqlite"] }
 perox-slint.workspace = true
+perox-package.workspace = true
 rfd.workspace = true
 egui_extras.workspace = true
 image.workspace = true

@@ -154,6 +154,29 @@ failure shows its output and a link to where it panicked. View → Test Explorer
 
 ![The Test Explorer with a failing test](docs/screenshots/test-explorer.png)
 
+**Package App.** Build → Package App makes a release build and turns it into something
+to hand out, in `target/peroxide/package`:
+
+| On | You get |
+|---|---|
+| macOS | `Name.app` and a `.dmg` to drag it to Applications |
+| Linux | a `.deb`, and an AppImage if `appimagetool` is installed |
+| Windows | a `.zip`, and an `.msi` installer if the WiX Toolset is installed |
+
+The app's name, identifier, publisher and icon come from `Cargo.toml`:
+
+```toml
+[package.metadata.peroxide]
+display-name = "Stock Dashboard"
+identifier = "com.example.stocks"
+publisher = "Example Ltd"
+icon = "ui/images/app-icon.png"     # square PNG, 512 px or more
+```
+
+Packages are unsigned unless you give your certificates: on macOS set
+`PEROX_MACOS_SIGN_IDENTITY` (a Developer ID) and, to notarize, `PEROX_MACOS_NOTARY_PROFILE`.
+Unsigned apps still run; the OS asks once.
+
 Claude Code can drive all of it, the designer included, over MCP ([docs/mcp.md](docs/mcp.md)).
 
 ## Sample app: Stock Viewer
@@ -229,6 +252,7 @@ crates/perox-editor/  the code editor (GPL-3.0-or-later)
 crates/perox-lsp/   the rust-analyzer client (GPL-3.0-or-later)
 crates/perox-project/ Cargo projects and the file tree (GPL-3.0-or-later)
 crates/perox-build/ running cargo (GPL-3.0-or-later)
+crates/perox-package/ Package App: .app/.dmg, .deb/AppImage, .msi/.zip (GPL-3.0-or-later)
 crates/perox-designer/ the form designer (GPL-3.0-or-later)
 crates/perox-slint/ .slint editing and the handlers codegen for build.rs (MIT OR Apache-2.0)
 crates/perox-ui/    the runtime in your app: handlers, message boxes, dialogs (MIT OR Apache-2.0)

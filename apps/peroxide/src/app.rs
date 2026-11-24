@@ -347,6 +347,8 @@ impl PeroxApp {
                 item(ui, actions, "build.fmt");
                 item(ui, actions, "build.fmt_check");
                 ui.separator();
+                item(ui, actions, "build.package");
+                ui.separator();
                 item(ui, actions, "build.stop");
             });
             ui.menu_button("Debug", |ui| {
@@ -501,6 +503,7 @@ impl eframe::App for PeroxApp {
         self.state.build.tests.poll();
         if let Some((kind, ok)) = self.state.build.poll() {
             crate::debug::build_finished(&mut self.state, ok);
+            crate::ide::package_built(&mut self.state, ok);
             if kind == perox_build::Kind::Test
                 && let Some(root) = self.state.project.as_ref().map(|p| p.root.clone())
             {
@@ -514,6 +517,20 @@ impl eframe::App for PeroxApp {
             );
         }
 
+        if let Some(r) = self.state.build.poll_packaging() {
+            self.state.status = match r {
+                Ok(files) => format!(
+                    "Packaged: {}",
+                    files
+                        .iter()
+                        .filter_map(|f| f.file_name())
+                        .map(|n| n.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                Err(_) => "Packaging failed: see Output".into(),
+            };
+        }
         crate::debug::update(&mut self.state);
 
         let mut actions: Vec<&'static str> = keymap::pressed(&ctx);

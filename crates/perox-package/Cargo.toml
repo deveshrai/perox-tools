@@ -1,0 +1,19 @@
+[package]
+name = "perox-package"
+description = "Packaging apps built with PeroxIDE: a macOS .app and DMG, a Linux .deb and AppImage, a Windows MSI or zip."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+toml = "=1.2.1"
+tar = "=0.4.46"
+flate2 = "=1.1.11"
+zip = { version = "=9.6.1", default-features = false, features = ["deflate"] }
+image = { workspace = true, features = ["ico"] }
+
+[lints]
+workspace = true
