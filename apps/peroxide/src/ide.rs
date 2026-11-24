@@ -1242,6 +1242,34 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.set_animation", "Animate Property", Access::Edit)
+                .description("Makes an element's property change smoothly: `animate <property> { duration: …; easing: …; }`. duration like \"200ms\" or \"1s\" (an expression is fine); easing: linear, ease, ease-in, ease-out, ease-in-out, ease-out-back, ease-out-elastic, ease-out-bounce, cubic-bezier(…). remove: true stops animating it.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "property": { "type": "string" },
+                    "duration": { "type": "string" },
+                    "easing": { "type": "string" },
+                    "remove": { "type": "boolean" }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
+                let prop = inv.str_arg("property")?;
+                let edits = if inv.args["remove"].as_bool() == Some(true) {
+                    perox_slint::edit::remove_animation(&text, &comp, &path, prop)
+                } else {
+                    let duration = inv.args["duration"].as_str().unwrap_or("200ms");
+                    perox_slint::edit::set_animation(&text, &comp, &path, prop, duration, inv.args["easing"].as_str())
+                }
+                .map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "ok": true }))
+            },
+        ),
+        (
             CommandSpec::new("designer.expose", "Use Property from Code", Access::Edit)
                 .description("Makes an element's property readable and writable from Rust: names the element if needed and declares `in-out property <type> <id>_<prop> <=> <id>.<prop>;`, so the generated component gets get_<id>_<prop>() and set_<id>_<prop>(). With expose: false, removes that declaration.")
                 .params(path_schema(json!({

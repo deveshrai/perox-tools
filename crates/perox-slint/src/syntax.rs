@@ -277,6 +277,9 @@ pub struct Element {
     pub children: Vec<Element>,
     /// Every other member (declarations, states, animations…), in order.
     pub others: Vec<Range<usize>>,
+    /// `animate background, border-color { duration: 150ms; easing: ease-out; }` (also in
+    /// `others`).
+    pub animations: Vec<Animation>,
     /// For an element made by `for item in model : Elem { }` or `if cond : Elem { }`: that
     /// header, `for item in model` / `if cond` (`span` covers it too).
     pub header: Option<String>,
@@ -285,7 +288,32 @@ pub struct Element {
     pub slot: Option<usize>,
 }
 
+/// A property animation: which properties, and its settings (`duration`, `easing`,
+/// `delay`, `iteration-count`) as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Animation {
+    pub props: Vec<String>,
+    pub settings: Vec<(String, String)>,
+    pub span: Range<usize>,
+}
+
+impl Animation {
+    pub fn setting(&self, name: &str) -> Option<&str> {
+        self.settings
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
 impl Element {
+    /// The animation that covers `prop`.
+    pub fn animation(&self, prop: &str) -> Option<&Animation> {
+        self.animations
+            .iter()
+            .find(|a| a.props.iter().any(|p| p == prop))
+    }
+
     pub fn prop(&self, name: &str) -> Option<&Value> {
         self.props.iter().find(|p| p.name == name).map(|p| &p.value)
     }
@@ -584,6 +612,7 @@ fn build_element(
         handlers: Vec::new(),
         children: Vec::new(),
         others: Vec::new(),
+        animations: Vec::new(),
         header: None,
         slot: None,
     };
@@ -683,6 +712,32 @@ fn build_element(
                 } else {
                     out.others.push(trimmed(&child));
                 }
+            }
+            SyntaxKind::PropertyAnimation => {
+                let props = child
+                    .children()
+                    .filter(|c| c.kind() == SyntaxKind::QualifiedName)
+                    .map(|c| src[trimmed(&c)].to_owned())
+                    .collect();
+                let settings = child
+                    .children()
+                    .filter(|c| c.kind() == SyntaxKind::Binding)
+                    .map(|b| {
+                        let name = first_ident(&b).unwrap_or_default();
+                        let value = b
+                            .child_node(SyntaxKind::BindingExpression)
+                            .and_then(|e| e.children().next())
+                            .map(|n| src[trimmed(&n)].to_owned())
+                            .unwrap_or_default();
+                        (name, value)
+                    })
+                    .collect();
+                out.animations.push(Animation {
+                    props,
+                    settings,
+                    span: trimmed(&child),
+                });
+                out.others.push(trimmed(&child));
             }
             SyntaxKind::ChildrenPlaceholder => {
                 out.slot = Some(out.children.len());

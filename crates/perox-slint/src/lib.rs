@@ -8,7 +8,8 @@ pub mod project;
 pub mod syntax;
 
 pub use syntax::{
-    Callback, Component, Document, Element, Handler, Import, ParseError, Property, Value, parse,
+    Animation, Callback, Component, Document, Element, Handler, Import, ParseError, Property,
+    Value, parse,
 };
 
 /// For `build.rs`: `perox_slint::build::compile("ui")`.

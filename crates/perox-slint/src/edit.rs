@@ -338,6 +338,68 @@ pub fn set_handler(
     }])
 }
 
+/// Animates `prop` whenever it changes: `animate prop { duration: …; easing: …; }`.
+/// Replaces the settings if `prop` already has its own animation; one shared with other
+/// properties (`animate a, b { … }`) loses `prop`, which gets its own.
+pub fn set_animation(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    prop: &str,
+    duration: &str,
+    easing: Option<&str>,
+) -> Result<Vec<TextEdit>, EditError> {
+    check(&[prop])?;
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    let mut body = format!("duration: {};", duration.trim());
+    if let Some(e) = easing.filter(|e| !e.trim().is_empty()) {
+        body.push_str(&format!(" easing: {};", e.trim()));
+    }
+    let text = format!("animate {prop} {{ {body} }}");
+    Ok(match el.animation(prop) {
+        Some(a) if a.props.len() == 1 => vec![TextEdit {
+            range: a.span.clone(),
+            text,
+        }],
+        Some(_) => {
+            let mut edits = remove_animation(src, comp, path, prop)?;
+            edits.push(insert_member(src, el, &text));
+            edits
+        }
+        None => vec![insert_member(src, el, &text)],
+    })
+}
+
+/// Stops animating `prop`: removes its animation, or just its name from a shared one.
+pub fn remove_animation(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    prop: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    let Some(a) = el.animation(prop) else {
+        return Ok(Vec::new());
+    };
+    if a.props.len() == 1 {
+        return Ok(vec![delete_member(src, a.span.clone())]);
+    }
+    let rest: Vec<&str> = a
+        .props
+        .iter()
+        .filter(|p| *p != prop)
+        .map(String::as_str)
+        .collect();
+    let text = &src[a.span.clone()];
+    let brace = text.find('{').unwrap_or(text.len());
+    Ok(vec![TextEdit {
+        range: a.span.start..a.span.start + brace,
+        text: format!("animate {} ", rest.join(", ")),
+    }])
+}
+
 pub fn remove_handler(
     src: &str,
     comp: &str,
@@ -1227,6 +1289,51 @@ mod tests {
             &remove_handler(&out, "Main", &[0, 1], "pointer-event").unwrap(),
         );
         assert_eq!(out2, SRC);
+        // Animations: added, changed, shared ones split, removed.
+        let out = run(set_animation(
+            SRC,
+            "Main",
+            &[0, 1],
+            "color",
+            "150ms",
+            Some("ease-out"),
+        ));
+        assert!(
+            out.contains("animate color { duration: 150ms; easing: ease-out; }"),
+            "{out}"
+        );
+        let doc = parse(&out);
+        let a = doc.components[0]
+            .at(&[0, 1])
+            .unwrap()
+            .animation("color")
+            .unwrap()
+            .clone();
+        assert_eq!(a.setting("duration"), Some("150ms"));
+        assert_eq!(a.setting("easing"), Some("ease-out"));
+        let slower = apply(
+            &out,
+            &set_animation(&out, "Main", &[0, 1], "color", "400ms", None).unwrap(),
+        );
+        assert!(
+            slower.contains("animate color { duration: 400ms; }"),
+            "{slower}"
+        );
+        assert_eq!(slower.matches("animate").count(), 1);
+        let gone = apply(
+            &slower,
+            &remove_animation(&slower, "Main", &[0, 1], "color").unwrap(),
+        );
+        assert_eq!(gone, SRC);
+        let shared = SRC.replace(
+            "text: \"B\";",
+            "text: \"B\"; animate x, y { duration: 1s; }",
+        );
+        let split = apply(
+            &shared,
+            &remove_animation(&shared, "Main", &[0, 1], "x").unwrap(),
+        );
+        assert!(split.contains("animate y { duration: 1s; }"), "{split}");
         // Two-way bindings: written, read back, and turned back into a plain value.
         let out = run(set_property(SRC, "Main", &[0, 1], "text", "<=> root.name"));
         assert!(out.contains("text <=> root.name;"), "{out}");

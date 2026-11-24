@@ -2379,6 +2379,26 @@ impl Designer {
                 });
         }
 
+        // Animations: properties that change smoothly instead of jumping.
+        let animatable: Vec<String> = known
+            .iter()
+            .chain(&layout)
+            .filter(|p| {
+                matches!(
+                    p.kind,
+                    PropKind::Color | PropKind::Length | PropKind::Float | PropKind::Int
+                )
+            })
+            .map(|p| p.name.to_string())
+            .collect();
+        if !animatable.is_empty() || !el.animations.is_empty() {
+            egui::CollapsingHeader::new("Animations")
+                .default_open(!el.animations.is_empty())
+                .show(ui, |ui| {
+                    self.animation_rows(ui, &c.name, &el, &path, &animatable, source, actions)
+                });
+        }
+
         if path.is_empty()
             && let Some((base, _)) = self.base()
         {
@@ -2407,6 +2427,94 @@ impl Designer {
                 .show(ui, |ui| {
                     self.events(ui, &c, &el, &path, events, source, actions)
                 });
+        }
+    }
+
+    /// One row per animated property (duration, easing, remove), and "Animate…" for the
+    /// others.
+    #[allow(clippy::too_many_arguments)]
+    fn animation_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        comp: &str,
+        el: &Element,
+        path: &[usize],
+        animatable: &[String],
+        source: &str,
+        actions: &mut Vec<Action>,
+    ) {
+        const EASINGS: &[&str] = &[
+            "linear",
+            "ease",
+            "ease-in",
+            "ease-out",
+            "ease-in-out",
+            "ease-out-back",
+            "ease-out-elastic",
+            "ease-out-bounce",
+        ];
+        for a in &el.animations {
+            for prop in &a.props {
+                let duration = a.setting("duration").unwrap_or("250ms").to_owned();
+                let easing = a.setting("easing").map(str::to_owned);
+                ui.horizontal(|ui| {
+                    label_cell(ui, RichText::new(prop.as_str()))
+                        .on_hover_text("Changes to this property play out over the duration");
+                    if let Some(new) =
+                        self.text_field(ui, &format!("{path:?}/#anim/{prop}"), &duration, false)
+                    {
+                        self.apply(
+                            actions,
+                            edit::set_animation(source, comp, path, prop, &new, easing.as_deref()),
+                        );
+                    }
+                    let shown = easing.clone().unwrap_or_else(|| "linear".into());
+                    let mut picked = None;
+                    egui::ComboBox::from_id_salt(format!("{path:?}/#easing/{prop}"))
+                        .selected_text(&shown)
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for e in EASINGS {
+                                if ui.selectable_label(shown == *e, *e).clicked() {
+                                    picked = Some(*e);
+                                }
+                            }
+                        });
+                    if let Some(e) = picked {
+                        self.apply(
+                            actions,
+                            edit::set_animation(source, comp, path, prop, &duration, Some(e)),
+                        );
+                    }
+                    if small_icon_button(ui, Icon::X, "Stop animating it").clicked() {
+                        self.apply(actions, edit::remove_animation(source, comp, path, prop));
+                    }
+                });
+            }
+        }
+        let free: Vec<&String> = animatable
+            .iter()
+            .filter(|p| el.animation(p).is_none())
+            .collect();
+        if !free.is_empty() {
+            ui.menu_button("Animate…", |ui| {
+                for p in free {
+                    if ui.button(p.as_str()).clicked() {
+                        self.apply(
+                            actions,
+                            edit::set_animation(
+                                source,
+                                comp,
+                                path,
+                                p,
+                                "200ms",
+                                Some("ease-in-out"),
+                            ),
+                        );
+                        ui.close();
+                    }
+                }
+            });
         }
     }
 
@@ -3425,7 +3533,12 @@ pub fn expose_property_as(
         }
     };
     let name = as_name.map_or_else(|| format!("{id}_{prop}").replace('-', "_"), str::to_owned);
-    if c.property(&name).is_some() {
+    // A name of your choosing mustn't take over another property (the default one is
+    // simply already exposed: nothing to do).
+    if as_name.is_some()
+        && c.property(&name)
+            .is_some_and(|p| p.alias.as_deref() != Some(&format!("{id}.{prop}")))
+    {
         return Err(EditError::InvalidName(format!(
             "{name} (there's already a property with this name)"
         )));
