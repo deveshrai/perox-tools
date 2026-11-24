@@ -35,6 +35,8 @@ macro_rules! icons {
 }
 
 icons! {
+    Table => "table",
+    ChartSpline => "chart-spline",
     AlignCenterHorizontal => "align-center-horizontal",
     AlignStartHorizontal => "align-start-horizontal",
     AlignHorizontalDistributeCenter => "align-horizontal-distribute-center",

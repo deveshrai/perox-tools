@@ -141,6 +141,8 @@ ICONS = {
     "square-dashed": (GR, {}, None),
     "square-mouse-pointer": (B, {}, None),
     "sun": (Y, {}, "line"),
+    "table": (LB, {}, None),
+    "chart-spline": (B, {0: "ink"}, "line"),
     "terminal": (T, {}, None),
     "text-cursor-input": (B, {}, None),
     "toggle-left": (G, {1: W}, None),

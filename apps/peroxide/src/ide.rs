@@ -398,7 +398,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.add_widget", "Add Element", Access::Edit)
-                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView Image TouchArea, or any component. Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
+                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea, or any component (other std-widgets ones are imported too). Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
                 .params(path_schema(json!({
                     "component": { "type": "string" },
                     "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
@@ -535,13 +535,8 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
                 let prop = inv.str_arg("name")?;
                 if inv.args["expose"].as_bool() == Some(false) {
-                    let c = doc.component(&comp).ok_or_else(|| err("No component."))?;
-                    let target = c.at(&path).and_then(|e| e.id.clone()).map(|i| format!("{i}.{prop}"));
-                    let Some(decl) = target.and_then(|t| c.exposing(&t)) else {
-                        return Ok(json!({ "exposed": false }));
-                    };
-                    let edits = perox_slint::edit::remove_property_decl(&text, &comp, &decl.name).map_err(|e| err(e.to_string()))?;
-                    apply_form_edits(s, id, edits);
+                    let new = perox_designer::unexpose_property(&text, &comp, &path, prop).map_err(|e| err(e.to_string()))?;
+                    apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
                     return Ok(json!({ "exposed": false }));
                 }
                 let new = perox_designer::expose_property(&text, &comp, &path, prop).map_err(|e| err(e.to_string()))?;

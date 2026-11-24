@@ -26,6 +26,9 @@ pub enum PropKind {
     Choice(&'static [&'static str]),
     /// Anything else, edited as a `.slint` expression.
     Source,
+    /// Data of a known Slint type (`[[StandardListViewItem]]`), edited as an expression;
+    /// the type lets it be used from code.
+    Data(&'static str),
 }
 
 #[derive(Debug, Clone)]
@@ -347,6 +350,51 @@ pub const KINDS: &[Kind] = &[
         events: &[e("current-item-changed", &[("current-item", "int")])],
     },
     Kind {
+        name: "StandardTableView",
+        icon: Icon::Table,
+        group: Group::Widget,
+        std: true,
+        props: &[
+            p("columns", Data("[TableColumn]"), "[{ title: \"Name\" }, …]"),
+            p(
+                "rows",
+                Data("[[StandardListViewItem]]"),
+                "[[{ text: \"a\" }, …], …]",
+            ),
+            p("current-row", Int, "Selected row (-1: none)"),
+        ],
+        events: &[
+            e("current-row-changed", &[("current-row", "int")]),
+            e("sort-ascending", &[("column", "int")]),
+            e("sort-descending", &[("column", "int")]),
+        ],
+    },
+    Kind {
+        name: "Path",
+        icon: Icon::ChartSpline,
+        group: Group::Widget,
+        std: false,
+        props: &[
+            p("commands", Text, "SVG path data: M 0 80 L 50 20 …"),
+            p("stroke", Color, ""),
+            p("stroke-width", Length, ""),
+            p("fill", Color, ""),
+            p(
+                "viewbox-width",
+                Float,
+                "Width of the commands' coordinate space",
+            ),
+            p(
+                "viewbox-height",
+                Float,
+                "Height of the commands' coordinate space",
+            ),
+            p("viewbox-x", Float, ""),
+            p("viewbox-y", Float, ""),
+        ],
+        events: &[],
+    },
+    Kind {
         name: "Image",
         icon: Icon::Image,
         group: Group::Widget,
@@ -413,8 +461,15 @@ pub fn slint_type(spec: &PropSpec) -> Option<&'static str> {
         // Colors on elements are brushes (`color`, `background`, `border-color`…).
         Color => "brush",
         Items => "[string]",
+        Data(ty) => ty,
         Choice(_) | Source => return None,
     })
+}
+
+/// Properties Slint lets you bind but not alias with `<=>` (`Path.commands`): using them
+/// from code means binding them to a root property instead.
+pub fn binding_only(kind: &str, prop: &str) -> bool {
+    matches!((kind, prop), ("Path", "commands"))
 }
 
 /// Size properties every element accepts.
@@ -526,6 +581,20 @@ pub fn defaults(kind: &str) -> Vec<(String, String)> {
             "model",
             "[{ text: \"One\" }, { text: \"Two\" }, { text: \"Three\" }]",
         )],
+        "StandardTableView" => vec![
+            n("columns", "[{ title: \"Name\" }, { title: \"Value\" }]"),
+            n(
+                "rows",
+                "[[{ text: \"One\" }, { text: \"1\" }], [{ text: \"Two\" }, { text: \"2\" }]]",
+            ),
+        ],
+        "Path" => vec![
+            s("commands", "M 0 80 L 25 45 L 50 60 L 75 25 L 100 35"),
+            n("viewbox-width", "100"),
+            n("viewbox-height", "100"),
+            n("stroke", "#3b82f6"),
+            n("stroke-width", "2px"),
+        ],
         "Slider" => vec![n("value", "50")],
         "ProgressIndicator" => vec![n("progress", "0.5")],
         "Rectangle" => vec![n("border-width", "1px"), n("border-color", "#80808080")],
@@ -540,6 +609,8 @@ pub fn free_default_size(kind: &str) -> Option<(f64, f64)> {
         | "ScrollView" => Some((200.0, 120.0)),
         "TabWidget" => Some((280.0, 180.0)),
         "StandardListView" | "TextEdit" => Some((160.0, 120.0)),
+        "StandardTableView" => Some((260.0, 140.0)),
+        "Path" => Some((160.0, 100.0)),
         _ => None,
     }
 }

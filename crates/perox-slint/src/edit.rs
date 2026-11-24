@@ -483,8 +483,28 @@ pub fn remove_element(src: &str, comp: &str, path: &[usize]) -> Result<Vec<TextE
         return Err(EditError::Root);
     }
     let doc = parse(src);
-    let el = element(component(&doc, comp)?, path)?;
-    Ok(vec![delete_member(src, el.span.clone())])
+    let c = component(&doc, comp)?;
+    let el = element(c, path)?;
+    let mut edits = vec![delete_member(src, el.span.clone())];
+    // Root properties that alias something inside (`<=> name_edit.text`) would dangle.
+    let mut ids = Vec::new();
+    collect_ids(el, &mut ids);
+    for p in &c.properties {
+        let target = p.alias.as_deref().and_then(|a| a.split('.').next());
+        if target.is_some_and(|t| ids.contains(&crate::syntax::normalize(t))) {
+            edits.push(delete_member(src, p.span.clone()));
+        }
+    }
+    Ok(edits)
+}
+
+fn collect_ids(el: &Element, out: &mut Vec<String>) {
+    if let Some(id) = &el.id {
+        out.push(crate::syntax::normalize(id));
+    }
+    for c in &el.children {
+        collect_ids(c, out);
+    }
 }
 
 /// Moves an element to child `index` of `to_parent` (indices as before the move).
@@ -636,6 +656,45 @@ pub fn expose_property(
     Ok(vec![declare(src, c, after, &line)])
 }
 
+/// Declares a root property with an optional initial value:
+/// `in-out property <ty> name: init;`.
+pub fn add_property(
+    src: &str,
+    comp: &str,
+    name: &str,
+    ty: &str,
+    init: Option<&str>,
+) -> Result<Vec<TextEdit>, EditError> {
+    check(&[name])?;
+    let doc = parse(src);
+    let c = component(&doc, comp)?;
+    if c.property(name).is_some() {
+        return Ok(Vec::new());
+    }
+    let line = match init {
+        Some(v) => format!("in-out property <{ty}> {name}: {v};"),
+        None => format!("in-out property <{ty}> {name};"),
+    };
+    let after = c
+        .properties
+        .iter()
+        .map(|p| p.span.end)
+        .max()
+        .or_else(|| c.callbacks.iter().map(|cb| cb.span.end).max());
+    Ok(vec![declare(src, c, after, &line)])
+}
+
+/// The initial value written in a root property's declaration (`… name: value;`).
+pub fn property_initial_value(src: &str, comp: &str, name: &str) -> Option<String> {
+    let doc = parse(src);
+    let p = component(&doc, comp).ok()?.property(name)?.clone();
+    let text = src.get(p.span)?;
+    let after_type = text.rfind('>').map_or(0, |i| i + 1);
+    let (_, value) = text[after_type..].split_once(':')?;
+    let value = value.trim().trim_end_matches(';').trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
 /// Removes a root property declaration.
 pub fn remove_property_decl(src: &str, comp: &str, name: &str) -> Result<Vec<TextEdit>, EditError> {
     let doc = parse(src);
@@ -691,6 +750,15 @@ mod tests {
     use super::*;
 
     const SRC: &str = "import { Button } from \"std-widgets.slint\";\n// header\nexport component Main inherits Window {\n    title: \"Hi\";   // keep me\n    callback go();\n\n    VerticalLayout {\n        a := Text { text: \"A\"; }\n        /* between */\n        b := Text { text: \"B\"; }\n    }\n}\n";
+
+    #[test]
+    fn removing_an_element_drops_properties_that_alias_it() {
+        let src = "export component W inherits Window {\n    in-out property <string> name <=> name-edit.text;\n    in-out property <string> keep: \"\";\n    VerticalLayout {\n        HorizontalLayout {\n            name_edit := TextInput { }\n        }\n    }\n}\n";
+        let out = apply(src, &remove_element(src, "W", &[0, 0]).unwrap());
+        assert!(!out.contains("name <=>"), "{out}");
+        assert!(out.contains("property <string> keep"));
+        assert!(!out.contains("TextInput"));
+    }
 
     fn run(edits: Result<Vec<TextEdit>, EditError>) -> String {
         let out = apply(SRC, &edits.unwrap());

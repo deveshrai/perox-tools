@@ -1648,12 +1648,10 @@ impl Designer {
             .min_size(vec2(width, 0.0));
         if ui.add(b).on_hover_text(tip).clicked() {
             let result = match exposed {
-                Some(n) => edit::remove_property_decl(source, comp, &n),
-                None => match expose_property(source, comp, path, &spec.name) {
-                    Ok(new) => Ok(edit::diff(source, &new)),
-                    Err(e) => Err(e),
-                },
-            };
+                Some(_) => unexpose_property(source, comp, path, &spec.name),
+                None => expose_property(source, comp, path, &spec.name),
+            }
+            .map(|new| edit::diff(source, &new));
             self.apply(actions, result);
         }
     }
@@ -1786,7 +1784,7 @@ impl Designer {
                     });
                 picked
             }
-            PropKind::Source => {
+            PropKind::Source | PropKind::Data(_) => {
                 let current = value.map(Value::to_source).unwrap_or_default();
                 self.text_field(ui, &key, &current, false)
                     .filter(|t| !t.trim().is_empty())
@@ -2009,10 +2007,61 @@ pub fn expose_property(
     };
     let name = format!("{id}_{prop}").replace('-', "_");
     let s = work.clone();
-    free::step(
-        &mut work,
-        edit::expose_property(&s, comp, &name, ty, &format!("{id}.{prop}")),
-    )?;
+    if catalog::binding_only(&el.kind, prop) {
+        // The root property takes over the current value, and the element binds to it.
+        let current = el
+            .props
+            .iter()
+            .find(|p| p.name == prop)
+            .map(|p| p.value.to_source());
+        free::step(
+            &mut work,
+            edit::add_property(&s, comp, &name, ty, current.as_deref()),
+        )?;
+        let s = work.clone();
+        free::step(
+            &mut work,
+            edit::set_property(&s, comp, path, prop, &format!("root.{name}")),
+        )?;
+    } else {
+        free::step(
+            &mut work,
+            edit::expose_property(&s, comp, &name, ty, &format!("{id}.{prop}")),
+        )?;
+    }
+    Ok(work)
+}
+
+/// Stops using a property from code: removes the root property, and for a bound one
+/// (see [`catalog::binding_only`]) gives the element back the property's value.
+pub fn unexpose_property(
+    source: &str,
+    comp: &str,
+    path: &[usize],
+    prop: &str,
+) -> Result<String, EditError> {
+    let doc = perox_slint::parse(source);
+    let c = doc
+        .component(comp)
+        .ok_or_else(|| EditError::NoSuchComponent(comp.into()))?;
+    let el = c.at(path).ok_or(EditError::NoSuchElement)?;
+    let Some(id) = &el.id else {
+        return Ok(source.to_owned());
+    };
+    let Some(decl) = c.exposing(&format!("{id}.{prop}")).cloned() else {
+        return Ok(source.to_owned());
+    };
+    let mut work = source.to_owned();
+    if decl.alias.is_none() {
+        let value = edit::property_initial_value(source, comp, &decl.name);
+        let s = work.clone();
+        match value {
+            Some(v) => free::step(&mut work, edit::set_property(&s, comp, path, prop, &v))?,
+            None => free::step(&mut work, edit::remove_property(&s, comp, path, prop))?,
+        }
+    }
+    let s = work.clone();
+    free::step(&mut work, edit::remove_property_decl(&s, comp, &decl.name))?;
     Ok(work)
 }
 

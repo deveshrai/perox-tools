@@ -118,9 +118,18 @@ pub fn strip(
     Ok(())
 }
 
+/// `std-widgets.slint` exports that aren't in the palette but can still be added (by
+/// name, or over MCP).
+pub const MORE_STD_WIDGETS: &[&str] = &[
+    "ListView",
+    "AboutSlint",
+    "DatePickerPopup",
+    "TimePickerPopup",
+];
+
 /// Makes sure a `std-widgets.slint` kind is imported.
 pub fn import(work: &mut String, kind: &str) {
-    if catalog::kind(kind).is_some_and(|k| k.std) {
+    if catalog::kind(kind).is_some_and(|k| k.std) || MORE_STD_WIDGETS.contains(&kind) {
         let e = edit::ensure_import(work, kind, catalog::STD_WIDGETS);
         *work = edit::apply(work, &e);
     }

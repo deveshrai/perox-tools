@@ -392,11 +392,33 @@ impl Component {
     }
 
     /// The root property that exposes `target` (`name_edit.text`), if any.
+    /// The root property that makes `target` (`id.prop`) usable from code: one aliasing it
+    /// (`<=> id.prop`), or one it's bound to (`prop: root.name;`), for properties Slint
+    /// only lets you bind.
     pub fn exposing(&self, target: &str) -> Option<&PropertyDecl> {
         let t = normalize(target);
-        self.properties
+        if let Some(p) = self
+            .properties
             .iter()
             .find(|p| p.alias.as_deref().is_some_and(|a| normalize(a) == t))
+        {
+            return Some(p);
+        }
+        let (id, prop) = t.split_once('.')?;
+        let path = self.find(id).or_else(|| {
+            let mut found = None;
+            self.root.walk(&mut Vec::new(), &mut |el, path| {
+                if found.is_none() && el.id.as_deref().map(normalize).as_deref() == Some(id) {
+                    found = Some(path.to_vec());
+                }
+            });
+            found
+        })?;
+        let el = self.at(&path)?;
+        let bound = el.props.iter().find(|p| normalize(&p.name) == prop)?;
+        let source = bound.value.to_source();
+        let name = source.strip_prefix("root.")?;
+        self.property(name).filter(|p| p.alias.is_none())
     }
 
     pub fn property(&self, name: &str) -> Option<&PropertyDecl> {
