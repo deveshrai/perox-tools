@@ -80,10 +80,23 @@ failure shows its output and a link to where it panicked. View → Test Explorer
 
 Claude Code can drive all of it, the designer included, over MCP ([docs/mcp.md](docs/mcp.md)).
 
-**Sample: [Stock Viewer](examples/stock-viewer).** A stock lookup app (quote, chart,
-history, company details, links) that Claude Code built inside PeroxIDE over MCP: the
-window in the form designer, the code written, tested and linted through the IDE.
-[How it was built](examples/stock-viewer/BUILDING.md), step by step.
+## Sample app: Stock Viewer
+
+[examples/stock-viewer](examples/stock-viewer) looks up a stock: type a ticker and get the
+quote, a closing-price chart (1 month to 5 years), the daily history in a table, company
+details from SEC filings, and links to Yahoo Finance, the SEC filings, the latest annual
+report and the company website, opened in your browser. Data comes from Yahoo Finance and
+SEC EDGAR, with no API keys.
+
+It was built inside PeroxIDE by Claude Code, driving the IDE over MCP. The window was made
+in the form designer (layouts, a table, a chart, events wired with Go to handler,
+properties used from code), and the Rust was written, built, tested, formatted and
+linted through the IDE. [BUILDING.md](examples/stock-viewer/BUILDING.md) records every
+step, with screenshots, including the gaps in the tools it found and how they were fixed.
+
+```sh
+cargo run -p stock-viewer -- MSFT
+```
 
 ![Stock Viewer, a sample built in PeroxIDE](examples/stock-viewer/docs/app-aapl.png)
 
