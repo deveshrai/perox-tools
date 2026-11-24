@@ -1,0 +1,193 @@
+import { Button, HorizontalBox, LineEdit, VerticalBox, StandardListView } from "std-widgets.slint";
+import { Card } from "parts/card.slint";
+import { Segmented } from "parts/segmented.slint";
+import { Key } from "parts/key.slint";
+import { FnField } from "parts/fn_field.slint";
+
+// A key on the keypad: what it shows, and its role (digit, op, fn, accent, clear).
+export struct KeyData { label: string, role: string }
+// An axis label over the plot.
+export struct PlotLabel { x: length, y: length, text: string }
+
+// The main window. Design it in PeroxIDE (Design tab) or edit it here.
+export component MainWindow inherits Window {
+    title: "Graphing Calculator";
+    preferred-width: 1280px;
+    preferred-height: 800px;
+
+    // What the Rust code reads and writes.
+
+    callback about_clicked();
+    callback key_pressed(label: string);
+    callback evaluate();
+    callback angle_picked(index: int);
+    callback history_picked(index: int);
+    callback mode_picked(index: int);
+    callback functions_edited();
+    callback reset_view();
+    callback plot_pressed(x: float, y: float);
+    callback plot_dragged(x: float, y: float);
+    callback plot_scrolled(delta: float);
+    callback plot_resized();
+    in property <[[KeyData]]> keys: [[{ label: "sin", role: "fn" }, { label: "cos", role: "fn" }, { label: "tan", role: "fn" }, { label: "π", role: "fn" }, { label: "e", role: "fn" }], [{ label: "asin", role: "fn" }, { label: "acos", role: "fn" }, { label: "atan", role: "fn" }, { label: "ln", role: "fn" }, { label: "log", role: "fn" }], [{ label: "x²", role: "fn" }, { label: "√", role: "fn" }, { label: "^", role: "fn" }, { label: "(", role: "fn" }, { label: ")", role: "fn" }], [{ label: "x", role: "fn" }, { label: "y", role: "fn" }, { label: "n!", role: "fn" }, { label: "%", role: "fn" }, { label: "Plot", role: "op" }], [{ label: "7", role: "digit" }, { label: "8", role: "digit" }, { label: "9", role: "digit" }, { label: "÷", role: "op" }, { label: "AC", role: "clear" }], [{ label: "4", role: "digit" }, { label: "5", role: "digit" }, { label: "6", role: "digit" }, { label: "×", role: "op" }, { label: "⌫", role: "clear" }], [{ label: "1", role: "digit" }, { label: "2", role: "digit" }, { label: "3", role: "digit" }, { label: "−", role: "op" }, { label: "Ans", role: "op" }], [{ label: "0", role: "digit" }, { label: ".", role: "digit" }, { label: "EXP", role: "fn" }, { label: "+", role: "op" }, { label: "=", role: "accent" }]];
+    in property <string> result: "0";
+    in property <bool> result_error: false;
+    in property <string> memo: "";
+    in property <[StandardListViewItem]> history: [{ text: "sin(30) = 0.5" }, { text: "2^10 = 1024" }];
+    in property <int> mode: 0;
+    in property <[PlotLabel]> plot_labels: [];
+    in property <string> plot_hint: "Drag to pan · scroll to zoom · double-click to reset";
+    in property <[bool]> fn_errors: [false, false, false, false];
+    in-out property <string> expression <=> expr.text;
+    in-out property <string> fn1: "sin(x)";
+    in-out property <string> fn2: "x^2/4 - 2";
+    in-out property <string> fn3: "";
+    in-out property <string> fn_z: "sin(sqrt(x^2 + y^2))";
+    in property <image> plot_image;
+    out property <length> plot_width: plot.width;
+    out property <length> plot_height: plot.height;
+    background: #0b0e13;
+
+    horizontal_layout1 := HorizontalLayout {
+        padding: 18px;
+        spacing: 18px;
+        calc := Card {
+            width: 400px;
+            display := Rectangle {
+                background: @linear-gradient(180deg, #0e1219 0%, #0a0d12 100%);
+                border-color: #ffffff0d;
+                border-radius: 12px;
+                border-width: 1px;
+                min-height: 150px;
+                vertical_layout1 := VerticalLayout {
+                    padding: 14px;
+                    spacing: 8px;
+                    horizontal_layout2 := HorizontalLayout {
+                        spacing: 8px;
+                        angle := Segmented { items: ["DEG", "RAD"]; picked(index) => { root.angle_picked(index); } }
+                        Text {
+                            color: #6f7b90;
+                            font-size: 13px;
+                            horizontal-alignment: right;
+                            horizontal-stretch: 1;
+                            text: root.memo;
+                            vertical-alignment: center;
+                        }
+                    }
+                    expr := LineEdit {
+                        font-size: 18px;
+                        placeholder-text: "Type an expression, e.g. 2sin(45)+√2";
+                        accepted(t) => { root.evaluate(); }
+                    }
+                    answer := Text {
+                        color: root.result_error ? #ff8a8a : #ffffff;
+                        font-size: 36px;
+                        font-weight: 700;
+                        horizontal-alignment: right;
+                        overflow: elide;
+                        text: root.result;
+                    }
+                }
+            }
+            keypad := VerticalLayout {
+                spacing: 8px;
+                for row in root.keys : key_row := HorizontalLayout {
+                    spacing: 8px;
+                    for k in row : key := Key {
+                        horizontal-stretch: 1;
+                        label: k.label;
+                        role: k.role;
+                        clicked => { root.key_pressed(k.label); }
+                    }
+                }
+            }
+            Text {
+                color: #7f8aa0;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 1px;
+                text: "HISTORY";
+            }
+            history_list := StandardListView {
+                min-height: 80px;
+                model: root.history;
+                vertical-stretch: 1;
+                item-pointer-event(index, event, pos) => { if event.kind == PointerEventKind.down { root.history_picked(index); } }
+            }
+        }
+        graph := Card {
+            horizontal-stretch: 1;
+            graph_bar := HorizontalLayout {
+                spacing: 12px;
+                mode_pick := Segmented {
+                    current: root.mode;
+                    items: ["2D graph", "3D surface"];
+                    picked(index) => { root.mode_picked(index); }
+                }
+                Text {
+                    color: #6f7b90;
+                    font-size: 13px;
+                    horizontal-alignment: right;
+                    horizontal-stretch: 1;
+                    text: root.plot_hint;
+                    vertical-alignment: center;
+                }
+                reset := Button { text: "Reset view"; clicked => { root.reset_view(); } }
+                about := Button { text: "About"; clicked => { root.about_clicked(); } }
+            }
+            if root.mode == 0 : fns_2d := HorizontalLayout {
+                spacing: 10px;
+                f1 := FnField {
+                    dot: #4c8dff;
+                    error: root.fn_errors[0];
+                    text <=> root.fn1;
+                    edited => { root.functions_edited(); }
+                }
+                f2 := FnField {
+                    dot: #ff9f43;
+                    error: root.fn_errors[1];
+                    text <=> root.fn2;
+                    edited => { root.functions_edited(); }
+                }
+                f3 := FnField {
+                    dot: #2ed47a;
+                    error: root.fn_errors[2];
+                    text <=> root.fn3;
+                    label: "y =";
+                    edited => { root.functions_edited(); }
+                }
+            }
+            if root.mode == 1 : fz := FnField {
+                dot: #b07cff;
+                error: root.fn_errors[3];
+                label: "z =";
+                text <=> root.fn_z;
+                edited => { root.functions_edited(); }
+            }
+            plot_area := Rectangle {
+                background: #0a0d12;
+                border-color: #ffffff0d;
+                border-radius: 12px;
+                border-width: 1px;
+                clip: true;
+                vertical-stretch: 1;
+                plot := Image {
+                    image-fit: fill;
+                    height: parent.height;
+                    width: parent.width;
+                    source: root.plot_image;
+                    changed width => { root.plot_resized(); }
+                    changed height => { root.plot_resized(); }
+                }
+                for l in root.plot_labels : axis_label := Text {
+                    color: #7f8aa0;
+                    font-size: 11px;
+                    text: l.text;
+                    x: l.x;
+                    y: l.y;
+                }
+                plot_touch := TouchArea { mouse-cursor: move; pointer-event(event) => { if event.kind == PointerEventKind.down { root.plot_pressed(self.mouse-x / 1px, self.mouse-y / 1px); } } moved => { root.plot_dragged(self.mouse-x / 1px, self.mouse-y / 1px); } scroll-event(event) => { root.plot_scrolled(event.delta-y / 1px); return accept; } double-clicked => { root.reset_view(); } }
+            }
+        }
+    }
+}

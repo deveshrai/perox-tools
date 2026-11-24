@@ -156,6 +156,13 @@ failure shows its output and a link to where it panicked. View → Test Explorer
 
 ![The Test Explorer with a failing test](docs/screenshots/test-explorer.png)
 
+**Canvas.** For what only code can draw (graphs, charts, games), drop a Canvas from the
+palette: an image wired for the code to draw into with tiny-skia (`perox_ui::canvas`),
+redrawn when it's resized. The Graphing Calculator's plots are one.
+
+**Run and Screenshot** (`build.snapshot` over MCP) runs the app and saves a PNG of its
+window once it has settled: the real app, with its data, even with the screen locked.
+
 **Package App.** Build → Package App makes a release build and turns it into something
 to hand out, in `target/peroxide/package`:
 
@@ -224,6 +231,22 @@ cargo run -p stock-dashboard
 ```
 
 ![Stock Dashboard, a sample built in PeroxIDE](examples/stock-dashboard/docs/app-aapl.png)
+
+## Sample app: Graphing Calculator
+
+[examples/graphing-calculator](examples/graphing-calculator) is a scientific calculator
+with a 2D graph of up to three functions and a 3D surface you turn with the mouse. The
+plots are drawn in Rust on the designer's **Canvas**. Building it, again by Claude Code
+over MCP, found six gaps (nowhere for code to draw, `changed` handlers, two-way bindings,
+passing a part's property through, using a project component's property from code, and
+seeing the running app with the screen locked), each fixed in PeroxIDE first.
+[BUILDING.md](examples/graphing-calculator/BUILDING.md) has the record.
+
+```sh
+cargo run -p graphing-calculator
+```
+
+![Graphing Calculator, a sample built in PeroxIDE](examples/graphing-calculator/docs/app-3d.png)
 
 ## Build and run
 

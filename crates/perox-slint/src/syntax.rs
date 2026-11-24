@@ -605,6 +605,20 @@ fn build_element(
                     value_span,
                 });
             }
+            // `text <=> root.name;`: a two-way binding, kept as the value `<=> root.name`.
+            SyntaxKind::TwoWayBinding => {
+                let name = first_ident(&child).unwrap_or_default();
+                let span = trimmed(&child);
+                let text = &src[span.clone()];
+                let start = text.find("<=>").map_or(span.start, |i| span.start + i);
+                let end = span.start + text.trim_end().trim_end_matches(';').trim_end().len();
+                out.props.push(Property {
+                    name,
+                    value: Value::Expr(src[start..end].to_owned()),
+                    span,
+                    value_span: start..end,
+                });
+            }
             // `clicked => { … }`, and `changed width => { … }` (event `changed width`).
             SyntaxKind::CallbackConnection | SyntaxKind::PropertyChangedCallback => {
                 let event = if child.kind() == SyntaxKind::PropertyChangedCallback {

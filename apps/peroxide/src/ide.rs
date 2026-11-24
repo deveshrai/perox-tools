@@ -1248,6 +1248,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     "component": { "type": "string" },
                     "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
                     "name": { "type": "string", "description": "The property, e.g. text, checked, value" },
+                    "as": { "type": "string", "description": "The root property's name (default <id>_<prop>); e.g. a component passing its LineEdit's text through as `text`" },
                     "expose": { "type": "boolean", "description": "Default true" }
                 }))),
             |s, inv| {
@@ -1261,15 +1262,24 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
                     return Ok(json!({ "exposed": false }));
                 }
-                let new = perox_designer::expose_property(&text, &comp, &path, prop).map_err(|e| err(e.to_string()))?;
+                let as_name = inv.args["as"].as_str();
+                // A project component's property: its type from the declaration.
+                let file = resolve(s, inv, "path")?;
+                let custom_ty = doc
+                    .component(&comp)
+                    .and_then(|c| c.at(&path))
+                    .and_then(|el| perox_designer::components::definition(&file, &text, &el.kind))
+                    .and_then(|d| d.properties.into_iter().find(|p| p.name == prop && p.visibility != "private"))
+                    .and_then(|p| p.ty);
+                let new = perox_designer::expose_property_as(&text, &comp, &path, prop, as_name, custom_ty.as_deref()).map_err(|e| err(e.to_string()))?;
                 apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
                 let doc = perox_slint::parse(&new);
-                let name = doc
+                let name = as_name.map(str::to_owned).or_else(|| doc
                     .component(&comp)
                     .and_then(|c| {
                         let el = c.at(&path)?;
                         c.exposing(&format!("{}.{prop}", el.id.as_ref()?)).map(|p| p.name.clone())
-                    })
+                    }))
                     .unwrap_or_default();
                 let r = perox_slint::codegen::rust_name(&name);
                 Ok(json!({ "exposed": true, "property": name, "rust": [format!("get_{r}"), format!("set_{r}")] }))

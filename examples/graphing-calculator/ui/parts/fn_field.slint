@@ -1,0 +1,41 @@
+import { VerticalBox, LineEdit } from "std-widgets.slint";
+
+// A reusable part: drop it on any form from the designer's palette (This project).
+export component FnField inherits Rectangle {
+    in property <string> label: "y =";
+    in property <color> dot: #4a7bff;
+    in property <bool> error: false;
+    in-out property <string> text <=> field.text;
+    callback edited();
+    background: #0d1016;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: root.error ? #ff6b6b : #ffffff14;
+    min-height: 40px;
+
+    horizontal_layout1 := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 4px;
+        spacing: 8px;
+        Rectangle {
+            background: root.dot;
+            border-radius: 5px;
+            height: 10px;
+            width: 10px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            color: #9aa5b8;
+            font-family: "Menlo";
+            font-size: 14px;
+            text: root.label;
+            vertical-alignment: center;
+        }
+        field := LineEdit {
+            font-size: 14px;
+            horizontal-stretch: 1;
+            text: "sin(x)";
+            edited(t) => { root.edited(); }
+        }
+    }
+}

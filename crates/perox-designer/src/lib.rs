@@ -3381,6 +3381,20 @@ pub fn expose_property(
     path: &[usize],
     prop: &str,
 ) -> Result<String, EditError> {
+    expose_property_as(source, comp, path, prop, None, None)
+}
+
+/// [`expose_property`] under a name of your choosing (`text` rather than `field_text`):
+/// how a component passes an inner widget's property through as its own.
+pub fn expose_property_as(
+    source: &str,
+    comp: &str,
+    path: &[usize],
+    prop: &str,
+    as_name: Option<&str>,
+    // The property's type when the element is a project component (its declaration's).
+    custom_ty: Option<&str>,
+) -> Result<String, EditError> {
     let doc = perox_slint::parse(source);
     let c = doc
         .component(comp)
@@ -3395,9 +3409,12 @@ pub fn expose_property(
         .chain(catalog::COMMON)
         .chain(catalog::FREE_CHILD)
         .find(|p| p.name == prop);
-    let ty = spec.and_then(catalog::slint_type).ok_or_else(|| {
-        EditError::InvalidName(format!("{prop} (can't expose this property yet)"))
-    })?;
+    let ty = spec
+        .and_then(catalog::slint_type)
+        .or(custom_ty)
+        .ok_or_else(|| {
+            EditError::InvalidName(format!("{prop} (can't expose this property yet)"))
+        })?;
     let mut work = source.to_owned();
     let id = match &el.id {
         Some(id) => id.clone(),
@@ -3407,7 +3424,12 @@ pub fn expose_property(
             id
         }
     };
-    let name = format!("{id}_{prop}").replace('-', "_");
+    let name = as_name.map_or_else(|| format!("{id}_{prop}").replace('-', "_"), str::to_owned);
+    if c.property(&name).is_some() {
+        return Err(EditError::InvalidName(format!(
+            "{name} (there's already a property with this name)"
+        )));
+    }
     let s = work.clone();
     if catalog::binding_only(&el.kind, prop) {
         // The root property takes over the current value, and the element binds to it.

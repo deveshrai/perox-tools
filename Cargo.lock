@@ -2637,6 +2637,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphing-calculator"
+version = "0.1.0"
+dependencies = [
+ "perox-slint",
+ "perox-ui",
+ "slint",
+]
+
+[[package]]
 name = "guillotiere"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

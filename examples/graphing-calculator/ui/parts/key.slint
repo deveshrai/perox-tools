@@ -1,0 +1,26 @@
+import { VerticalBox } from "std-widgets.slint";
+
+// A reusable part: drop it on any form from the designer's palette (This project).
+export component Key inherits Rectangle {
+    in property <string> label: "7";
+    in property <string> role: "digit";
+    callback clicked();
+    border-radius: 10px;
+    min-height: 46px;
+    min-width: 56px;
+    background: root.role == "accent" ? (area.pressed ? #3563d6 : area.has-hover ? #5b8cff : #4a7bff) : root.role == "clear" ? (area.pressed ? #6b2b31 : area.has-hover ? #5a2a30 : #44242a) : root.role == "op" ? (area.pressed ? #3a4252 : area.has-hover ? #323a49 : #272d39) : root.role == "fn" ? (area.pressed ? #333a48 : area.has-hover ? #2a303c : #1e232d) : (area.pressed ? #3a4150 : area.has-hover ? #333a47 : #2a303b);
+    border-width: 1px;
+    border-color: #ffffff0d;
+
+    Text {
+        color: root.role == "accent" ? #ffffff : root.role == "op" ? #8fb4ff : root.role == "clear" ? #ff9a9a : root.role == "fn" ? #b8c2d4 : #eef1f6;
+        font-size: root.role == "digit" ? 20px : 15px;
+        font-weight: root.role == "digit" || root.role == "accent" ? 600 : 500;
+        height: parent.height;
+        horizontal-alignment: center;
+        text: root.label;
+        vertical-alignment: center;
+        width: parent.width;
+    }
+    area := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}

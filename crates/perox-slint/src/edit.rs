@@ -242,12 +242,24 @@ pub fn set_property(
     {
         return Ok(vec![declaration_value(src, &decl.span, Some(value))]);
     }
+    // `<=> root.name`: a two-way binding (`text <=> root.name;`), the Slint way to tie a
+    // property to the component's, even inside `if` and `for`.
+    let member = |v: &str| match v.trim().strip_prefix("<=>") {
+        Some(target) => format!("{name} <=> {};", target.trim()),
+        None => format!("{name}: {v};"),
+    };
     Ok(vec![match el.props.iter().find(|p| p.name == name) {
+        Some(p) if p.value.to_source().starts_with("<=>") || value.trim().starts_with("<=>") => {
+            TextEdit {
+                range: p.span.clone(),
+                text: member(value),
+            }
+        }
         Some(p) => TextEdit {
             range: p.value_span.clone(),
             text: value.into(),
         },
-        None => insert_member(src, el, &format!("{name}: {value};")),
+        None => insert_member(src, el, &member(value)),
     }])
 }
 
@@ -1215,6 +1227,20 @@ mod tests {
             &remove_handler(&out, "Main", &[0, 1], "pointer-event").unwrap(),
         );
         assert_eq!(out2, SRC);
+        // Two-way bindings: written, read back, and turned back into a plain value.
+        let out = run(set_property(SRC, "Main", &[0, 1], "text", "<=> root.name"));
+        assert!(out.contains("text <=> root.name;"), "{out}");
+        let doc = parse(&out);
+        let b = doc.components[0].at(&[0, 1]).unwrap();
+        assert_eq!(
+            b.prop("text").map(crate::Value::to_source).as_deref(),
+            Some("<=> root.name")
+        );
+        let back = apply(
+            &out,
+            &set_property(&out, "Main", &[0, 1], "text", "\"B\"").unwrap(),
+        );
+        assert!(back.contains("text: \"B\";"), "{back}");
         // `changed <property>` handlers.
         let out = run(set_handler(
             SRC,

@@ -63,3 +63,7 @@ all = { level = "warn", priority = -1 }
 # The intro's scene is drawn per pixel: fast even in debug builds.
 [profile.dev.package.perox-brand]
 opt-level = 3
+
+# The calculator's plots are redrawn while dragging.
+[profile.dev.package.graphing-calculator]
+opt-level = 1
