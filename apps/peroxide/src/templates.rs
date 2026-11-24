@@ -284,6 +284,143 @@ fn main_slint(ui_dir: &Path) -> Option<std::path::PathBuf> {
 /// Writes a new form at `path` (a `.slint` file that doesn't exist yet) and exports it
 /// from the project's main `.slint` file, so Rust can use it. Returns the type name.
 pub fn add_form(path: &Path, kind: FormKind) -> Result<String, String> {
+    add_form_with(path, |name| form_source(name, kind))
+}
+
+/// Adds a form that inherits `base` (a component exported from `base_file`): it starts
+/// with everything `base` has, and adds to it.
+pub fn add_inherited_form(path: &Path, base: &str, base_file: &Path) -> Result<String, String> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let rel = relative_path(base_file, dir);
+    let base_src = std::fs::read_to_string(base_file).map_err(|e| e.to_string())?;
+    let doc = perox_slint::parse(&base_src);
+    let forwards = doc.component(base).map(base_forwards).unwrap_or_default();
+    add_form_with(path, |name| {
+        format!(
+            "import {{ {base} }} from \"{rel}\";\n\n// {name}: a {base} with more on it. What {base} has is edited in {file}.\nexport component {name} inherits {base} {{\n{forwards}}}\n",
+            file = base_file
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        )
+    })
+}
+
+/// Slint gives Rust only a component's own properties and callbacks, not inherited ones.
+/// So an inheriting form passes its base's on under `base_` names:
+/// `in-out property <string> base_name <=> self.name;` and
+/// `callback base_save_clicked(); save_clicked => { root.base_save_clicked(); }`.
+fn base_forwards(base: &perox_slint::Component) -> String {
+    let mut out = String::new();
+    let props: Vec<_> = base
+        .properties
+        .iter()
+        .filter(|p| matches!(p.visibility.as_str(), "in" | "in-out" | "out") && p.ty.is_some())
+        .collect();
+    if props.is_empty() && base.callbacks.is_empty() {
+        return out;
+    }
+    out.push_str(
+        "    // The base form's properties and events for Rust (Slint doesn't pass them on).\n",
+    );
+    for p in props {
+        let vis = if p.visibility == "out" {
+            "out"
+        } else {
+            "in-out"
+        };
+        out.push_str(&format!(
+            "    {vis} property <{}> base_{} <=> self.{};\n",
+            p.ty.as_deref().unwrap_or_default(),
+            p.name.replace('-', "_"),
+            p.name
+        ));
+    }
+    for cb in &base.callbacks {
+        let names: Vec<String> = (0..cb.params.len())
+            .map(|i| match &cb.params[i].0 {
+                Some(n) => n.clone(),
+                None => format!("arg{i}"),
+            })
+            .collect();
+        let decl: Vec<String> = cb
+            .params
+            .iter()
+            .zip(&names)
+            .map(|((_, t), n)| format!("{n}: {t}"))
+            .collect();
+        let ret = cb
+            .ret
+            .as_ref()
+            .map(|r| format!(" -> {r}"))
+            .unwrap_or_default();
+        let fwd = cb.name.replace('-', "_");
+        let call = format!("root.base_{fwd}({})", names.join(", "));
+        let body = if cb.ret.is_some() {
+            format!("return {call};")
+        } else {
+            format!("{call};")
+        };
+        let params = if names.is_empty() {
+            String::new()
+        } else {
+            format!("({})", names.join(", "))
+        };
+        out.push_str(&format!(
+            "    callback base_{fwd}({}){ret};\n    {}{params} => {{ {body} }}\n",
+            decl.join(", "),
+            cb.name
+        ));
+    }
+    out
+}
+
+/// Components exported from the `.slint` files under `dir` (a project's `ui/`): what a
+/// new form can inherit. Sorted by name.
+pub fn exported_forms(dir: &Path) -> Vec<(String, std::path::PathBuf)> {
+    fn walk(d: &Path, out: &mut Vec<(String, std::path::PathBuf)>, depth: usize) {
+        if depth > 4 {
+            return;
+        }
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if e.file_name() != "translations" {
+                    walk(&p, out, depth + 1);
+                }
+            } else if p.extension().is_some_and(|x| x == "slint")
+                && let Ok(src) = std::fs::read_to_string(&p)
+            {
+                for c in perox_slint::parse(&src).components {
+                    if c.exported {
+                        out.push((c.name, p.clone()));
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, &mut out, 0);
+    out.sort();
+    out
+}
+
+/// `to` relative to the folder `from`, with `/` and `..` as needed.
+fn relative_path(to: &Path, from: &Path) -> String {
+    let to: Vec<_> = to.components().collect();
+    let from: Vec<_> = from.components().collect();
+    let common = to.iter().zip(&from).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> =
+        std::iter::repeat_n("..".to_owned(), from.len() - common).collect();
+    parts.extend(
+        to[common..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
+    parts.join("/")
+}
+
+fn add_form_with(path: &Path, source: impl FnOnce(&str) -> String) -> Result<String, String> {
     if path.exists() {
         return Err(format!("{} already exists.", path.display()));
     }
@@ -295,7 +432,7 @@ pub fn add_form(path: &Path, kind: FormKind) -> Result<String, String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, form_source(&name, kind)).map_err(|e| e.to_string())?;
+    std::fs::write(path, source(&name)).map_err(|e| e.to_string())?;
     // Export it from the main file (ui/app.slint), next to it or above it.
     let mut dir = path.parent();
     while let Some(d) = dir {
@@ -349,8 +486,36 @@ mod tests {
         assert!(doc.errors.is_empty());
         assert_eq!(doc.components[0].root.kind, "Dialog");
         assert!(add_form(&app.join("ui/settings_dialog.slint"), FormKind::Dialog).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(type_name("tool-window"), "ToolWindow");
+        // Inherited: imports its base relative to itself, and is exported too.
+        let name = add_inherited_form(
+            &app.join("ui/forms/big_window.slint"),
+            "MainWindow",
+            &app.join("ui/main_window.slint"),
+        )
+        .unwrap();
+        assert_eq!(name, "BigWindow");
+        let src = std::fs::read_to_string(app.join("ui/forms/big_window.slint")).unwrap();
+        assert!(
+            src.starts_with("import { MainWindow } from \"../main_window.slint\";"),
+            "{src}"
+        );
+        assert!(
+            src.contains("export component BigWindow inherits MainWindow {"),
+            "{src}"
+        );
+        assert!(src.contains("callback base_greet_clicked();\n    greet_clicked => { root.base_greet_clicked(); }"), "{src}");
+        assert!(
+            src.contains("in-out property <string> base_name <=> self.name;"),
+            "{src}"
+        );
+        assert!(perox_slint::parse(&src).errors.is_empty(), "{src}");
+        let main = std::fs::read_to_string(app.join("ui/app.slint")).unwrap();
+        assert!(
+            main.ends_with("export { BigWindow } from \"forms/big_window.slint\";\n"),
+            "{main}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(type_name("2nd"), "Form2nd");
     }
 

@@ -465,6 +465,10 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 perox_designer::free::step(&mut work, perox_slint::edit::add_element(&text, &comp, &parent, index, kind, wid, &props))
                     .map_err(|e| err(e.to_string()))?;
                 perox_designer::free::import(&mut work, kind);
+                if props.iter().any(|(_, v)| v.contains("Palette.")) {
+                    let e = perox_slint::edit::ensure_import(&work, "Palette", perox_designer::catalog::STD_WIDGETS);
+                    work = perox_slint::edit::apply(&work, &e);
+                }
                 apply_form_edits(s, id, perox_slint::edit::diff(&text, &work));
                 let count = doc.component(&comp).and_then(|c| c.at(&parent)).map_or(0, |p| p.children.len());
                 let mut path = parent;
@@ -1016,7 +1020,10 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         (
             CommandSpec::new("form.new", "New Window or Dialog", Access::Edit)
                 .description("Adds a window or dialog to the project: writes a new .slint file (the type name comes from the file name: settings_dialog.slint → SettingsDialog), exports it from the main .slint file so Rust can use it, and opens it in the designer. Dialogs get OK and Cancel and an `exec` method in Rust.")
-                .params(path_schema(json!({ "kind": { "type": "string", "enum": ["window", "dialog"], "description": "Default: dialog" } }))),
+                .params(path_schema(json!({
+                    "kind": { "type": "string", "enum": ["window", "dialog"], "description": "Default: dialog" },
+                    "inherits": { "type": "string", "description": "Instead of a blank window or dialog: inherit this exported component (form inheritance). It starts with everything that form has; its own elements are added after them, and the base's properties can be set on it." }
+                }))),
             |s, inv| {
                 let path = resolve(s, inv, "path")?;
                 if path.extension().is_none_or(|e| e != "slint") {
@@ -1026,7 +1033,18 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     Some("window") => crate::templates::FormKind::Window,
                     _ => crate::templates::FormKind::Dialog,
                 };
-                let name = crate::templates::add_form(&path, kind).map_err(err)?;
+                let name = match inv.args["inherits"].as_str() {
+                    Some(base) => {
+                        let root = s.project.as_ref().map(|p| p.root.join("ui")).ok_or_else(|| err("No project is open."))?;
+                        let file = crate::templates::exported_forms(&root)
+                            .into_iter()
+                            .find(|(n, _)| n == base)
+                            .map(|(_, f)| f)
+                            .ok_or_else(|| err(format!("No exported component `{base}` in ui/.")))?;
+                        crate::templates::add_inherited_form(&path, base, &file).map_err(err)?
+                    }
+                    None => crate::templates::add_form(&path, kind).map_err(err)?,
+                };
                 if let Some(p) = &s.project {
                     s.tree = Some(p.file_tree(20_000));
                     s.files = p.files(50_000);
@@ -1037,6 +1055,11 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (CommandSpec::new("form.new_window_dialog", "New Window…", Access::Edit).ui_only(), |s, _| {
             s.new_form_requested = Some(crate::templates::FormKind::Window);
+            Ok(Value::Null)
+        }),
+        (CommandSpec::new("form.new_inherited_dialog", "New Inherited Form…", Access::Edit).ui_only(), |s, _| {
+            let root = s.project.as_ref().map(|p| p.root.join("ui")).ok_or_else(|| err("No project is open."))?;
+            s.inherit_picker = Some(crate::templates::exported_forms(&root));
             Ok(Value::Null)
         }),
         (CommandSpec::new("form.new_dialog_dialog", "New Dialog…", Access::Edit).ui_only(), |s, _| {

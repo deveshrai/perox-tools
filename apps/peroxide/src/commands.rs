@@ -60,6 +60,8 @@ pub struct AppState {
     pub new_dialog_requested: bool,
     /// File > New Window… / New Dialog…: ask where to save it.
     pub new_form_requested: Option<crate::templates::FormKind>,
+    /// New Inherited Form…: the forms to pick a base from, while the picker is open.
+    pub inherit_picker: Option<Vec<(String, std::path::PathBuf)>>,
     pub ctx: egui::Context,
 }
 
@@ -86,6 +88,7 @@ impl AppState {
             open_dialog_requested: false,
             new_dialog_requested: false,
             new_form_requested: None,
+            inherit_picker: None,
             ctx,
             settings,
             mcp,

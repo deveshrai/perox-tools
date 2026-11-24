@@ -135,7 +135,7 @@ inheritance, tab order. Each part uses what Slint 1.19 already has, so the resul
 | Themes: app style and colour scheme per project (built and previewed), theme colours | Slint styles, `Palette` | ✅ |
 | i18n: translatable text, string extraction, translation editor, preview in a language | `@tr()`, gettext `.po`, bundled translations | ✅ |
 | Model/view and data-aware controls: list and table models, SQLite queries bound to tables, lists and combo boxes, live data while designing | `VecModel`, `sqlx` in `perox-ui` | ✅ |
-| Form inheritance: new form from an existing one; inherited elements shown, not editable | `inherits` | |
+| Form inheritance: new form from an existing one; inherited elements shown, not editable; base properties settable; base events and properties passed on to Rust | `inherits` | ✅ |
 | Tab order: show the focus order on the canvas and change it | element order | |
 | Component libraries: the project's own components and `.slint` libraries in the palette | `import`, library paths | |
 | Windows pass: CI back on, fixes | | |

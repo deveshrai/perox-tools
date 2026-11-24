@@ -92,6 +92,15 @@ any rows of text into the models Slint's lists and tables take.
 
 ![A table bound to a query, showing live rows in the designer](docs/screenshots/data-bound-table.png)
 
+**Form inheritance.** File → New Inherited Form… makes a form that starts with everything
+another one has (`component AdminWindow inherits MainWindow`) and adds to it. The designer
+shows the base's parts as they are, lists them as inherited (they're edited in the base's
+file), and lets you set the base's properties on the new form. Slint gives Rust only a
+component's own properties and events, so the new form passes the base's on as
+`base_name`, `base_greet_clicked`, and so on.
+
+![A form inheriting MainWindow, with a label of its own](docs/screenshots/inherited-form.png)
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`

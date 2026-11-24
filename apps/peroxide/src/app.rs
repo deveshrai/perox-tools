@@ -279,6 +279,7 @@ impl PeroxApp {
                 ui.separator();
                 item(ui, actions, "form.new_window_dialog");
                 item(ui, actions, "form.new_dialog_dialog");
+                item(ui, actions, "form.new_inherited_dialog");
                 ui.separator();
                 item(ui, actions, "file.save");
                 item(ui, actions, "file.save_all");
@@ -695,6 +696,54 @@ impl eframe::App for PeroxApp {
                 .save_file()
         {
             self.run_user("project.new", json!({ "path": dir }));
+        }
+        if let Some(forms) = self.state.inherit_picker.clone() {
+            let mut open = true;
+            let mut picked = None;
+            egui::Window::new("New Inherited Form")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(&ctx, |ui| {
+                    ui.label(
+                        "The new form starts with everything the one you pick has, and adds to it.",
+                    );
+                    ui.add_space(4.0);
+                    if forms.is_empty() {
+                        ui.weak("No exported components in ui/.");
+                    }
+                    for (name, file) in &forms {
+                        let rel = file
+                            .file_name()
+                            .map(|f| f.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        if ui
+                            .add(egui::Button::image_and_text(
+                                perox_icons::Icon::AppWindow.image(ui),
+                                format!("{name}  ({rel})"),
+                            ))
+                            .clicked()
+                        {
+                            picked = Some((name.clone(), file.clone()));
+                        }
+                    }
+                });
+            if !open {
+                self.state.inherit_picker = None;
+            }
+            if let Some((base, file)) = picked {
+                self.state.inherit_picker = None;
+                let suggested = format!("custom_{}.slint", perox_designer::catalog::snake(&base));
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("New inherited form: its file name becomes the type name")
+                    .set_file_name(suggested)
+                    .add_filter("Slint", &["slint"])
+                    .set_directory(file.parent().unwrap_or(std::path::Path::new(".")))
+                    .save_file()
+                {
+                    self.run_user("form.new", json!({ "path": path, "inherits": base }));
+                }
+            }
         }
         if let Some(kind) = self.state.new_form_requested.take() {
             let (title, file) = match kind {

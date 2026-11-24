@@ -126,6 +126,9 @@ pub struct Designer {
     pending_import: Option<(Option<String>, String)>,
     /// The Translations window.
     pub translations: translations::Editor,
+    /// The component the designed one inherits, if it's one of ours, and when it was
+    /// looked up.
+    base: Option<(std::time::Instant, u64, Option<(Component, PathBuf)>)>,
     /// Bound queries' results, for showing data while designing.
     data_cache: data::Cache,
     /// What the last Run in the Data section gave.
@@ -1030,6 +1033,41 @@ impl Designer {
     // ---- canvas ----
 
     /// The source with live (being-dragged) values applied, for the preview.
+    /// The component the designed one inherits (`inherits MainWindow`) and its file,
+    /// when it's a component in this file or an imported one, not a built-in.
+    pub fn base(&mut self) -> Option<(Component, PathBuf)> {
+        let key = hash(&format!("{}|{}", self.doc_key, self.component_name()));
+        let fresh = self
+            .base
+            .as_ref()
+            .is_some_and(|(t, k, _)| *k == key && t.elapsed() < std::time::Duration::from_secs(3));
+        if !fresh {
+            let found = self.find_base();
+            self.base = Some((std::time::Instant::now(), key, found));
+        }
+        self.base.as_ref().and_then(|(_, _, b)| b.clone())
+    }
+
+    fn find_base(&self) -> Option<(Component, PathBuf)> {
+        let c = self.current()?;
+        let name = &c.root.kind;
+        if let Some(b) = self.doc.component(name).filter(|b| b.name != c.name) {
+            return Some((b.clone(), self.file.clone()));
+        }
+        let import = self
+            .doc
+            .imports
+            .iter()
+            .find(|i| i.names.iter().any(|n| n == name))?;
+        if import.from.ends_with("std-widgets.slint") {
+            return None;
+        }
+        let file = self.form_dir().join(&import.from);
+        let src = std::fs::read_to_string(&file).ok()?;
+        let doc = perox_slint::parse(&src);
+        Some((doc.component(name)?.clone(), file))
+    }
+
     /// The app's design-time database file, if one is set.
     fn database_file(&self) -> Option<PathBuf> {
         let db = self.app_ui().database?;
@@ -1426,7 +1464,12 @@ impl Designer {
         self.preview.update(&shown, &path, &c.name, &style, dark);
 
         let size = self.window_size();
-        let is_window = c.is_window();
+        // A form inheriting a window is a window too.
+        let base_kind = self.base().map(|(b, _)| b.root.kind);
+        let is_window = c.is_window()
+            || base_kind
+                .as_deref()
+                .is_some_and(|k| matches!(k, "Window" | "Dialog"));
         let title = c.root.str_prop("title").unwrap_or("").to_owned();
         let bar = if is_window { TITLE_BAR } else { 0.0 };
         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
@@ -1999,6 +2042,23 @@ impl Designer {
             ui.weak("No component");
             return;
         };
+        if let Some((base, file)) = self.base() {
+            let file = file
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            egui::CollapsingHeader::new(
+                RichText::new(format!("Inherited from {}", base.name)).weak(),
+            )
+            .id_salt("inherited")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.weak(format!("Edit these in {file}"));
+                for child in &base.root.children {
+                    inherited_node(ui, child);
+                }
+            });
+        }
         let mut path = Vec::new();
         let mut clicked = None;
         tree_node(
@@ -2028,7 +2088,12 @@ impl Designer {
         let Some(el) = c.at(&path).cloned() else {
             return;
         };
-        let spec = catalog::kind(&el.kind);
+        let base_kind = if path.is_empty() {
+            self.base().map(|(b, _)| b.root.kind)
+        } else {
+            None
+        };
+        let spec = catalog::kind(&el.kind).or_else(|| base_kind.as_deref().and_then(catalog::kind));
         let parent_kind = path
             .split_last()
             .and_then(|(_, p)| c.at(p))
@@ -2116,6 +2181,27 @@ impl Designer {
                 });
         }
 
+        if path.is_empty()
+            && let Some((base, _)) = self.base()
+        {
+            let specs: Vec<PropSpec> = base
+                .properties
+                .iter()
+                .filter(|p| matches!(p.visibility.as_str(), "in" | "in-out"))
+                .map(|p| PropSpec {
+                    name: p.name.clone().into(),
+                    kind: PropKind::Source,
+                    help: "From the base form; edited as a .slint expression",
+                })
+                .collect();
+            if !specs.is_empty() {
+                egui::CollapsingHeader::new(format!("From {}", base.name))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        self.prop_rows(ui, &c.name, &el, &path, &specs, source, actions)
+                    });
+            }
+        }
         let events = catalog::events(&el.kind);
         if !events.is_empty() {
             egui::CollapsingHeader::new("Events")
@@ -3074,6 +3160,26 @@ pub fn unique_id(c: &Component, base: &str) -> String {
         .map(|n| format!("{base}{n}"))
         .find(|id| c.find(id).is_none())
         .unwrap_or_else(|| base.to_owned())
+}
+
+/// An element of the base form in the Objects tree: shown, not selectable.
+fn inherited_node(ui: &mut egui::Ui, el: &Element) {
+    let label = match (&el.id, el.str_prop("text").or_else(|| el.str_prop("title"))) {
+        (Some(id), _) => format!("{id}  {}", el.kind),
+        (None, Some(t)) => format!("\u{201c}{t}\u{201d}  {}", el.kind),
+        (None, None) => el.kind.clone(),
+    };
+    ui.horizontal(|ui| {
+        ui.add(catalog::icon(&el.kind).faded(ui));
+        ui.label(RichText::new(label).weak());
+    });
+    if !el.children.is_empty() {
+        ui.indent(el.kind_span.start, |ui| {
+            for c in &el.children {
+                inherited_node(ui, c);
+            }
+        });
+    }
 }
 
 fn tree_node(

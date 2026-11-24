@@ -6,7 +6,7 @@ pub fn for_command(id: &str) -> Icon {
     match id {
         "project.open_dialog" | "project.open" => Icon::FolderOpen,
         "project.new_dialog" | "project.new" => Icon::AppWindow,
-        "form.new_window_dialog" => Icon::AppWindow,
+        "form.new_window_dialog" | "form.new_inherited_dialog" => Icon::AppWindow,
         "form.new_dialog_dialog" | "form.new" => Icon::MessageSquareWarning,
         "file.save" => Icon::Save,
         "file.save_all" => Icon::SaveAll,
