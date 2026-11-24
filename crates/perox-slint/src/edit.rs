@@ -875,6 +875,24 @@ mod tests {
     }
 
     #[test]
+    fn repeated_elements_edit_like_any_other() {
+        let src = "export component W inherits Window {\n    VerticalLayout {\n        for name in [\"a\", \"b\"] : Text { text: name; }\n        Rectangle { }\n    }\n}\n";
+        let out = apply(
+            src,
+            &set_property(src, "W", &[0, 0], "color", "#ff0000").unwrap(),
+        );
+        assert!(
+            out.contains("for name in [\"a\", \"b\"] : Text { text: name; color: #ff0000; }"),
+            "{out}"
+        );
+        let out = apply(src, &remove_element(src, "W", &[0, 0]).unwrap());
+        assert!(!out.contains("for "), "{out}");
+        let out = apply(src, &move_element(src, "W", &[0, 0], &[0], 2).unwrap());
+        assert!(out.contains("Rectangle { }\n        for name in"), "{out}");
+        assert!(crate::parse(&out).errors.is_empty(), "{out}");
+    }
+
+    #[test]
     fn changing_a_value_touches_only_the_value() {
         let out = run(set_property(SRC, "Main", &[], "title", "\"Hello\""));
         assert_eq!(out, SRC.replace("\"Hi\"", "\"Hello\""));

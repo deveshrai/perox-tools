@@ -92,15 +92,15 @@ pub fn bind(
 /// for the generated `load_*` methods. `None` if it's there already or there's no
 /// `perox-ui` line to change.
 pub fn with_sqlite_feature(toml: &str) -> Option<String> {
-    let line_start = toml
-        .lines()
+    // Offsets by `\n`, so a CRLF file (Windows) lines up too; the line excludes `\r\n`.
+    let (start, line) = toml
+        .split_inclusive('\n')
         .scan(0usize, |at, l| {
             let start = *at;
-            *at += l.len() + 1;
-            Some((start, l))
+            *at += l.len();
+            Some((start, l.trim_end_matches(['\r', '\n'])))
         })
         .find(|(_, l)| l.trim_start().starts_with("perox-ui") && l.contains('='))?;
-    let (start, line) = line_start;
     if line.contains("\"sqlite\"") {
         return None;
     }
@@ -241,6 +241,11 @@ mod tests {
             "perox-ui = { path = \"x\", features = [\"a\", \"sqlite\"] }\n"
         );
         assert_eq!(with_sqlite_feature(&with_sqlite_feature(t).unwrap()), None);
+        let crlf = t.replace('\n', "\r\n");
+        assert_eq!(
+            with_sqlite_feature(&crlf).unwrap(),
+            with_sqlite_feature(t).unwrap().replace('\n', "\r\n")
+        );
         assert_eq!(
             with_sqlite_feature("perox-ui = \"0.5\"\n").unwrap(),
             "perox-ui = { version = \"0.5\", features = [\"sqlite\"] }\n"

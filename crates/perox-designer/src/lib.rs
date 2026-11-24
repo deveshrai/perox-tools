@@ -8,6 +8,7 @@
 //! The canvas is drawn by Slint itself ([`preview`]), so what you see is what runs.
 
 pub mod actions;
+pub mod brush;
 pub mod catalog;
 pub mod components;
 pub mod data;
@@ -2656,6 +2657,9 @@ impl Designer {
         let kind = match (spec.kind, value) {
             (PropKind::Keys, Some(Value::Expr(e))) if keys::inner(e).is_some() => PropKind::Keys,
             (PropKind::Keys, None) => PropKind::Keys,
+            (PropKind::Color, Some(Value::Expr(e))) if brush::Linear::parse(e).is_some() => {
+                PropKind::Color
+            }
             (PropKind::Text, Some(Value::Expr(e))) if perox_slint::i18n::tr_text(e).is_some() => {
                 PropKind::Text
             }
@@ -2917,7 +2921,42 @@ impl Designer {
                     _ => None,
                 };
                 let mut picked = None;
-                if let Some(name) = &palette {
+                let gradient = match value {
+                    Some(Value::Expr(e)) => brush::Linear::parse(e),
+                    _ => None,
+                };
+                if let Some(mut g) = gradient.clone() {
+                    // First and last stop, and the direction.
+                    let last = g.stops.len() - 1;
+                    let mut changed = false;
+                    for i in [0, last] {
+                        let [r, gr, b, a] = g.stops[i].0;
+                        let mut c = Color32::from_rgba_unmultiplied(r, gr, b, a);
+                        if egui::color_picker::color_edit_button_srgba(
+                            ui,
+                            &mut c,
+                            egui::color_picker::Alpha::OnlyBlend,
+                        )
+                        .changed()
+                        {
+                            g.stops[i].0 = c.to_srgba_unmultiplied();
+                            changed = true;
+                        }
+                    }
+                    let r = ui
+                        .add(
+                            egui::DragValue::new(&mut g.angle)
+                                .range(0.0..=360.0)
+                                .speed(1.0)
+                                .suffix("°"),
+                        )
+                        .on_hover_text(
+                            "Direction: 0° bottom to top, 90° left to right, 180° top to bottom",
+                        );
+                    if changed || (r.changed() && !r.dragged()) || r.drag_stopped() {
+                        picked = Some(g.to_source());
+                    }
+                } else if let Some(name) = &palette {
                     // A theme colour: follows the style and light/dark.
                     ui.label(RichText::new(name).italics())
                         .on_hover_text(format!(
@@ -2941,6 +2980,23 @@ impl Designer {
                     }
                 }
                 ui.menu_image_button(Icon::Paintbrush.image(ui), |ui| {
+                    match &gradient {
+                        Some(g) => {
+                            if ui.button("Solid colour").clicked() {
+                                picked = Some(Value::Color(g.stops[0].0).to_source());
+                            }
+                        }
+                        None => {
+                            if ui.button("Gradient").clicked() {
+                                let base = match value {
+                                    Some(Value::Color(c)) => *c,
+                                    _ => [0x3b, 0x82, 0xf6, 0xff],
+                                };
+                                picked = Some(brush::Linear::from_color(base).to_source());
+                            }
+                        }
+                    }
+                    ui.separator();
                     ui.label(
                         RichText::new("Theme colours: follow the style and light/dark")
                             .small()
@@ -3374,6 +3430,18 @@ fn tree_node(
     } else {
         el.id.clone()
     };
+    if let Some(h) = &el.header {
+        // `for item in model` / `if cond`: one per item, or only sometimes.
+        RichText::new(format!("{h}: "))
+            .italics()
+            .color(ui.visuals().selection.bg_fill)
+            .append_to(
+                &mut text,
+                ui.style(),
+                egui::FontSelection::Default,
+                Align::Center,
+            );
+    }
     if let Some(id) = name {
         RichText::new(format!("{id}  ")).strong().append_to(
             &mut text,

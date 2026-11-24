@@ -275,8 +275,11 @@ pub struct Element {
     pub props: Vec<Property>,
     pub handlers: Vec<Handler>,
     pub children: Vec<Element>,
-    /// Every other member (declarations, `for`, `if`, states, animations…), in order.
+    /// Every other member (declarations, states, animations…), in order.
     pub others: Vec<Range<usize>>,
+    /// For an element made by `for item in model : Elem { }` or `if cond : Elem { }`: that
+    /// header, `for item in model` / `if cond` (`span` covers it too).
+    pub header: Option<String>,
 }
 
 impl Element {
@@ -567,6 +570,7 @@ fn build_element(
         handlers: Vec::new(),
         children: Vec::new(),
         others: Vec::new(),
+        header: None,
     };
     for child in el.children() {
         match child.kind() {
@@ -622,6 +626,24 @@ fn build_element(
                         .child_token(SyntaxKind::Identifier)
                         .map(|t| (t.text().to_owned(), token_range(&t)));
                     out.children.push(build_element(src, &inner, &child, id));
+                }
+            }
+            // `for x in model : Elem { }` and `if cond : Elem { }`: the element, with its
+            // header; its span covers the header, so moving or removing takes it along.
+            SyntaxKind::RepeatedElement | SyntaxKind::ConditionalElement => {
+                if let Some(sub) = child.child_node(SyntaxKind::SubElement)
+                    && let Some(inner) = sub.child_node(SyntaxKind::Element)
+                {
+                    let id = sub
+                        .child_token(SyntaxKind::Identifier)
+                        .map(|t| (t.text().to_owned(), token_range(&t)));
+                    let mut e = build_element(src, &inner, &child, id);
+                    let whole = trimmed(&child);
+                    let head = &src[whole.start..trimmed(&sub).start];
+                    e.header = Some(head.trim().trim_end_matches(':').trim().to_owned());
+                    out.children.push(e);
+                } else {
+                    out.others.push(trimmed(&child));
                 }
             }
             _ => out.others.push(trimmed(&child)),
@@ -877,8 +899,16 @@ export component MainWindow inherits Window {
         assert!(a.property("name").is_some());
         let col = c.at(&[0]).unwrap();
         assert_eq!(col.kind, "VerticalLayout");
-        assert_eq!(col.children.len(), 2, "the `for` isn't a child");
-        assert_eq!(col.others.len(), 1);
+        assert_eq!(col.children.len(), 3, "the `for` element is a child");
+        assert!(col.others.is_empty());
+        let repeated = &col.children[2];
+        assert_eq!(repeated.kind, "Text");
+        assert_eq!(repeated.header.as_deref(), Some("for i in 3"));
+        assert_eq!(&SRC[repeated.span.clone()], "for i in 3: Text { text: i; }");
+        assert_eq!(
+            repeated.prop("text").map(Value::to_source).as_deref(),
+            Some("i")
+        );
         let ok = c.at(&[0, 1]).unwrap();
         assert_eq!(ok.id.as_deref(), Some("ok"));
         assert_eq!(&SRC[ok.span.clone()][..13], "ok := Button ");
