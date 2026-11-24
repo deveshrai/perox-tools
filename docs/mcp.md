@@ -59,13 +59,14 @@ save, close), `editor.*` (replace, type, completions, accept_completion, cursor,
 references, rename, code_actions, apply_code_action, format), `build.*`
 (check, build, run, test, clippy, stop, status, output), `problems.list`, `lsp.*`,
 `terminal.run`, `terminal.read`, `git.*` (status, diff, commit), `designer.*` (tree,
-add_widget, set_property, remove_widget, move_widget, set_handler, select, open_handler,
-break_layout, lay_out),
+add_widget, set_property, remove_widget, move_widget, set_handler, go_to_handler, select,
+open_handler, break_layout, lay_out),
 `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
 
-Designer commands edit the open `.pxui` document the same way the designer does. They
-take widgets by id or by path (`#0.1`; `#` is the window), and values as `.pxui` source.
-So text is `"\"Save\""`, and numbers, sizes and colours are `12`, `640 x 480` and `#ff8800`.
+Designer commands edit the open `.slint` document the same way the designer does. They
+take elements by id or by path (`#0.1`; `#` is the component's root), an optional
+`component` (default: the file's main window), and values as `.slint` expressions. So
+text is `"\"Save\""`, and lengths, booleans and colours are `12px`, `true` and `#ff8800`.
 Try `designer.tree`, then `designer.select` plus `view.screenshot` to see the result.
 Lines and columns are 1-based. Each new IDE feature adds commands, and agents can use them
 straight away

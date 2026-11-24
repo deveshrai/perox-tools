@@ -35,6 +35,7 @@ pub fn for_command(id: &str) -> Icon {
         "help.about" | "app.info" => Icon::Info,
         "designer.open_handler" => Icon::ArrowRight,
         "designer.add_widget" => Icon::Plus,
+        "designer.go_to_handler" => Icon::ArrowRight,
         "designer.remove_widget" => Icon::Trash2,
         "designer.set_handler" => Icon::Zap,
         _ if id.starts_with("designer.") => Icon::PencilRuler,
@@ -48,7 +49,8 @@ pub fn for_file(path: &std::path::Path) -> Icon {
     match path.extension().and_then(|e| e.to_str()) {
         Some("rs") => Icon::FileCode,
         Some("toml" | "lock") => Icon::FileCog,
-        Some("pxui" | "png" | "svg" | "jpg") => Icon::FileImage,
+        Some("slint") => Icon::PencilRuler,
+        Some("png" | "svg" | "jpg") => Icon::FileImage,
         Some("md" | "txt") => Icon::FileText,
         _ => Icon::File,
     }

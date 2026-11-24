@@ -1,5 +1,5 @@
-//! New projects. The GUI app template is a window with a form, its code-behind and a
-//! `build.rs` that compiles the form.
+//! New projects. The GUI app template is a Slint window and an About dialog, their
+//! code-behind, and a `build.rs` that compiles them (ADR 0011).
 
 use std::path::Path;
 
@@ -44,14 +44,15 @@ fn toml_path(p: &Path) -> String {
     p.display().to_string().replace('\\', "/")
 }
 
-/// Writes a GUI app into `dir`, which must not exist or be empty. Returns the form file.
+/// Writes a GUI app into `dir`, which must not exist or be empty. Returns the main
+/// window's `.slint` file.
 pub fn create_gui_app(dir: &Path, sdk: &Path) -> Result<std::path::PathBuf, String> {
     if dir.exists() && dir.read_dir().map_err(|e| e.to_string())?.next().is_some() {
         return Err(format!("{} isn't empty.", dir.display()));
     }
     let name = package_name(dir);
     let ui = toml_path(&sdk.join("perox-ui"));
-    let forms = toml_path(&sdk.join("perox-forms"));
+    let slint_tools = toml_path(&sdk.join("perox-slint"));
     let title = title(&name);
     let files: Vec<(&str, String)> = vec![
         (
@@ -64,9 +65,10 @@ edition = "2024"
 
 [dependencies]
 perox-ui = {{ path = "{ui}" }}
+slint = "=1.19.0"
 
 [build-dependencies]
-perox-forms = {{ path = "{forms}" }}
+perox-slint = {{ path = "{slint_tools}", features = ["build"] }}
 "#
             ),
         ),
@@ -80,53 +82,103 @@ perox-forms = {{ path = "{forms}" }}
         (".gitignore", "/target\n".into()),
         (
             "build.rs",
-            "fn main() {\n    // Turns every src/ui/*.pxui into typed Rust (see `perox_ui::include_form!`).\n    perox_forms::codegen::build::compile_dir(\"src/ui\");\n}\n".into(),
+            "fn main() {\n    // Compiles ui/ (see ui/slint-project.json) and writes the MainWindowHandlers glue.\n    perox_slint::build::compile(\"ui\");\n}\n".into(),
         ),
         (
-            "src/ui/main_window.pxui",
+            "ui/slint-project.json",
+            "{ \"edition\": \"1.19\", \"main\": \"app.slint\" }\n".into(),
+        ),
+        (
+            "ui/app.slint",
+            "// Every window the app uses. Rust sees what this file exports.\nexport { MainWindow } from \"main_window.slint\";\nexport { AboutDialog } from \"about_dialog.slint\";\n".into(),
+        ),
+        (
+            "ui/main_window.slint",
             format!(
-                r#"// The main window. Design it in PeroxIDE (Design tab) or edit it here.
-Window main_window {{
-    title: "{title}"
-    size: 480 x 300
+                r#"import {{ Button, HorizontalBox, LineEdit, VerticalBox }} from "std-widgets.slint";
 
-    VBox {{
-        Label {{ text: "What's your name?" }}
-        HBox {{
-            TextEdit name {{ placeholder: "Name"; on submitted: greet_clicked }}
-            Button greet {{ text: "Greet"; on clicked: greet_clicked }}
+// The main window. Design it in PeroxIDE (Design tab) or edit it here.
+export component MainWindow inherits Window {{
+    title: "{title}";
+    preferred-width: 480px;
+    preferred-height: 240px;
+
+    // What the Rust code reads and writes.
+    in-out property <string> name <=> name_edit.text;
+    in-out property <string> greeting: "";
+
+    callback greet_clicked();
+    callback about_clicked();
+
+    VerticalBox {{
+        alignment: start;
+        Text {{ text: "What's your name?"; }}
+        HorizontalBox {{
+            padding: 0px;
+            name_edit := LineEdit {{ placeholder-text: "Name"; accepted(text) => {{ root.greet_clicked(); }} }}
+            greet := Button {{ text: "Greet"; primary: true; clicked => {{ root.greet_clicked(); }} }}
         }}
-        Label greeting {{ text: ""; heading: true }}
-        Spacer {{}}
+        Text {{ text: root.greeting; font-size: 20px; font-weight: 700; }}
+        HorizontalBox {{
+            padding: 0px;
+            alignment: end;
+            about := Button {{ text: "About"; clicked => {{ root.about_clicked(); }} }}
+        }}
     }}
 }}
 "#
             ),
         ),
         (
+            "ui/about_dialog.slint",
+            format!(
+                r#"import {{ AboutSlint, StandardButton, VerticalBox }} from "std-widgets.slint";
+
+// Shown from the About button. `AboutSlint` credits Slint, as its royalty-free
+// license asks; keep it (or buy a Slint license) when you ship.
+export component AboutDialog inherits Dialog {{
+    title: "About {title}";
+
+    VerticalBox {{
+        Text {{ text: "{title}"; font-size: 18px; font-weight: 700; }}
+        Text {{ text: "Version 0.1.0"; }}
+        AboutSlint {{ }}
+    }}
+    StandardButton {{ kind: ok; }}
+}}
+"#
+            ),
+        ),
+        (
             "src/main.rs",
-            r#"//! The code-behind for `ui/main_window.pxui`. Each `on <event>: <method>` in the form
-//! is a method of `MainWindowHandlers`; implement the ones you need.
+            r#"//! The code-behind for `ui/main_window.slint`. Each `callback` the window declares is
+//! a method of `MainWindowHandlers`; implement the ones you need.
 
-mod main_window {
-    perox_ui::include_form!("main_window");
-}
+perox_ui::include_ui!();
 
-use main_window::{MainWindow, MainWindowHandlers};
+use slint::ComponentHandle;
 
 #[derive(Default)]
 struct App;
 
 impl MainWindowHandlers for App {
-    fn greet_clicked(&mut self, ui: &mut MainWindow<'_>) {
-        let name = ui.name().text();
+    fn greet_clicked(&mut self, ui: &MainWindow) {
+        let name = ui.get_name();
         let name = if name.trim().is_empty() { "world" } else { name.trim() };
-        ui.greeting().set_text(format!("Hello, {name}!"));
+        ui.set_greeting(format!("Hello, {name}!").into());
+    }
+
+    fn about_clicked(&mut self, ui: &MainWindow) {
+        if let Ok(about) = AboutDialog::new() {
+            let _ = about.exec(Some(ui.window()), |_| {});
+        }
     }
 }
 
-fn main() -> perox_ui::eframe::Result {
-    MainWindow::run(App)
+fn main() -> Result<(), slint::PlatformError> {
+    let ui = MainWindow::new()?;
+    ui.connect(App);
+    ui.run()
 }
 "#
             .into(),
@@ -139,7 +191,7 @@ fn main() -> perox_ui::eframe::Result {
         }
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    Ok(dir.join("src/ui/main_window.pxui"))
+    Ok(dir.join("ui/main_window.slint"))
 }
 
 #[cfg(test)]

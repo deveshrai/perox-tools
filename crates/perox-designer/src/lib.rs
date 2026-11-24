@@ -1,45 +1,48 @@
-//! PeroxIDE's form designer.
+//! PeroxIDE's form designer for `.slint` files (ADR 0011).
 //!
-//! The `.pxui` text is the only state: every gesture (drop a widget, drag it elsewhere,
-//! change a property, wire an event) becomes a minimal [`TextEdit`] that the IDE applies
-//! to the open document. So undo, the Source view, git diffs and agents all see the same
-//! thing, and hand-written formatting and comments survive.
+//! The `.slint` text is the only state: every gesture (drop an element, drag it
+//! elsewhere, change a property, wire a callback) becomes a minimal [`TextEdit`] that the
+//! IDE applies to the open document. So undo, the Source view, git diffs and agents all
+//! see the same thing, and hand-written formatting and comments survive.
 //!
-//! The canvas is drawn by `perox-ui`, the runtime that ships in the app, so what you see
-//! is what runs.
+//! The canvas is drawn by Slint itself ([`preview`]), so what you see is what runs.
 
 pub mod catalog;
 pub mod drop;
 pub mod free;
+pub mod preview;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use eframe::egui::{
     self, Align, Color32, DragAndDrop, Id, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
-    UiBuilder, Vec2, vec2,
+    Vec2, vec2,
 };
-use perox_forms::edit::{self, EditError, TextEdit};
-use perox_forms::{Element, File, Value};
 use perox_icons::Icon;
-use perox_ui::Form;
+use perox_slint::edit::{self, EditError, TextEdit};
+use perox_slint::{Component, Document, Element, Value};
 
 use catalog::{PropKind, PropSpec};
 
-const DEFAULT_SIZE: Vec2 = Vec2::new(640.0, 480.0);
+const DEFAULT_SIZE: Vec2 = Vec2::new(480.0, 320.0);
 const TITLE_BAR: f32 = 28.0;
 const CANVAS_MARGIN: f32 = 24.0;
-const LABEL_WIDTH: f32 = 96.0;
+const LABEL_WIDTH: f32 = 112.0;
 
 /// What the IDE should do after a frame.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// Apply these edits to the document (one undo step).
     Edit(Vec<TextEdit>),
-    /// Show the handler `method` in the code-behind, adding it if it's missing.
+    /// Show the handler `method` of `<form>Handlers` in the code-behind, adding it (with
+    /// these Rust parameters) if it's missing.
     OpenHandler {
-        /// The generated type, e.g. `MainWindow` (the trait is `MainWindowHandlers`).
+        /// The component, e.g. `MainWindow` (the trait is `MainWindowHandlers`).
         form: String,
         method: String,
+        /// `(name, Rust type)`.
+        params: Vec<(String, String)>,
     },
     Undo,
     Redo,
@@ -54,19 +57,26 @@ enum Drag {
 
 #[derive(Debug, Default)]
 pub struct Designer {
-    form: Form,
-    /// The selected element's path (`[]` is the window).
+    /// The parsed source, and its hash.
+    doc: Document,
+    doc_key: u64,
+    /// The component being designed (default: the file's main one).
+    pub component: Option<String>,
+    pub preview: preview::Preview,
+    /// Widget style for the preview (default: this OS's native style).
+    pub style: Option<String>,
+    /// The selected element's path (`[]` is the root).
     pub selected: Option<Vec<usize>>,
     /// Window size while the corner handle is being dragged.
     resize: Option<Vec2>,
     resize_from: Option<Vec2>,
-    /// Values being dragged (inspector numbers, widget resizing): shown live, written
-    /// on release.
-    live: Vec<(Vec<usize>, String, Value)>,
-    /// Where in the widget the pointer grabbed it (free placement keeps that offset).
+    /// Properties being dragged (inspector numbers, resize handles): previewed live,
+    /// written on release. `(path, name, expression)`.
+    live: Vec<(Vec<usize>, String, String)>,
+    /// Where in the element the pointer grabbed it (free placement keeps that offset).
     grab: Vec2,
-    /// A widget being resized by its handles: path, which sides move, start rect
-    /// (relative to the parent's content box).
+    /// An element being resized by its handles: path, which sides move, start rect
+    /// (relative to its parent).
     widget_resize: Option<(Vec<usize>, [i8; 2], Rect)>,
     /// Snap free placement to the grid. On unless turned off.
     snap_off: bool,
@@ -82,12 +92,18 @@ pub struct Designer {
 /// Screen rects from the last frame.
 #[derive(Debug, Default, Clone)]
 pub struct DrawnLayout {
-    /// Every element on the canvas, parents first.
+    /// Every element on the canvas that's showing, parents first.
     pub elements: Vec<(Vec<usize>, Rect)>,
     pub palette: Vec<(&'static str, Rect)>,
+    /// The window frame, title bar included.
     pub window: Option<Rect>,
-    /// Content boxes, same order as `elements`.
-    pub contents: Vec<Rect>,
+}
+
+fn hash(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
 }
 
 impl Designer {
@@ -95,30 +111,66 @@ impl Designer {
         Self::default()
     }
 
-    /// The form as the designer last saw it.
-    pub fn file(&self) -> &File {
-        self.form.file()
+    /// The document as the designer last saw it.
+    pub fn document(&self) -> &Document {
+        &self.doc
     }
 
-    /// Draw the whole designer (palette, canvas, tree, inspector) for `source`.
-    /// `stem` is the file name without `.pxui`, the fallback form name.
-    pub fn show(&mut self, ui: &mut egui::Ui, source: &str, stem: &str) -> Vec<Action> {
-        self.form.set_source(source);
+    /// The component being designed.
+    pub fn current(&self) -> Option<&Component> {
+        match &self.component {
+            Some(name) => self.doc.component(name),
+            None => self.doc.main_component().map(|i| &self.doc.components[i]),
+        }
+    }
+
+    /// Its name.
+    pub fn component_name(&self) -> String {
+        self.current().map(|c| c.name.clone()).unwrap_or_default()
+    }
+
+    fn element(&self, path: &[usize]) -> Option<&Element> {
+        self.current()?.at(path)
+    }
+
+    pub fn style(&self) -> String {
+        self.style
+            .clone()
+            .unwrap_or_else(|| preview::native_style().into())
+    }
+
+    fn sync(&mut self, source: &str) {
+        let key = hash(source);
+        if key != self.doc_key {
+            self.doc = perox_slint::parse(source);
+            self.doc_key = key;
+        }
+        if let Some(name) = &self.component
+            && self.doc.component(name).is_none()
+        {
+            self.component = None;
+        }
         if let Some(sel) = &self.selected
-            && self.form.file().at(sel).is_none()
+            && self.element(sel).is_none()
         {
             self.selected = None;
         }
+    }
+
+    /// Draw the whole designer (palette, canvas, tree, inspector) for `source`, the text
+    /// of the `.slint` file at `path` (used to resolve its imports).
+    pub fn show(&mut self, ui: &mut egui::Ui, source: &str, path: &Path) -> Vec<Action> {
+        self.sync(source);
         let mut actions = Vec::new();
         let base = ui.scope_id().with("designer");
 
         egui::Panel::left(base.with("palette"))
             .resizable(true)
-            .default_size(150.0)
+            .default_size(160.0)
             .show(ui, |ui| self.palette(ui, source, &mut actions));
         egui::Panel::right(base.with("inspector"))
             .resizable(true)
-            .default_size(280.0)
+            .default_size(300.0)
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.strong("Objects");
@@ -131,11 +183,11 @@ impl Designer {
                 egui::ScrollArea::vertical()
                     .id_salt("inspector")
                     .auto_shrink(false)
-                    .show(ui, |ui| self.inspector(ui, source, stem, &mut actions));
+                    .show(ui, |ui| self.inspector(ui, source, &mut actions));
             });
         egui::CentralPanel::default().show(ui, |ui| {
             self.toolbar(ui, source, &mut actions);
-            self.canvas(ui, source, &mut actions);
+            self.canvas(ui, source, path, &mut actions);
         });
         self.keyboard(ui, source, &mut actions);
         self.drag_preview(ui);
@@ -161,6 +213,17 @@ impl Designer {
         }
     }
 
+    /// Apply a multi-step result (the final text) as one edit.
+    fn apply_text(
+        &mut self,
+        actions: &mut Vec<Action>,
+        source: &str,
+        result: Result<String, EditError>,
+    ) -> bool {
+        let edits = result.map(|new| edit::diff(source, &new));
+        self.apply(actions, edits)
+    }
+
     // ---- palette ----
 
     fn palette(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
@@ -175,10 +238,14 @@ impl Designer {
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
-                for (title, layouts) in [("Layouts", true), ("Widgets", false)] {
+                for (title, group) in [
+                    ("Layouts", catalog::Group::Layout),
+                    ("Containers", catalog::Group::Container),
+                    ("Widgets", catalog::Group::Widget),
+                ] {
                     ui.add_space(6.0);
                     ui.label(RichText::new(title).small().weak());
-                    for k in catalog::KINDS.iter().filter(|k| k.layout == layouts) {
+                    for k in catalog::KINDS.iter().filter(|k| k.group == group) {
                         if !filter.is_empty() && !k.name.to_lowercase().contains(&filter) {
                             continue;
                         }
@@ -198,19 +265,18 @@ impl Designer {
             });
     }
 
-    /// Double-click in the palette: into the selected container, else after the
-    /// selected widget, else into the window's layout.
+    /// Double-click in the palette: into the selected container, else after the selected
+    /// element, else into the root's single layout.
     fn insert_at_selection(&mut self, source: &str, kind: &str, actions: &mut Vec<Action>) {
-        let file = self.form.file();
-        let Some(root) = file.root() else { return };
+        let Some(c) = self.current() else { return };
         let mut sel = self.selected.clone().unwrap_or_default();
         if sel.is_empty()
-            && root.children.len() == 1
-            && catalog::accepts(&root.children[0].kind, kind)
+            && c.root.children.len() == 1
+            && catalog::accepts(&c.root.children[0].kind, kind)
         {
             sel = vec![0];
         }
-        let (parent, index) = match file.at(&sel) {
+        let (parent, index) = match c.at(&sel) {
             Some(el) if catalog::accepts(&el.kind, kind) => (sel.clone(), el.children.len()),
             Some(_) if !sel.is_empty() => {
                 let mut parent = sel.clone();
@@ -219,32 +285,42 @@ impl Designer {
             }
             _ => return,
         };
-        if file
-            .at(&parent)
+        if c.at(&parent)
             .is_some_and(|p| catalog::accepts(&p.kind, kind))
         {
-            self.add(source, kind, &parent, index, actions);
+            self.add(source, kind, &parent, index, &[], actions);
         } else {
             self.error = Some(format!("A {kind} can't go there"));
         }
     }
 
+    /// Adds a new element (with the catalog's defaults plus `extra`), importing its type
+    /// if needed, and selects it.
     fn add(
         &mut self,
         source: &str,
         kind: &str,
         parent: &[usize],
         index: usize,
+        extra: &[(String, String)],
         actions: &mut Vec<Action>,
     ) {
-        let file = self.form.file();
-        let id = catalog::wants_id(kind).then(|| unique_id(file, &catalog::snake(kind)));
-        let props = catalog::defaults(kind);
-        let count = file.at(parent).map_or(0, |p| p.children.len());
-        if self.apply(
-            actions,
-            edit::add_widget(source, parent, index, kind, id.as_deref(), &props),
-        ) {
+        let Some(c) = self.current() else { return };
+        let comp = c.name.clone();
+        let id = catalog::wants_id(kind).then(|| unique_id(c, &catalog::snake(kind)));
+        let mut props = catalog::defaults(kind);
+        props.extend_from_slice(extra);
+        let count = c.at(parent).map_or(0, |p| p.children.len());
+        let mut work = source.to_owned();
+        let result = free::step(
+            &mut work,
+            edit::add_element(source, &comp, parent, index, kind, id.as_deref(), &props),
+        )
+        .map(|()| {
+            free::import(&mut work, kind);
+            work
+        });
+        if self.apply_text(actions, source, result) {
             let mut path = parent.to_vec();
             path.push(index.min(count));
             self.selected = Some(path);
@@ -264,9 +340,7 @@ impl Designer {
             ui.separator();
             let can_delete = self.selected.as_ref().is_some_and(|s| !s.is_empty());
             if ui
-                .add_enabled_ui(can_delete, |ui| {
-                    icon_button(ui, Icon::Trash2, "Delete (Del)")
-                })
+                .add_enabled_ui(can_delete, |ui| icon_button(ui, Icon::Trash2, "Delete (Del)"))
                 .inner
                 .clicked()
             {
@@ -274,20 +348,13 @@ impl Designer {
             }
             ui.separator();
             let sel = self.selected.clone().unwrap_or_default();
-            let sel_el = self.form.file().at(&sel);
-            let free_sel = sel_el.is_some_and(perox_ui::is_free);
-            let can_break = sel_el.is_some_and(|e| {
-                (matches!(e.kind.as_str(), "VBox" | "HBox" | "Grid") && !sel.is_empty())
-                    || (matches!(e.kind.as_str(), "Window" | "GroupBox" | "Tab")
-                        && !perox_ui::is_free(e))
-            });
+            let (can_break, can_lay_out) = self
+                .current()
+                .map(|c| (free::can_break(c, &sel), free::can_lay_out(c, &sel)))
+                .unwrap_or_default();
             if ui
                 .add_enabled_ui(can_break, |ui| {
-                    icon_button(
-                        ui,
-                        Icon::Ungroup,
-                        "Break layout: place the children freely, where they are",
-                    )
+                    icon_button(ui, Icon::Ungroup, "Break layout: place the children freely, where they are")
                 })
                 .inner
                 .clicked()
@@ -296,15 +363,11 @@ impl Designer {
             }
             for (dir, icon, tip) in [
                 (free::Direction::Vertical, Icon::Rows3, "Lay out vertically"),
-                (
-                    free::Direction::Horizontal,
-                    Icon::Columns3,
-                    "Lay out horizontally",
-                ),
+                (free::Direction::Horizontal, Icon::Columns3, "Lay out horizontally"),
                 (free::Direction::Grid, Icon::Grid3x3, "Lay out in a grid"),
             ] {
                 if ui
-                    .add_enabled_ui(free_sel, |ui| icon_button(ui, icon, tip))
+                    .add_enabled_ui(can_lay_out, |ui| icon_button(ui, icon, tip))
                     .inner
                     .clicked()
                 {
@@ -316,22 +379,59 @@ impl Designer {
                 .frame(false);
             if ui
                 .add(snap)
-                .on_hover_text("Snap free placement to the grid (8 pt)")
+                .on_hover_text("Snap free placement to the grid (8 px)")
                 .clicked()
             {
                 self.snap_off = !self.snap_off;
             }
+            ui.separator();
+            // Style and component pickers.
+            let style = self.style();
+            egui::ComboBox::from_id_salt("designer_style")
+                .selected_text(&style)
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for s in preview::STYLES {
+                        let label = if *s == preview::native_style() {
+                            format!("{s} (native)")
+                        } else {
+                            (*s).to_owned()
+                        };
+                        if ui.selectable_label(style == *s, label).clicked() {
+                            self.style = Some((*s).to_owned());
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Widget style for the preview. Apps use the native style of the OS they run on.");
+            let names: Vec<String> = self.doc.components.iter().map(|c| c.name.clone()).collect();
+            if names.len() > 1 {
+                let current = self.component_name();
+                egui::ComboBox::from_id_salt("designer_component")
+                    .selected_text(&current)
+                    .show_ui(ui, |ui| {
+                        for n in &names {
+                            if ui.selectable_label(*n == current, n).clicked() {
+                                self.component = Some(n.clone());
+                                self.selected = None;
+                            }
+                        }
+                    });
+            }
             if let Some(e) = &self.error {
                 ui.separator();
-                ui.add(perox_icons::Icon::TriangleAlert.colored(ui.visuals().warn_fg_color));
+                ui.add(Icon::TriangleAlert.colored(ui.visuals().warn_fg_color));
                 ui.colored_label(ui.visuals().warn_fg_color, e);
-            } else if let Some(err) = self.form.file().errors.first() {
+            } else if let Some(err) = self
+                .doc
+                .errors
+                .first()
+                .map(|e| e.message.clone())
+                .or_else(|| self.preview.diagnostics.first().cloned())
+            {
                 ui.separator();
-                ui.add(perox_icons::Icon::CircleX.colored(ui.visuals().error_fg_color));
-                ui.colored_label(
-                    ui.visuals().error_fg_color,
-                    format!("{} (fix it in Source)", err.message),
-                );
+                ui.add(Icon::CircleX.colored(ui.visuals().error_fg_color));
+                ui.colored_label(ui.visuals().error_fg_color, format!("{err} (fix it in Source)"));
             }
         });
         ui.add_space(2.0);
@@ -341,7 +441,8 @@ impl Designer {
         let Some(sel) = self.selected.clone().filter(|s| !s.is_empty()) else {
             return;
         };
-        if self.apply(actions, edit::remove_widget(source, &sel)) {
+        let comp = self.component_name();
+        if self.apply(actions, edit::remove_element(source, &comp, &sel)) {
             let mut parent = sel;
             parent.pop();
             self.selected = Some(parent);
@@ -378,7 +479,7 @@ impl Designer {
         }
     }
 
-    /// Arrow keys move a freely placed widget 1 pt (a grid step with Shift).
+    /// Arrow keys move a freely placed element 1 px (a grid step with Shift).
     fn nudge(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
         let Some(path) = self.selected.clone().filter(|p| self.in_free_parent(p)) else {
             return;
@@ -395,21 +496,24 @@ impl Designer {
                     d += dir;
                 }
                 if i.consume_key(egui::Modifiers::SHIFT, key) {
-                    d += dir * perox_ui::GRID;
+                    d += dir * free::GRID;
                 }
             }
         });
         if d == Vec2::ZERO {
             return;
         }
-        let Some(el) = self.form.file().at(&path) else {
+        // Start from where it is on screen (x/y may be unset or an expression).
+        let (Some(rect), Some(parent)) = (
+            self.drawn_rect(&path),
+            path.split_last().and_then(|(_, p)| self.drawn_rect(p)),
+        ) else {
             return;
         };
-        let x = el.num_prop("x").unwrap_or(0.0) as f32 + d.x;
-        let y = el.num_prop("y").unwrap_or(0.0) as f32 + d.y;
+        let at = (rect.min - parent.min + d).max(Vec2::ZERO).to_pos2();
+        let comp = self.component_name();
         let mut work = source.to_owned();
-        let result =
-            free::set_position(&mut work, &path, Pos2::new(x.max(0.0), y.max(0.0))).map(|()| work);
+        let result = free::set_position(&mut work, &comp, &path, at).map(|()| work);
         self.apply_text(actions, source, result);
     }
 
@@ -422,11 +526,7 @@ impl Designer {
         };
         let kind = match &*drag {
             Drag::New(k) => (*k).to_owned(),
-            Drag::Move(p) => self
-                .form
-                .file()
-                .at(p)
-                .map_or_else(String::new, |e| e.kind.clone()),
+            Drag::Move(p) => self.element(p).map_or_else(String::new, |e| e.kind.clone()),
         };
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         let painter = ui.ctx().layer_painter(egui::LayerId::new(
@@ -456,72 +556,201 @@ impl Designer {
 
     // ---- canvas ----
 
-    fn canvas(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
-        // Runtime values in the designer: only the live inspector value and which tab
-        // page is showing (the one holding the selection).
-        self.form.reset();
+    /// The source with live (being-dragged) values applied, for the preview.
+    fn shown_source(&self, source: &str) -> String {
+        let comp = self.component_name();
+        let mut work = source.to_owned();
         for (path, name, value) in &self.live {
-            if let Some(el) = self.form.file().at(path) {
-                let key = perox_ui::key(el, path);
-                self.form.set(&key, name, value.clone());
+            let s = work.clone();
+            if let Ok(e) = edit::set_property(&s, &comp, path, name, value) {
+                work = edit::apply(&s, &e);
             }
         }
-        if let Some(sel) = self.selected.clone() {
-            for depth in 0..sel.len() {
-                let tabs_path = &sel[..depth];
-                if let Some(el) = self.form.file().at(tabs_path)
-                    && el.kind == "Tabs"
-                {
-                    let key = perox_ui::key(el, tabs_path);
-                    self.form
-                        .set(&key, "selected", Value::Num(sel[depth] as f64));
-                }
-            }
-        }
+        work
+    }
 
-        let file_size = self.form.window_size().map(|[w, h]| vec2(w, h));
-        let size = self.resize.or(file_size).unwrap_or(DEFAULT_SIZE);
-        let title = self.form.root_str("title").unwrap_or("").to_owned();
-        egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-            let total = size + vec2(2.0 * CANVAS_MARGIN, 2.0 * CANVAS_MARGIN + TITLE_BAR);
-            let (outer, bg) = ui.allocate_exact_size(total, Sense::click());
-            if bg.clicked() {
-                self.selected = Some(Vec::new());
+    /// The window's size: being resized, else from its properties, else its natural size.
+    fn window_size(&self) -> Vec2 {
+        if let Some(s) = self.resize {
+            return s;
+        }
+        let from_props = self.current().and_then(|c| {
+            let get = |a: &str, b: &str| c.root.num_prop(a).or_else(|| c.root.num_prop(b));
+            Some(vec2(
+                get("width", "preferred-width")? as f32,
+                get("height", "preferred-height")? as f32,
+            ))
+        });
+        let natural = self.preview.preferred_size();
+        match (from_props, natural) {
+            (Some(s), _) => s,
+            (None, Some(n)) => {
+                // Only one of them set: take it, the other from the layout.
+                let c = self.current();
+                let w = c.and_then(|c| {
+                    c.root
+                        .num_prop("width")
+                        .or_else(|| c.root.num_prop("preferred-width"))
+                });
+                let h = c.and_then(|c| {
+                    c.root
+                        .num_prop("height")
+                        .or_else(|| c.root.num_prop("preferred-height"))
+                });
+                vec2(w.map_or(n.x, |w| w as f32), h.map_or(n.y, |h| h as f32))
             }
+            (None, None) => DEFAULT_SIZE,
+        }
+    }
+
+    fn canvas(&mut self, ui: &mut egui::Ui, source: &str, path: &Path, actions: &mut Vec<Action>) {
+        let Some(c) = self.current().cloned() else {
+            ui.weak("This file has no component to design. Add `export component Name inherits Window { }`.");
+            return;
+        };
+        // The preview is built from the source plus live values; element offsets come
+        // from that same text.
+        let shown = self.shown_source(source);
+        let shown_doc = if self.live.is_empty() {
+            self.doc.clone()
+        } else {
+            perox_slint::parse(&shown)
+        };
+        let path = if path.as_os_str().is_empty() {
+            PathBuf::from("form.slint")
+        } else {
+            path.to_owned()
+        };
+        let style = self.style();
+        self.preview.update(&shown, &path, &c.name, &style);
+
+        let size = self.window_size();
+        let is_window = c.is_window();
+        let title = c.root.str_prop("title").unwrap_or("").to_owned();
+        let bar = if is_window { TITLE_BAR } else { 0.0 };
+        egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+            let total = size + vec2(2.0 * CANVAS_MARGIN, 2.0 * CANVAS_MARGIN + bar);
+            let (outer, _) = ui.allocate_exact_size(total, Sense::hover());
             let window = Rect::from_min_size(
                 outer.min + Vec2::splat(CANVAS_MARGIN),
-                size + vec2(0.0, TITLE_BAR),
+                size + vec2(0.0, bar),
             );
-            let content = Rect::from_min_size(window.min + vec2(0.0, TITLE_BAR), size);
-            window_chrome(ui, window, &title, self.selected.as_deref() == Some(&[]));
+            let content = Rect::from_min_size(window.min + vec2(0.0, bar), size);
+            window_chrome(
+                ui,
+                window,
+                &title,
+                is_window,
+                self.selected.as_deref() == Some(&[]),
+            );
 
-            let mut child = ui.new_child(
-                UiBuilder::new()
-                    .max_rect(content)
-                    .layout(Layout::top_down(Align::Min))
-                    .id_salt("form"),
-            );
-            child.set_clip_rect(content.intersect(ui.clip_rect()));
-            let out = self.form.show_design(&mut child, self.selected.as_deref());
-            self.layout.elements = out.rects.clone();
-            self.layout.contents = out.contents.clone();
-            self.layout.window = Some(window);
-            if let Some(p) = out.clicked {
-                self.selected = Some(p);
-                self.error = None;
+            let scale = ui.ctx().pixels_per_point();
+            if let Some(tex) = self.preview.texture(ui.ctx(), size, scale) {
+                ui.painter().image(
+                    tex.id(),
+                    content,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            } else {
+                ui.painter()
+                    .rect_filled(content, 0.0, ui.visuals().extreme_bg_color);
             }
-            if let Some(p) = out.drag_started.filter(|p| !p.is_empty()) {
-                let origin = ui.input(|i| i.pointer.press_origin());
-                if let (Some(o), Some(r)) = (origin, self.drawn_rect(&p)) {
-                    self.grab = o - r.min;
+
+            // Where each element was drawn.
+            let shown_c = shown_doc
+                .component(&c.name)
+                .cloned()
+                .unwrap_or_else(|| c.clone());
+            let mut rects: Vec<(Vec<usize>, Rect)> = vec![(Vec::new(), content)];
+            shown_c.root.walk(&mut Vec::new(), &mut |el, p| {
+                if p.is_empty() {
+                    return;
                 }
-                self.selected = Some(p.clone());
-                DragAndDrop::set_payload(ui.ctx(), Drag::Move(p));
-            }
-            self.drop_onto(ui, content, &out.rects, source, actions);
+                if let Some(r) = self.preview.rect_at_offset(el.kind_span.start) {
+                    rects.push((p.to_vec(), r.translate(content.min.to_vec2())));
+                }
+            });
+            self.layout.elements = rects.clone();
+            self.layout.window = Some(window);
+
+            self.overlays(ui, content, &c, &rects);
+            self.pointer(ui, content, &rects);
+            self.drop_onto(ui, content, &rects, source, actions);
             self.resize_widget(ui, source, actions);
             self.resize_handle(ui, window, size, source, actions);
         });
+        // Keep animations (spinners, indeterminate progress) moving.
+        if self.preview.is_ready() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    /// Selection, hover, layout outlines and the free-placement grid.
+    fn overlays(&self, ui: &egui::Ui, content: Rect, c: &Component, rects: &[(Vec<usize>, Rect)]) {
+        let accent = ui.visuals().selection.bg_fill;
+        let painter = ui.painter().with_clip_rect(content.expand(4.0));
+        for (p, r) in rects {
+            let Some(el) = c.at(p) else { continue };
+            if catalog::is_free(&el.kind) && self.selected.as_deref() == Some(p.as_slice()) {
+                grid_dots(&painter, *r, accent.gamma_multiply(0.35));
+            }
+            if catalog::is_layout(&el.kind) && el.kind != "GroupBox" {
+                painter.rect_stroke(
+                    *r,
+                    0.0,
+                    Stroke::new(1.0, accent.gamma_multiply(0.25)),
+                    StrokeKind::Inside,
+                );
+            }
+        }
+        if let Some(hover) = ui
+            .ctx()
+            .pointer_hover_pos()
+            .filter(|p| content.contains(*p))
+            .and_then(|p| hit(rects, p, None))
+            .and_then(|p| rects.iter().find(|(q, _)| *q == p))
+            && !hover.0.is_empty()
+        {
+            painter.rect_stroke(
+                hover.1,
+                0.0,
+                Stroke::new(1.0, accent.gamma_multiply(0.6)),
+                StrokeKind::Outside,
+            );
+        }
+        if let Some(sel) = &self.selected
+            && !sel.is_empty()
+            && let Some((_, r)) = rects.iter().find(|(p, _)| p == sel)
+        {
+            painter.rect_stroke(*r, 0.0, Stroke::new(2.0, accent), StrokeKind::Outside);
+        }
+    }
+
+    /// Click to select; drag a non-root element to move it.
+    fn pointer(&mut self, ui: &mut egui::Ui, content: Rect, rects: &[(Vec<usize>, Rect)]) {
+        let r = ui.interact(
+            content,
+            ui.scope_id().with("canvas"),
+            Sense::click_and_drag(),
+        );
+        if r.clicked()
+            && let Some(p) = r.interact_pointer_pos().and_then(|p| hit(rects, p, None))
+        {
+            self.selected = Some(p);
+            self.error = None;
+        }
+        if r.drag_started()
+            && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+            && let Some(p) = hit(rects, origin, None).filter(|p| !p.is_empty())
+        {
+            if let Some(rect) = self.drawn_rect(&p) {
+                self.grab = origin - rect.min;
+            }
+            self.selected = Some(p.clone());
+            DragAndDrop::set_payload(ui.ctx(), Drag::Move(p));
+        }
     }
 
     fn drop_onto(
@@ -542,15 +771,17 @@ impl Designer {
         else {
             return;
         };
-        let file = self.form.file();
+        let Some(c) = self.current().cloned() else {
+            return;
+        };
         let (kind, moving) = match &*drag {
             Drag::New(k) => ((*k).to_owned(), None),
-            Drag::Move(p) => match file.at(p) {
+            Drag::Move(p) => match c.at(p) {
                 Some(el) => (el.kind.clone(), Some(p.clone())),
                 None => return,
             },
         };
-        let Some(target) = drop::target(file, rects, pointer, &kind, moving.as_deref()) else {
+        let Some(target) = drop::target(&c, rects, pointer, &kind, moving.as_deref()) else {
             return;
         };
         let accent = ui.visuals().selection.bg_fill;
@@ -577,19 +808,20 @@ impl Designer {
         }
         DragAndDrop::clear_payload(ui.ctx());
         match moving {
-            None => self.add(source, &kind, &target.parent, target.index, actions),
+            None => self.add(source, &kind, &target.parent, target.index, &[], actions),
             Some(from) => {
                 if drop::is_noop(&from, &target.parent, target.index) {
                     return;
                 }
-                // Out of a free container: its position means nothing in a layout.
+                // Into a layout: a position means nothing there.
                 let new_path = drop::moved_path(&from, &target.parent, target.index);
+                let comp = c.name.clone();
                 let mut work = source.to_owned();
                 let result = free::step(
                     &mut work,
-                    edit::move_widget(source, &from, &target.parent, target.index),
+                    edit::move_element(source, &comp, &from, &target.parent, target.index),
                 )
-                .and_then(|()| free::strip(&mut work, &new_path, &["x", "y"]))
+                .and_then(|()| free::strip(&mut work, &comp, &new_path, free::GEOMETRY))
                 .map(|()| work);
                 if self.apply_text(actions, source, result) {
                     self.selected = Some(new_path);
@@ -606,32 +838,17 @@ impl Designer {
             .map(|(_, r)| *r)
     }
 
-    fn drawn_content(&self, path: &[usize]) -> Option<Rect> {
-        let i = self.layout.elements.iter().position(|(p, _)| p == path)?;
-        self.layout.contents.get(i).copied()
-    }
-
-    /// Apply a multi-step result (the final text) as one edit.
-    fn apply_text(
-        &mut self,
-        actions: &mut Vec<Action>,
-        source: &str,
-        result: Result<String, EditError>,
-    ) -> bool {
-        let edits = result.map(|new| edit::diff(source, &new));
-        self.apply(actions, edits)
-    }
-
     fn snap(&self, v: f32) -> f32 {
         free::snap(v, !self.snap_off)
     }
 
-    /// Is the element at `path` placed freely (its parent has no layout)?
+    /// Is the element at `path` placed freely (its parent isn't a layout)?
     fn in_free_parent(&self, path: &[usize]) -> bool {
         let Some((_, parent)) = path.split_last() else {
             return false;
         };
-        self.form.file().at(parent).is_some_and(perox_ui::is_free)
+        self.element(parent)
+            .is_some_and(|p| catalog::is_free(&p.kind))
     }
 
     /// Dropping into a free container: a ghost where it will land, then `x`, `y`.
@@ -646,7 +863,7 @@ impl Designer {
         source: &str,
         actions: &mut Vec<Action>,
     ) {
-        let Some(content) = self.drawn_content(&target.parent) else {
+        let Some(origin) = self.drawn_rect(&target.parent) else {
             return;
         };
         let size = match &moving {
@@ -659,10 +876,10 @@ impl Designer {
         } else {
             Vec2::ZERO
         };
-        let rel = pointer - grab - content.min;
+        let rel = pointer - grab - origin.min;
         let at = Pos2::new(self.snap(rel.x), self.snap(rel.y));
         let accent = ui.visuals().selection.bg_fill;
-        let ghost = Rect::from_min_size(content.min + at.to_vec2(), size);
+        let ghost = Rect::from_min_size(origin.min + at.to_vec2(), size);
         ui.painter().rect(
             ghost,
             2.0,
@@ -682,26 +899,18 @@ impl Designer {
         }
         DragAndDrop::clear_payload(ui.ctx());
         let parent = target.parent.clone();
+        let comp = self.component_name();
         match moving {
             None => {
-                let file = self.form.file();
-                let id = catalog::wants_id(kind).then(|| unique_id(file, &catalog::snake(kind)));
-                let mut props = catalog::defaults(kind);
-                props.push(("x".into(), Value::Num(at.x as f64)));
-                props.push(("y".into(), Value::Num(at.y as f64)));
+                let mut extra = vec![
+                    ("x".to_owned(), free::px(at.x)),
+                    ("y".to_owned(), free::px(at.y)),
+                ];
                 if let Some((w, h)) = catalog::free_default_size(kind) {
-                    props.push(("width".into(), Value::Num(w)));
-                    props.push(("height".into(), Value::Num(h)));
+                    extra.push(("width".into(), free::px(w as f32)));
+                    extra.push(("height".into(), free::px(h as f32)));
                 }
-                let count = file.at(&parent).map_or(0, |p| p.children.len());
-                if self.apply(
-                    actions,
-                    edit::add_widget(source, &parent, usize::MAX, kind, id.as_deref(), &props),
-                ) {
-                    let mut path = parent;
-                    path.push(count);
-                    self.selected = Some(path);
-                }
+                self.add(source, kind, &parent, usize::MAX, &extra, actions);
             }
             Some(from) => {
                 let same_parent = from
@@ -717,15 +926,11 @@ impl Designer {
                     if !same_parent {
                         free::step(
                             &mut work,
-                            edit::move_widget(source, &from, &parent, target.index),
+                            edit::move_element(source, &comp, &from, &parent, target.index),
                         )?;
-                        free::strip(
-                            &mut work,
-                            &new_path,
-                            &["row", "column", "row_span", "column_span", "stretch"],
-                        )?;
+                        free::strip(&mut work, &comp, &new_path, free::LAYOUT_CHILD)?;
                     }
-                    free::set_position(&mut work, &new_path, at)?;
+                    free::set_position(&mut work, &comp, &new_path, at)?;
                     Ok(work)
                 })();
                 if self.apply_text(actions, source, result) {
@@ -740,9 +945,9 @@ impl Designer {
         let Some(path) = self.selected.clone().filter(|p| self.in_free_parent(p)) else {
             return;
         };
-        let (Some(rect), Some(parent_content)) = (
+        let (Some(rect), Some(parent)) = (
             self.drawn_rect(&path),
-            path.split_last().and_then(|(_, p)| self.drawn_content(p)),
+            path.split_last().and_then(|(_, p)| self.drawn_rect(p)),
         ) else {
             return;
         };
@@ -775,7 +980,7 @@ impl Designer {
                     });
                 }
                 if r.drag_started() {
-                    let start = rect.translate(-parent_content.min.to_vec2());
+                    let start = rect.translate(-parent.min.to_vec2());
                     self.widget_resize = Some((path.clone(), [sx, sy], start));
                 }
                 if r.dragged()
@@ -798,10 +1003,10 @@ impl Designer {
                         nr.max.y = self.snap(start.max.y + d.y).max(start.min.y + 8.0);
                     }
                     self.live = vec![
-                        (p.clone(), "x".into(), Value::Num(nr.min.x as f64)),
-                        (p.clone(), "y".into(), Value::Num(nr.min.y as f64)),
-                        (p.clone(), "width".into(), Value::Num(nr.width() as f64)),
-                        (p, "height".into(), Value::Num(nr.height() as f64)),
+                        (p.clone(), "x".into(), free::px(nr.min.x)),
+                        (p.clone(), "y".into(), free::px(nr.min.y)),
+                        (p.clone(), "width".into(), free::px(nr.width())),
+                        (p, "height".into(), free::px(nr.height())),
                     ];
                 }
                 if r.drag_stopped()
@@ -811,7 +1016,7 @@ impl Designer {
                         self.live
                             .iter()
                             .find(|(_, n, _)| n == name)
-                            .and_then(|(_, _, v)| v.as_f64())
+                            .and_then(|(_, _, v)| Value::parse(v).as_f64())
                             .unwrap_or(0.0) as f32
                     };
                     let nr = Rect::from_min_size(
@@ -819,8 +1024,9 @@ impl Designer {
                         vec2(get("width"), get("height")),
                     );
                     self.live.clear();
+                    let comp = self.component_name();
                     let mut work = source.to_owned();
-                    let result = free::set_geometry(&mut work, &p, nr).map(|()| work);
+                    let result = free::set_geometry(&mut work, &comp, &p, nr).map(|()| work);
                     self.apply_text(actions, source, result);
                 }
             }
@@ -831,14 +1037,11 @@ impl Designer {
     fn relayout(&mut self, source: &str, dir: Option<free::Direction>, actions: &mut Vec<Action>) {
         let path = self.selected.clone().unwrap_or_default();
         let rects = self.layout.elements.clone();
-        let contents = self.layout.contents.clone();
-        let drawn = free::Drawn {
-            rects: &rects,
-            contents: &contents,
-        };
+        let drawn = free::Drawn { rects: &rects };
+        let comp = self.component_name();
         let result = match dir {
-            None => free::break_layout(source, drawn, &path),
-            Some(d) => free::lay_out(source, drawn, &path, d),
+            None => free::break_layout(source, &comp, drawn, &path),
+            Some(d) => free::lay_out(source, &comp, drawn, &path, d),
         };
         if self.apply_text(actions, source, result) {
             self.selected = Some(path);
@@ -888,22 +1091,50 @@ impl Designer {
         }
         if r.drag_stopped()
             && let Some(s) = self.resize.take()
+            && let Some(c) = self.current()
         {
-            let value = Value::Size(s.x as f64, s.y as f64);
-            self.apply(actions, edit::set_property(source, &[], "size", &value));
+            // Fixed size if the form has one, else the preferred (initial) size.
+            let (wn, hn) = if c.root.prop("width").is_some() || c.root.prop("height").is_some() {
+                ("width", "height")
+            } else {
+                ("preferred-width", "preferred-height")
+            };
+            let comp = c.name.clone();
+            let mut work = source.to_owned();
+            let result = (|| {
+                let s1 = work.clone();
+                free::step(
+                    &mut work,
+                    edit::set_property(&s1, &comp, &[], wn, &free::px(s.x)),
+                )?;
+                let s2 = work.clone();
+                free::step(
+                    &mut work,
+                    edit::set_property(&s2, &comp, &[], hn, &free::px(s.y)),
+                )?;
+                Ok(work)
+            })();
+            self.apply_text(actions, source, result);
         }
     }
 
     // ---- object tree ----
 
     fn object_tree(&mut self, ui: &mut egui::Ui) {
-        let Some(root) = self.form.file().root().cloned() else {
-            ui.weak("No form");
+        let Some(c) = self.current().cloned() else {
+            ui.weak("No component");
             return;
         };
         let mut path = Vec::new();
         let mut clicked = None;
-        tree_node(ui, &root, &mut path, self.selected.as_deref(), &mut clicked);
+        tree_node(
+            ui,
+            &c.root,
+            &c.name,
+            &mut path,
+            self.selected.as_deref(),
+            &mut clicked,
+        );
         if let Some(p) = clicked {
             self.selected = Some(p);
             self.error = None;
@@ -912,66 +1143,74 @@ impl Designer {
 
     // ---- inspector ----
 
-    fn inspector(
-        &mut self,
-        ui: &mut egui::Ui,
-        source: &str,
-        stem: &str,
-        actions: &mut Vec<Action>,
-    ) {
+    fn inspector(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
         let Some(path) = self.selected.clone() else {
-            ui.weak("Select a widget to edit it.");
+            ui.weak("Select an element to edit it.");
             return;
         };
-        let Some(el) = self.form.file().at(&path).cloned() else {
+        let Some(c) = self.current().cloned() else {
+            return;
+        };
+        let Some(el) = c.at(&path).cloned() else {
             return;
         };
         let spec = catalog::kind(&el.kind);
-        let parent_is_grid = !path.is_empty()
-            && self
-                .form
-                .file()
-                .at(&path[..path.len() - 1])
-                .is_some_and(|p| p.kind == "Grid");
+        let parent_kind = path
+            .split_last()
+            .and_then(|(_, p)| c.at(p))
+            .map(|p| p.kind.clone());
 
         ui.horizontal(|ui| {
             ui.add(catalog::icon(&el.kind).image(ui));
             ui.strong(&el.kind);
-        });
-        ui.horizontal(|ui| {
-            label_cell(ui, RichText::new("Name")).on_hover_text("The id your code uses: ui.name()");
-            let current = el.id.clone().unwrap_or_default();
-            if let Some(new) = self.text_field(ui, &format!("{path:?}/#id"), &current, false) {
-                let id = new.trim();
-                let id = (!id.is_empty()).then_some(id);
-                self.apply(actions, edit::set_id(source, &path, id));
+            if path.is_empty() {
+                ui.weak(format!("component {}", c.name));
             }
         });
+        if !path.is_empty() {
+            ui.horizontal(|ui| {
+                label_cell(ui, RichText::new("Name"))
+                    .on_hover_text("The id other elements use (`name.text`)");
+                let current = el.id.clone().unwrap_or_default();
+                if let Some(new) = self.text_field(ui, &format!("{path:?}/#id"), &current, false) {
+                    let id = new.trim();
+                    let id = (!id.is_empty()).then_some(id);
+                    self.apply(actions, edit::set_id(source, &c.name, &path, id));
+                }
+            });
+        }
 
         let known: Vec<PropSpec> = spec.map(|k| k.props.to_vec()).unwrap_or_default();
         ui.add_space(4.0);
-        egui::CollapsingHeader::new("Properties")
-            .default_open(true)
-            .show(ui, |ui| {
-                self.prop_grid(ui, "props", &el, &path, &known, source, actions)
-            });
+        if !known.is_empty() {
+            egui::CollapsingHeader::new("Properties")
+                .default_open(true)
+                .show(ui, |ui| {
+                    self.prop_rows(ui, &c.name, &el, &path, &known, source, actions)
+                });
+        }
         let free_child = self.in_free_parent(&path);
         let mut layout: Vec<PropSpec> = Vec::new();
         if free_child {
             layout.extend_from_slice(catalog::FREE_CHILD);
         }
-        layout.extend_from_slice(catalog::COMMON);
-        if parent_is_grid {
+        if !path.is_empty() {
+            layout.extend_from_slice(catalog::COMMON);
+        }
+        if parent_kind.as_deref().is_some_and(catalog::is_layout) {
+            layout.extend_from_slice(catalog::LAYOUT_CHILD);
+        }
+        if parent_kind.as_deref().is_some_and(catalog::is_grid) {
             layout.extend_from_slice(catalog::GRID_CHILD);
         }
-        if !path.is_empty() {
+        if !layout.is_empty() {
             egui::CollapsingHeader::new("Size and layout")
                 .default_open(free_child)
                 .show(ui, |ui| {
-                    self.prop_grid(ui, "layout", &el, &path, &layout, source, actions)
+                    self.prop_rows(ui, &c.name, &el, &path, &layout, source, actions)
                 });
         }
-        // Properties in the file the catalog doesn't know (components, typos).
+        // Properties in the file the catalog doesn't know (components, expressions).
         let other: Vec<PropSpec> = el
             .props
             .iter()
@@ -984,39 +1223,38 @@ impl Designer {
             .map(|p| PropSpec {
                 name: p.name.clone().into(),
                 kind: PropKind::Source,
-                help: "Not a known property of this widget",
+                help: "Edited as a .slint expression",
             })
             .collect();
         if !other.is_empty() {
             egui::CollapsingHeader::new("Other")
                 .default_open(true)
                 .show(ui, |ui| {
-                    self.prop_grid(ui, "other", &el, &path, &other, source, actions)
+                    self.prop_rows(ui, &c.name, &el, &path, &other, source, actions)
                 });
         }
 
-        let events = spec.map(|k| k.events).unwrap_or_default();
+        let events = catalog::events(&el.kind);
         if !events.is_empty() {
             egui::CollapsingHeader::new("Events")
                 .default_open(true)
                 .show(ui, |ui| {
-                    self.events(ui, &el, &path, events, source, stem, actions)
+                    self.events(ui, &c, &el, &path, events, source, actions)
                 });
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn prop_grid(
+    fn prop_rows(
         &mut self,
         ui: &mut egui::Ui,
-        id: &str,
+        comp: &str,
         el: &Element,
         path: &[usize],
         specs: &[PropSpec],
         source: &str,
         actions: &mut Vec<Action>,
     ) {
-        let _ = id;
         for spec in specs {
             let value = el.prop(&spec.name).cloned();
             let name = if value.is_some() {
@@ -1029,73 +1267,90 @@ impl Designer {
                 if !spec.help.is_empty() {
                     r.on_hover_text(spec.help);
                 }
-                let new = self.value_editor(ui, path, spec, value.as_ref());
-                match new {
-                    // Switching a container between stack and free converts its
-                    // children too, like Break Layout / Lay Out.
-                    Some(Value::Ident(mode)) if spec.name == "layout" => {
-                        let was_free = el.str_prop("layout") == Some("free");
-                        let dir = match (mode.as_str(), was_free) {
-                            ("free", false) => Some(None),
-                            ("stack", true) => Some(Some(free::Direction::Vertical)),
-                            _ => None,
-                        };
-                        if let Some(dir) = dir {
-                            self.selected = Some(path.to_vec());
-                            self.relayout(source, dir, actions);
-                        }
-                    }
-                    Some(v) => {
-                        self.apply(actions, edit::set_property(source, path, &spec.name, &v));
-                    }
-                    None => {}
+                if let Some(v) = self.value_editor(ui, path, spec, value.as_ref()) {
+                    self.apply(
+                        actions,
+                        edit::set_property(source, comp, path, &spec.name, &v),
+                    );
                 }
                 if value.is_some()
                     && small_icon_button(ui, Icon::X, "Reset to the default").clicked()
                 {
-                    self.apply(actions, edit::remove_property(source, path, &spec.name));
+                    self.apply(
+                        actions,
+                        edit::remove_property(source, comp, path, &spec.name),
+                    );
                 }
             });
         }
     }
 
-    /// An editor for one property. Returns a new value to write.
+    /// An editor for one property. Returns a new expression to write.
     fn value_editor(
         &mut self,
         ui: &mut egui::Ui,
         path: &[usize],
         spec: &PropSpec,
         value: Option<&Value>,
-    ) -> Option<Value> {
+    ) -> Option<String> {
         let key = format!("{path:?}/{}", spec.name);
-        match spec.kind {
+        // A value the editor can't show (an expression) is edited as source.
+        let kind = match (spec.kind, value) {
+            (_, Some(Value::Expr(_))) => PropKind::Source,
+            (k, _) => k,
+        };
+        match kind {
             PropKind::Text => {
                 let current = value.and_then(Value::as_str).unwrap_or_default().to_owned();
-                self.text_field(ui, &key, &current, false).map(Value::Str)
+                self.text_field(ui, &key, &current, false)
+                    .map(|t| perox_slint::syntax::quote(&t))
             }
-            PropKind::Number => {
+            PropKind::Length | PropKind::Int | PropKind::Float => {
+                let unit = match kind {
+                    PropKind::Length => "px",
+                    _ => "",
+                };
                 let live = self
                     .live
                     .iter()
                     .find(|(p, n, _)| p == path && *n == spec.name)
-                    .and_then(|(_, _, v)| v.as_f64());
+                    .and_then(|(_, _, v)| Value::parse(v).as_f64());
                 let mut n = live.or(value.and_then(Value::as_f64)).unwrap_or(0.0);
-                let r = ui.add(egui::DragValue::new(&mut n).speed(0.5));
+                let mut dv = egui::DragValue::new(&mut n).speed(if kind == PropKind::Float {
+                    0.05
+                } else {
+                    0.5
+                });
+                if kind == PropKind::Int {
+                    dv = dv.fixed_decimals(0);
+                }
+                if !unit.is_empty() {
+                    dv = dv.suffix(" px");
+                }
+                let r = ui.add(dv);
+                let text = |n: f64| {
+                    if kind == PropKind::Float {
+                        let s = format!("{n:.3}");
+                        s.trim_end_matches('0').trim_end_matches('.').to_owned()
+                    } else {
+                        format!("{}{unit}", n.round() as i64)
+                    }
+                };
                 if r.dragged() && r.changed() {
-                    self.live = vec![(path.to_vec(), spec.name.to_string(), Value::Num(n))];
+                    self.live = vec![(path.to_vec(), spec.name.to_string(), text(n))];
                     None
                 } else if r.drag_stopped() {
                     self.live.clear();
-                    Some(Value::Num(n))
+                    Some(text(n))
                 } else if r.changed() {
-                    Some(Value::Num(n))
+                    Some(text(n))
                 } else {
                     None
                 }
             }
             PropKind::Bool => {
                 let mut b = value.and_then(Value::as_bool).unwrap_or(false);
-                ui.checkbox(&mut b, "").changed().then_some(Value::Bool(b))
+                ui.checkbox(&mut b, "").changed().then(|| b.to_string())
             }
             PropKind::Color => {
                 let mut c = match value {
@@ -1110,22 +1365,7 @@ impl Designer {
                     egui::color_picker::Alpha::OnlyBlend,
                 )
                 .changed()
-                .then(|| Value::Color(c.to_srgba_unmultiplied()))
-            }
-            PropKind::Size => {
-                let (mut w, mut h) = match value {
-                    Some(Value::Size(w, h)) => (*w, *h),
-                    _ => (0.0, 0.0),
-                };
-                ui.horizontal(|ui| {
-                    let a = ui.add(egui::DragValue::new(&mut w).range(0.0..=10000.0));
-                    ui.label("x");
-                    let b = ui.add(egui::DragValue::new(&mut h).range(0.0..=10000.0));
-                    let done =
-                        |r: &egui::Response| r.drag_stopped() || (r.changed() && !r.dragged());
-                    (done(&a) || done(&b)).then_some(Value::Size(w, h))
-                })
-                .inner
+                .then(|| Value::Color(c.to_srgba_unmultiplied()).to_source())
             }
             PropKind::Items => {
                 let current = match value {
@@ -1143,10 +1383,14 @@ impl Designer {
                             .map(|l| Value::Str(l.to_owned()))
                             .collect(),
                     )
+                    .to_source()
                 })
             }
             PropKind::Choice(options) => {
-                let current = value.and_then(Value::as_str).map(str::to_owned);
+                let current = match value {
+                    Some(Value::Ident(i)) => Some(i.rsplit('.').next().unwrap_or(i).to_owned()),
+                    _ => None,
+                };
                 let mut picked = None;
                 egui::ComboBox::from_id_salt(&key)
                     .selected_text(current.clone().unwrap_or_else(|| "default".into()))
@@ -1156,7 +1400,7 @@ impl Designer {
                                 .selectable_label(current.as_deref() == Some(o), *o)
                                 .clicked()
                             {
-                                picked = Some(Value::Ident((*o).to_owned()));
+                                picked = Some((*o).to_owned());
                             }
                         }
                     });
@@ -1164,49 +1408,48 @@ impl Designer {
             }
             PropKind::Source => {
                 let current = value.map(Value::to_source).unwrap_or_default();
-                let new = self.text_field(ui, &key, &current, false)?;
-                match perox_forms::parse_value(&new) {
-                    Some(v) => Some(v),
-                    None => {
-                        self.error = Some(format!("`{new}` isn't a valid value"));
-                        None
-                    }
-                }
+                self.text_field(ui, &key, &current, false)
+                    .filter(|t| !t.trim().is_empty())
             }
         }
     }
 
+    /// Each callback the element offers, with the root callback it forwards to. The
+    /// arrow opens (or creates) the Rust handler.
     #[allow(clippy::too_many_arguments)]
     fn events(
         &mut self,
         ui: &mut egui::Ui,
+        c: &Component,
         el: &Element,
         path: &[usize],
-        events: &[&str],
+        events: &[catalog::Event],
         source: &str,
-        stem: &str,
         actions: &mut Vec<Action>,
     ) {
-        let form_name = perox_forms::codegen::form_name(self.form.file(), stem);
         for event in events {
             ui.horizontal(|ui| {
-                label_cell(ui, RichText::new(*event));
-                let current = el
-                    .handlers
-                    .iter()
-                    .find(|h| h.event == *event)
-                    .map(|h| h.method.clone());
-                let key = format!("{path:?}/on {event}");
+                label_cell(ui, RichText::new(event.name));
+                let handler = el.handler(event.name);
+                let forwards = handler.and_then(|h| h.forwards_to()).map(str::to_owned);
+                if handler.is_some() && forwards.is_none() {
+                    // Hand-written code in the callback: leave it to the Source view.
+                    ui.weak("code in .slint");
+                    return;
+                }
+                let key = format!("{path:?}/on {}", event.name);
                 if let Some(new) =
-                    self.text_field(ui, &key, current.as_deref().unwrap_or(""), false)
+                    self.text_field(ui, &key, forwards.as_deref().unwrap_or(""), false)
                 {
                     let new = new.trim();
-                    let result = if new.is_empty() {
-                        edit::remove_handler(source, path, event)
+                    if new.is_empty() {
+                        self.apply(
+                            actions,
+                            edit::remove_handler(source, &c.name, path, event.name),
+                        );
                     } else {
-                        edit::set_handler(source, path, event, new)
-                    };
-                    self.apply(actions, result);
+                        self.wire(source, c, path, event, new, actions);
+                    }
                 }
                 if small_icon_button(
                     ui,
@@ -1215,21 +1458,77 @@ impl Designer {
                 )
                 .clicked()
                 {
-                    let method = current.clone().unwrap_or_else(|| {
-                        let who = el.id.clone().unwrap_or_else(|| catalog::snake(&el.kind));
-                        format!("{who}_{event}")
-                    });
-                    if current.is_some()
-                        || self.apply(actions, edit::set_handler(source, path, event, &method))
-                    {
-                        actions.push(Action::OpenHandler {
-                            form: form_name.clone(),
-                            method,
-                        });
-                    }
+                    actions.extend(self.go_to_handler(source, path, event.name));
                 }
             });
         }
+    }
+
+    /// "Go to handler" for `event` of the element at `path`: wires it to a root callback
+    /// (`<id>_<event>`) if it isn't yet, and asks the IDE to open the Rust method.
+    pub fn go_to_handler(&mut self, source: &str, path: &[usize], event: &str) -> Vec<Action> {
+        self.sync(source);
+        let mut actions = Vec::new();
+        let Some(c) = self.current().cloned() else {
+            return actions;
+        };
+        let Some(el) = c.at(path).cloned() else {
+            self.error = Some("no such element".into());
+            return actions;
+        };
+        let Some(ev) = catalog::events(&el.kind)
+            .iter()
+            .find(|e| e.name == event)
+            .copied()
+        else {
+            self.error = Some(format!("{} has no `{event}` event", el.kind));
+            return actions;
+        };
+        let handler = el.handler(event);
+        let forwards = handler.and_then(|h| h.forwards_to()).map(str::to_owned);
+        if handler.is_some() && forwards.is_none() {
+            self.error = Some(format!(
+                "`{event}` has code in the .slint file; edit it in Source"
+            ));
+            return actions;
+        }
+        let method = forwards.clone().unwrap_or_else(|| {
+            let who = el.id.clone().unwrap_or_else(|| catalog::kebab(&el.kind));
+            format!("{who}-{event}").replace('-', "_")
+        });
+        if forwards.is_some() || self.wire(source, &c, path, &ev, &method, &mut actions) {
+            actions.push(Action::OpenHandler {
+                form: c.name.clone(),
+                method: perox_slint::codegen::rust_name(&method),
+                params: ev
+                    .params
+                    .iter()
+                    .map(|(n, t)| {
+                        (
+                            perox_slint::codegen::rust_name(n),
+                            perox_slint::codegen::rust_type(t)
+                                .unwrap_or("()")
+                                .to_owned(),
+                        )
+                    })
+                    .collect(),
+            });
+        }
+        actions
+    }
+
+    /// `event(args) => { root.method(args); }` plus `callback method(…);` on the root.
+    fn wire(
+        &mut self,
+        source: &str,
+        c: &Component,
+        path: &[usize],
+        event: &catalog::Event,
+        method: &str,
+        actions: &mut Vec<Action>,
+    ) -> bool {
+        let result = wire_event(source, &c.name, path, event.name, method);
+        self.apply_text(actions, source, result)
     }
 
     /// A text field that writes back when you press Enter or leave it.
@@ -1260,17 +1559,61 @@ impl Designer {
     }
 }
 
-/// `button1`, `button2`, …: the first id not already in the form.
-pub fn unique_id(file: &File, base: &str) -> String {
+/// Wires `event` of the element at `path` to the root callback `method`:
+/// `event(args) => { root.method(args); }`, declaring `callback method(args);` on the
+/// component if needed. Returns the new source.
+pub fn wire_event(
+    source: &str,
+    comp: &str,
+    path: &[usize],
+    event: &str,
+    method: &str,
+) -> Result<String, EditError> {
+    let doc = perox_slint::parse(source);
+    let kind = doc
+        .component(comp)
+        .and_then(|c| c.at(path))
+        .map(|e| e.kind.clone())
+        .ok_or(EditError::NoSuchElement)?;
+    let params: &[(&str, &str)] = catalog::events(&kind)
+        .iter()
+        .find(|e| e.name == event)
+        .map_or(&[], |e| e.params);
+    let names: Vec<&str> = params.iter().map(|(n, _)| *n).collect();
+    let decl: Vec<(Option<&str>, &str)> = params.iter().map(|(n, t)| (Some(*n), *t)).collect();
+    let body = format!("root.{method}({});", names.join(", "));
+    let mut work = source.to_owned();
+    free::step(
+        &mut work,
+        edit::set_handler(source, comp, path, event, &names, &body),
+    )?;
+    let s = work.clone();
+    free::step(&mut work, edit::add_callback(&s, comp, method, &decl))?;
+    Ok(work)
+}
+
+/// The deepest element under `p` (rects are parents first), skipping `excluded` and its
+/// children.
+fn hit(rects: &[(Vec<usize>, Rect)], p: Pos2, excluded: Option<&[usize]>) -> Option<Vec<usize>> {
+    rects
+        .iter()
+        .rev()
+        .find(|(path, r)| r.contains(p) && !excluded.is_some_and(|e| path.starts_with(e)))
+        .map(|(path, _)| path.clone())
+}
+
+/// `button1`, `button2`, …: the first id not already in the component.
+pub fn unique_id(c: &Component, base: &str) -> String {
     (1..)
         .map(|n| format!("{base}{n}"))
-        .find(|id| file.find(id).is_none())
+        .find(|id| c.find(id).is_none())
         .unwrap_or_else(|| base.to_owned())
 }
 
 fn tree_node(
     ui: &mut egui::Ui,
     el: &Element,
+    comp: &str,
     path: &mut Vec<usize>,
     selected: Option<&[usize]>,
     clicked: &mut Option<Vec<usize>>,
@@ -1278,7 +1621,12 @@ fn tree_node(
     let is_sel = selected == Some(path.as_slice());
     let mut text = egui::text::LayoutJob::default();
     let style = ui.style();
-    if let Some(id) = &el.id {
+    let name = if path.is_empty() {
+        Some(comp.to_owned())
+    } else {
+        el.id.clone()
+    };
+    if let Some(id) = name {
         RichText::new(format!("{id}  ")).strong().append_to(
             &mut text,
             style,
@@ -1317,7 +1665,7 @@ fn tree_node(
         .body(|ui| {
             for (i, child) in el.children.iter().enumerate() {
                 path.push(i);
-                tree_node(ui, child, path, selected, clicked);
+                tree_node(ui, child, comp, path, selected, clicked);
                 path.pop();
             }
         });
@@ -1371,10 +1719,25 @@ fn small_icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str) -> egui::Response
         .on_hover_text(tip)
 }
 
+/// Dots every grid step: where free placement snaps.
+fn grid_dots(painter: &egui::Painter, r: Rect, color: Color32) {
+    let step = free::GRID * 2.0;
+    let mut y = r.top() + step;
+    while y < r.bottom() {
+        let mut x = r.left() + step;
+        while x < r.right() {
+            painter.circle_filled(Pos2::new(x, y), 0.8, color);
+            x += step;
+        }
+        y += step;
+    }
+}
+
 /// A neutral window frame around the form: title bar, border, shadow.
-fn window_chrome(ui: &egui::Ui, window: Rect, title: &str, selected: bool) {
+fn window_chrome(ui: &egui::Ui, window: Rect, title: &str, is_window: bool, selected: bool) {
     let v = ui.visuals();
     let painter = ui.painter();
+    let radius = if is_window { 8.0 } else { 0.0 };
     painter.add(
         egui::epaint::Shadow {
             offset: [0, 6],
@@ -1382,38 +1745,40 @@ fn window_chrome(ui: &egui::Ui, window: Rect, title: &str, selected: bool) {
             spread: 0,
             color: Color32::from_black_alpha(90),
         }
-        .as_shape(window, 8.0),
+        .as_shape(window, radius),
     );
-    painter.rect_filled(window, 8.0, v.panel_fill);
-    let bar = Rect::from_min_size(window.min, vec2(window.width(), TITLE_BAR));
-    painter.rect_filled(
-        bar,
-        egui::CornerRadius {
-            nw: 8,
-            ne: 8,
-            sw: 0,
-            se: 0,
-        },
-        v.faint_bg_color,
-    );
-    for i in 0..3 {
-        painter.circle_filled(
-            bar.left_center() + vec2(14.0 + i as f32 * 16.0, 0.0),
-            5.0,
-            v.widgets.inactive.bg_fill,
+    painter.rect_filled(window, radius, v.panel_fill);
+    if is_window {
+        let bar = Rect::from_min_size(window.min, vec2(window.width(), TITLE_BAR));
+        painter.rect_filled(
+            bar,
+            egui::CornerRadius {
+                nw: 8,
+                ne: 8,
+                sw: 0,
+                se: 0,
+            },
+            v.faint_bg_color,
+        );
+        for i in 0..3 {
+            painter.circle_filled(
+                bar.left_center() + vec2(14.0 + i as f32 * 16.0, 0.0),
+                5.0,
+                v.widgets.inactive.bg_fill,
+            );
+        }
+        painter.text(
+            bar.center(),
+            egui::Align2::CENTER_CENTER,
+            title,
+            egui::TextStyle::Body.resolve(ui.style()),
+            v.text_color(),
         );
     }
-    painter.text(
-        bar.center(),
-        egui::Align2::CENTER_CENTER,
-        title,
-        egui::TextStyle::Body.resolve(ui.style()),
-        v.text_color(),
-    );
     let stroke = if selected {
         Stroke::new(2.0, v.selection.bg_fill)
     } else {
         v.window_stroke
     };
-    painter.rect_stroke(window, 8.0, stroke, StrokeKind::Outside);
+    painter.rect_stroke(window, radius, stroke, StrokeKind::Outside);
 }

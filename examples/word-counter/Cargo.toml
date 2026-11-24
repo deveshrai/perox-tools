@@ -1,6 +1,6 @@
 [package]
 name = "word-counter"
-description = "Example PeroxIDE app: a .pxui form plus code-behind. Also what `New Project > GUI app` creates."
+description = "Example PeroxIDE app: Slint forms plus Rust code-behind. Also what File > New GUI App creates."
 version = "0.1.0"
 edition.workspace = true
 license = "MIT OR Apache-2.0"
@@ -8,9 +8,13 @@ publish = false
 
 [dependencies]
 perox-ui.workspace = true
+slint = { version = "=1.19.0" }
 
 [build-dependencies]
-perox-forms.workspace = true
+perox-slint = { workspace = true, features = ["build"] }
+
+[dev-dependencies]
+i-slint-backend-testing = "=1.19.0"
 
 [lints]
 workspace = true

@@ -2,7 +2,7 @@
 //! the canvas draws to show it. Pure functions over the laid-out rects.
 
 use eframe::egui::{Pos2, Rect, pos2};
-use perox_forms::File;
+use perox_slint::Component;
 
 use crate::catalog;
 
@@ -26,17 +26,19 @@ enum Axis {
 }
 
 fn axis(kind: &str) -> Axis {
-    match kind {
-        "HBox" => Axis::Horizontal,
-        "Grid" => Axis::Reading,
-        _ => Axis::Vertical,
+    if catalog::is_horizontal(kind) {
+        Axis::Horizontal
+    } else if catalog::is_grid(kind) {
+        Axis::Reading
+    } else {
+        Axis::Vertical
     }
 }
 
 /// The drop target for `child_kind` at `pointer`. `moving` is the widget being moved
 /// (it and its children can't be targets).
 pub fn target(
-    file: &File,
+    comp: &Component,
     rects: &[(Vec<usize>, Rect)],
     pointer: Pos2,
     child_kind: &str,
@@ -51,17 +53,17 @@ pub fn target(
         .map(|(p, _)| p.clone())?;
     let mut parent = hit;
     loop {
-        let el = file.at(&parent)?;
+        let el = comp.at(&parent)?;
         if catalog::accepts(&el.kind, child_kind) {
             break;
         }
         parent.pop()?;
-        if parent.is_empty() && !catalog::accepts(&file.root()?.kind, child_kind) {
+        if parent.is_empty() && !catalog::accepts(&comp.root.kind, child_kind) {
             return None;
         }
     }
-    let el = file.at(&parent)?;
-    if perox_ui::is_free(el) {
+    let el = comp.at(&parent)?;
+    if catalog::is_free(&el.kind) {
         return Some(Target {
             index: el.children.len(),
             parent,
@@ -153,9 +155,13 @@ mod tests {
         Rect::from_min_size(pos2(x, y), vec2(w, h))
     }
 
-    fn file() -> File {
-        perox_forms::parse(
-            "Window w {\n VBox {\n Button a {}\n HBox {\n Button b {}\n Button c {}\n }\n Label l {}\n }\n}",
+    fn comp(src: &str) -> Component {
+        perox_slint::parse(src).components.remove(0)
+    }
+
+    fn file() -> Component {
+        comp(
+            "export component W inherits Window {\n VerticalBox {\n a := Button {}\n HorizontalBox {\n b := Button {}\n c := Button {}\n }\n l := Text {}\n }\n}",
         )
     }
 
@@ -175,23 +181,30 @@ mod tests {
     fn dropping_on_a_leaf_inserts_beside_it_in_its_parent() {
         let f = file();
         // Upper half of `a`: before it.
-        let t = target(&f, &rects(), pos2(50.0, 12.0), "Label", None).unwrap();
+        let t = target(&f, &rects(), pos2(50.0, 12.0), "Text", None).unwrap();
         assert_eq!((t.parent, t.index), (vec![0], 0));
         // Lower half of `l`: after it.
-        let t = target(&f, &rects(), pos2(50.0, 88.0), "Label", None).unwrap();
+        let t = target(&f, &rects(), pos2(50.0, 88.0), "Text", None).unwrap();
         assert_eq!((t.parent, t.index), (vec![0], 3));
         // Right half of `b` in the row: between b and c.
-        let t = target(&f, &rects(), pos2(100.0, 50.0), "Label", None).unwrap();
+        let t = target(&f, &rects(), pos2(100.0, 50.0), "Text", None).unwrap();
         assert_eq!((t.parent, t.index), (vec![0, 1], 1));
         // Empty space under everything: end of the VBox.
-        let t = target(&f, &rects(), pos2(50.0, 200.0), "Label", None).unwrap();
+        let t = target(&f, &rects(), pos2(50.0, 200.0), "Text", None).unwrap();
         assert_eq!((t.parent, t.index), (vec![0], 3));
     }
 
     #[test]
     fn a_widget_cannot_land_inside_itself() {
         let f = file();
-        let t = target(&f, &rects(), pos2(100.0, 50.0), "HBox", Some(&[0, 1])).unwrap();
+        let t = target(
+            &f,
+            &rects(),
+            pos2(100.0, 50.0),
+            "HorizontalBox",
+            Some(&[0, 1]),
+        )
+        .unwrap();
         assert_eq!(t.parent, vec![0], "falls through to the VBox");
     }
 
@@ -203,13 +216,13 @@ mod tests {
 
     #[test]
     fn free_containers_take_drops_anywhere() {
-        let f = perox_forms::parse("Window w {\n layout: free\n Button a {}\n}");
+        let f = comp("export component W inherits Window {\n a := Button {}\n}");
         let rects = vec![
             (vec![], r(0.0, 0.0, 300.0, 300.0)),
             (vec![0], r(10.0, 10.0, 80.0, 24.0)),
         ];
         // Over the button: still the window (buttons don't take children).
-        let t = target(&f, &rects, pos2(20.0, 20.0), "Label", None).unwrap();
+        let t = target(&f, &rects, pos2(20.0, 20.0), "Text", None).unwrap();
         assert!(t.free);
         assert_eq!((t.parent, t.index), (vec![], 1));
     }

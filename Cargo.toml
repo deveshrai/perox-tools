@@ -21,7 +21,6 @@ perox-project = { path = "crates/perox-project" }
 perox-build = { path = "crates/perox-build" }
 perox-icons = { path = "crates/perox-icons" }
 perox-terminal = { path = "crates/perox-terminal" }
-perox-forms = { path = "crates/perox-forms" }
 perox-ui = { path = "crates/perox-ui" }
 perox-designer = { path = "crates/perox-designer" }
 perox-slint = { path = "crates/perox-slint" }

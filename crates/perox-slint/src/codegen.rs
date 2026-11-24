@@ -79,10 +79,53 @@ fn signature(cb: &Callback) -> Result<Sig, String> {
     })
 }
 
-/// Handlers trait and `connect` for one component; `None` if it has no callbacks.
+/// The `StandardButton` kinds in a component (`ok`, `cancel`, …), in order, once each.
+pub fn standard_buttons(c: &Component) -> Vec<String> {
+    let mut kinds: Vec<String> = Vec::new();
+    c.root.walk(&mut Vec::new(), &mut |el, _| {
+        if el.kind == "StandardButton"
+            && let Some(crate::Value::Ident(k)) = el.prop("kind")
+        {
+            let k = k.rsplit('.').next().unwrap_or(k).to_owned();
+            if !kinds.contains(&k) {
+                kinds.push(k);
+            }
+        }
+    });
+    kinds
+}
+
+/// `exec` for a component that inherits `Dialog`: shows it over a parent and reports the
+/// standard button that closed it (`perox_ui::dialog`).
+fn dialog_exec(c: &Component) -> String {
+    let name = &c.name;
+    let mut wiring = String::new();
+    for kind in standard_buttons(c) {
+        let variant: String = kind
+            .split(['-', '_'])
+            .map(|w| {
+                let mut ch = w.chars();
+                ch.next()
+                    .map(|f| f.to_ascii_uppercase().to_string() + ch.as_str())
+                    .unwrap_or_default()
+            })
+            .collect();
+        wiring.push_str(&format!(
+            "        {{\n            let f = finish.clone();\n            self.on_{k}_clicked(move || f.finish(perox_ui::DialogResult::{variant}));\n        }}\n",
+            k = rust_name(&kind),
+        ));
+    }
+    format!(
+        "impl {name} {{\n    /// Shows this dialog centred over `parent` and calls `done` once with the button\n    /// that closed it.\n    pub fn exec(\n        &self,\n        parent: Option<&slint::Window>,\n        done: impl FnOnce(perox_ui::DialogResult) + 'static,\n    ) -> Result<(), slint::PlatformError> {{\n        let finish = perox_ui::dialog::Finish::new(self, done);\n{wiring}        finish.on_close_requested(slint::ComponentHandle::window(self));\n        perox_ui::dialog::show_over(slint::ComponentHandle::window(self), parent)\n    }}\n}}\n"
+    )
+}
+
+/// Handlers trait and `connect` for one component (and `exec` for a dialog); `None` if
+/// there's nothing to generate.
 pub fn component_handlers(c: &Component) -> Option<String> {
+    let dialog = (c.root.kind == "Dialog").then(|| dialog_exec(c));
     if c.callbacks.is_empty() {
-        return None;
+        return dialog;
     }
     let name = &c.name;
     let mut trait_body = String::new();
@@ -123,7 +166,8 @@ pub fn component_handlers(c: &Component) -> Option<String> {
         ));
     }
     Some(format!(
-        "/// Handlers for `{name}`'s callbacks. Every method has an empty default; implement the\n/// ones you need and pass your type to [`{name}::connect`].\n#[allow(unused_variables)]\npub trait {name}Handlers: 'static {{\n{trait_body}}}\n\nimpl {name} {{\n    /// Routes every callback of this window to `handlers`, and returns them, shared.\n    #[allow(clippy::let_unit_value, clippy::unused_unit)]\n    pub fn connect<H: {name}Handlers>(&self, handlers: H) -> std::rc::Rc<std::cell::RefCell<H>> {{\n        let shared = std::rc::Rc::new(std::cell::RefCell::new(handlers));\n{wiring}        shared\n    }}\n}}\n"
+        "/// Handlers for `{name}`'s callbacks. Every method has an empty default; implement the\n/// ones you need and pass your type to [`{name}::connect`].\n#[allow(unused_variables)]\npub trait {name}Handlers: 'static {{\n{trait_body}}}\n\nimpl {name} {{\n    /// Routes every callback of this window to `handlers`, and returns them, shared.\n    #[allow(clippy::let_unit_value, clippy::unused_unit)]\n    pub fn connect<H: {name}Handlers>(&self, handlers: H) -> std::rc::Rc<std::cell::RefCell<H>> {{\n        let shared = std::rc::Rc::new(std::cell::RefCell::new(handlers));\n{wiring}        shared\n    }}\n}}\n{}",
+        dialog.map(|d| format!("\n{d}")).unwrap_or_default()
     ))
 }
 
@@ -314,6 +358,26 @@ mod tests {
         assert_eq!(
             component_handlers(&crate::parse("export component A { }").components[0]),
             None
+        );
+    }
+
+    #[test]
+    fn dialogs_get_exec() {
+        let doc = crate::parse(
+            "import { StandardButton } from \"std-widgets.slint\";\nexport component About inherits Dialog {\n    StandardButton { kind: ok; }\n    StandardButton { kind: StandardButtonKind.cancel; }\n}\n",
+        );
+        assert_eq!(standard_buttons(&doc.components[0]), ["ok", "cancel"]);
+        let code = handlers(&doc, &["About"]);
+        assert!(code.contains("impl About {"), "{code}");
+        assert!(code.contains("pub fn exec("), "{code}");
+        assert!(
+            code.contains("self.on_ok_clicked(move || f.finish(perox_ui::DialogResult::Ok));"),
+            "{code}"
+        );
+        assert!(code.contains("perox_ui::DialogResult::Cancel"), "{code}");
+        assert!(
+            !code.contains("AboutHandlers"),
+            "no callbacks, no trait: {code}"
         );
     }
 

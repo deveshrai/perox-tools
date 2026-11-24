@@ -15,7 +15,7 @@ cp target/release/peroxide "$APP/Contents/MacOS/peroxide"
 
 # SDK: the permissive runtime crates plus a small workspace for their inherited fields.
 SDK="$APP/Contents/Resources/sdk"
-for c in perox-ui perox-forms; do
+for c in perox-ui perox-slint; do
   mkdir -p "$SDK/$c"
   cp -R "crates/$c/Cargo.toml" "crates/$c/src" "$SDK/$c/"
   [ -f "crates/$c/README.md" ] && cp "crates/$c/README.md" "$SDK/$c/"
@@ -24,7 +24,7 @@ cp LICENSE-MIT LICENSE-APACHE "$SDK/"
 cat > "$SDK/Cargo.toml" <<EOF
 [workspace]
 resolver = "3"
-members = ["perox-ui", "perox-forms"]
+members = ["perox-ui", "perox-slint"]
 
 [workspace.package]
 version = "$VERSION"
@@ -35,9 +35,7 @@ repository = "https://github.com/deveshrai/perox-tools"
 publish = false
 
 [workspace.dependencies]
-perox-forms = { path = "perox-forms" }
-eframe = "=0.37.0"
-image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+$(grep -E '^(rfd|slint|slint-build|i-slint-compiler) = ' Cargo.toml)
 
 [workspace.lints.rust]
 unsafe_code = "deny"

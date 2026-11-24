@@ -49,6 +49,7 @@ pub fn new_method(
     body: Range<usize>,
     form: &str,
     method: &str,
+    params: &[(String, String)],
 ) -> (usize, String, usize) {
     let text = &src[body.clone()];
     let indent = text
@@ -68,8 +69,8 @@ pub fn new_method(
     let only_space_before = src[line_start..close].trim().is_empty();
     let has_methods = !text.trim().is_empty();
     let sep = if has_methods { "\n" } else { "" };
-    let head =
-        format!("{sep}{indent}fn {method}(&mut self, ui: &mut {form}<'_>) {{\n{indent}{unit}");
+    let args: String = params.iter().map(|(n, t)| format!(", {n}: {t}")).collect();
+    let head = format!("{sep}{indent}fn {method}(&mut self, ui: &{form}{args}) {{\n{indent}{unit}");
     let cursor = head.len();
     let body_text = format!("{head}\n{indent}}}\n");
     if only_space_before {
@@ -183,7 +184,7 @@ impl Scan {
 mod tests {
     use super::*;
 
-    const SRC: &str = "use x::MainWindowHandlers;\n\n// impl MainWindowHandlers for Nope {\nstruct App;\n\nimpl MainWindowHandlers for App {\n    fn count_clicked(&mut self, ui: &mut MainWindow<'_>) {\n        let s = \"}\";\n        let c = '}';\n    }\n}\n\nfn main() {}\n";
+    const SRC: &str = "use x::MainWindowHandlers;\n\n// impl MainWindowHandlers for Nope {\nstruct App;\n\nimpl MainWindowHandlers for App {\n    fn count_clicked(&mut self, ui: &MainWindow) {\n        let s = \"}\";\n        let c = '}';\n    }\n}\n\nfn main() {}\n";
 
     #[test]
     fn finds_the_impl_past_comments_and_braces_in_strings() {
@@ -197,10 +198,15 @@ mod tests {
     #[test]
     fn adds_a_method_before_the_closing_brace() {
         let body = find_impl(SRC, "MainWindowHandlers").unwrap();
-        let (at, text, cursor) = new_method(SRC, body, "MainWindow", "reset_clicked");
+        let (at, text, cursor) = new_method(SRC, body, "MainWindow", "reset_clicked", &[]);
         let mut out = SRC.to_owned();
         out.insert_str(at, &text);
-        assert!(out.contains("    }\n\n    fn reset_clicked(&mut self, ui: &mut MainWindow<'_>) {\n        \n    }\n}\n"), "{out}");
+        assert!(
+            out.contains(
+                "    }\n\n    fn reset_clicked(&mut self, ui: &MainWindow) {\n        \n    }\n}\n"
+            ),
+            "{out}"
+        );
         assert_eq!(&out[at + cursor - 8..at + cursor], "        ");
         let body = find_impl(&out, "MainWindowHandlers").unwrap();
         assert!(find_method(&out, body, "reset_clicked").is_some());
@@ -210,12 +216,18 @@ mod tests {
     fn empty_one_line_impl() {
         let src = "impl FormHandlers for App {}\n";
         let body = find_impl(src, "FormHandlers").unwrap();
-        let (at, text, _) = new_method(src, body, "Form", "go");
+        let (at, text, _) = new_method(
+            src,
+            body,
+            "Form",
+            "go",
+            &[("text".into(), "slint::SharedString".into())],
+        );
         let mut out = src.to_owned();
         out.insert_str(at, &text);
         assert_eq!(
             out,
-            "impl FormHandlers for App {\n    fn go(&mut self, ui: &mut Form<'_>) {\n        \n    }\n}\n"
+            "impl FormHandlers for App {\n    fn go(&mut self, ui: &Form, text: slint::SharedString) {\n        \n    }\n}\n"
         );
     }
 }

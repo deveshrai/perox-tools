@@ -92,6 +92,12 @@ pub enum Icon {
     Ungroup,
     WholeWord,
     X,
+    LetterText,
+    LoaderCircle,
+    MessageSquareWarning,
+    ScrollText,
+    SquareMousePointer,
+    ToggleLeft,
     Zap,
 }
 
@@ -177,6 +183,12 @@ impl Icon {
         Icon::Ungroup,
         Icon::WholeWord,
         Icon::X,
+        Icon::LetterText,
+        Icon::LoaderCircle,
+        Icon::MessageSquareWarning,
+        Icon::ScrollText,
+        Icon::SquareMousePointer,
+        Icon::ToggleLeft,
         Icon::Zap,
     ];
 
@@ -262,6 +274,14 @@ impl Icon {
             Icon::Ungroup => egui::include_image!("../icons/ungroup.svg"),
             Icon::WholeWord => egui::include_image!("../icons/whole-word.svg"),
             Icon::X => egui::include_image!("../icons/x.svg"),
+            Icon::LetterText => egui::include_image!("../icons/letter-text.svg"),
+            Icon::LoaderCircle => egui::include_image!("../icons/loader-circle.svg"),
+            Icon::MessageSquareWarning => {
+                egui::include_image!("../icons/message-square-warning.svg")
+            }
+            Icon::ScrollText => egui::include_image!("../icons/scroll-text.svg"),
+            Icon::SquareMousePointer => egui::include_image!("../icons/square-mouse-pointer.svg"),
+            Icon::ToggleLeft => egui::include_image!("../icons/toggle-left.svg"),
             Icon::Zap => egui::include_image!("../icons/zap.svg"),
         }
     }

@@ -1,26 +1,40 @@
-//! The code-behind for `ui/main_window.pxui`: implement the handlers you need.
+//! The code-behind for `ui/main_window.slint`: implement the handlers you need.
 
-mod main_window {
-    perox_ui::include_form!("main_window");
-}
+perox_ui::include_ui!();
 
-use main_window::{MainWindow, MainWindowHandlers};
+use slint::ComponentHandle;
 
 #[derive(Default)]
 struct App;
 
-impl MainWindowHandlers for App {
-    fn input_changed(&mut self, ui: &mut MainWindow<'_>) {
-        let text = ui.input().text();
-        let skip_numbers = ui.ignore_numbers().checked();
-        let words = count_words(&text, skip_numbers);
+impl App {
+    fn update(&self, ui: &MainWindow) {
+        let words = count_words(&ui.get_text(), ui.get_ignore_numbers());
         let plural = if words == 1 { "" } else { "s" };
-        ui.result().set_text(format!("{words} word{plural}"));
+        ui.set_result(format!("{words} word{plural}").into());
+    }
+}
+
+impl MainWindowHandlers for App {
+    fn input_edited(&mut self, ui: &MainWindow, _text: slint::SharedString) {
+        self.update(ui);
     }
 
-    fn clear_clicked(&mut self, ui: &mut MainWindow<'_>) {
-        ui.input().set_text("");
-        self.input_changed(ui);
+    fn ignore_numbers_toggled(&mut self, ui: &MainWindow) {
+        self.update(ui);
+    }
+
+    fn clear_clicked(&mut self, ui: &MainWindow) {
+        if ui.get_text().is_empty() || perox_ui::msgbox::confirm(ui, "Clear", "Clear the text?") {
+            ui.set_text("".into());
+            self.update(ui);
+        }
+    }
+
+    fn about_clicked(&mut self, ui: &MainWindow) {
+        if let Ok(about) = AboutDialog::new() {
+            let _ = about.exec(Some(ui.window()), |_| {});
+        }
     }
 }
 
@@ -30,8 +44,10 @@ fn count_words(text: &str, skip_numbers: bool) -> usize {
         .count()
 }
 
-fn main() -> perox_ui::eframe::Result {
-    MainWindow::run(App)
+fn main() -> Result<(), slint::PlatformError> {
+    let ui = MainWindow::new()?;
+    ui.connect(App);
+    ui.run()
 }
 
 #[cfg(test)]
@@ -45,13 +61,15 @@ mod tests {
     }
 
     #[test]
-    fn handlers_update_the_form() {
-        let mut form = perox_ui::Form::new(main_window::SOURCE);
-        let mut ui = MainWindow { form: &mut form };
-        ui.input().set_text("a b c");
-        App.input_changed(&mut ui);
-        assert_eq!(ui.result().text(), "3 words");
-        App.clear_clicked(&mut ui);
-        assert_eq!(ui.result().text(), "0 words");
+    fn handlers_update_the_window() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().unwrap();
+        ui.connect(App);
+        ui.set_text("a b 3".into());
+        ui.invoke_input_edited("a b 3".into());
+        assert_eq!(ui.get_result(), "3 words");
+        ui.set_ignore_numbers(true);
+        ui.invoke_ignore_numbers_toggled();
+        assert_eq!(ui.get_result(), "2 words");
     }
 }

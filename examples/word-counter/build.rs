@@ -1,4 +1,4 @@
 fn main() {
-    // Turns every src/ui/*.pxui into typed Rust (see `perox_ui::include_form!`).
-    perox_forms::codegen::build::compile_dir("src/ui");
+    // Compiles ui/ (see ui/slint-project.json) and writes the MainWindowHandlers glue.
+    perox_slint::build::compile("ui");
 }

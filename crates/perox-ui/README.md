@@ -1,63 +1,43 @@
 # perox-ui
 
-Draws `.pxui` forms in your app and in the PeroxIDE designer, using one code path, so the
-preview is what ships. License: MIT OR Apache-2.0 (it ships inside your app).
+The runtime PeroxIDE apps use on top of [Slint](https://slint.dev)
+([ADR 0011](../../docs/adr/0011-slint-for-user-apps.md)).
+License: MIT OR Apache-2.0 (it ships inside your app). Slint itself has its own licenses.
+
+| Item | What |
+|---|---|
+| `include_ui!()` | The components `build.rs` compiled, plus `<Name>Handlers` and `connect` for each |
+| `msgbox` | Native message boxes: `info`, `warning`, `error`, `confirm` (OK/Cancel), `ask` (Yes/No), `ask_cancel`, or a `MessageBox` builder with your own buttons |
+| `dialog` | `exec` for components that `inherits Dialog`: shown over a parent, calls you back with the `StandardButton` that closed it |
 
 ```rust
-perox_ui::run(include_str!("main_window.pxui"), |form, event| {
-    if event.handler.as_deref() == Some("greet") {
-        let name = form.widget("name").text();
-        form.widget("status").set_text(format!("Hello, {name}!"));
+perox_ui::include_ui!();
+
+use slint::ComponentHandle;
+
+struct App;
+
+impl MainWindowHandlers for App {
+    fn delete_clicked(&mut self, ui: &MainWindow) {
+        if perox_ui::msgbox::confirm(ui, "Delete", "Delete this item?") {
+            // …
+        }
     }
-})
+
+    fn about_clicked(&mut self, ui: &MainWindow) {
+        if let Ok(about) = AboutDialog::new() {
+            let _ = about.exec(Some(ui.window()), |result| println!("{result:?}"));
+        }
+    }
+}
+
+fn main() -> Result<(), slint::PlatformError> {
+    let ui = MainWindow::new()?;
+    ui.connect(App);
+    ui.run()
+}
 ```
 
-Usually you don't call this directly: the generated `MainWindow` wrapper and
-`MainWindowHandlers` trait give typed access ([perox-forms](../perox-forms/README.md)).
-
-## Layouts
-
-| Element | Lays out children | Useful properties |
-|---|---|---|
-| `Window` | top to bottom | `title`, `size`, `min_size`, `resizable`, `margin` (10) |
-| `VBox` / `HBox` | column / row (flexbox) | `spacing` (6), `margin`, `align`, `justify` |
-| `Grid` | CSS grid, filled row by row | `columns: [0, 1]` (0 = fit, n = share of the rest) |
-| `GroupBox` | top to bottom, framed | `title` |
-| `Tabs` → `Tab` | one page at a time | `Tab { title }`, `Tabs { selected }` |
-| `Panel` | **no layout**: children at `x`, `y` | `frame`, `margin` (0) |
-
-`Window`, `GroupBox` and `Tab` take `layout: free` to place their children freely too.
-In a free container, each child takes `x` and `y` (from the content box's top-left)
-and optional `width` and `height`; without them, it gets its natural size. A free
-container inside a layout is as big as its children need.
-
-Every element accepts `width`, `height`, `min_width`, `max_width`, `min_height`,
-`max_height`, `fixed_size: 200 x 30`, `stretch: n`, `visible`, `enabled`, `tooltip`, and
-in a grid, `row`, `column`, `row_span`, `column_span`.
-
-The defaults follow Qt's size policies:
-- A window's, tab's or group box's only layout fills it.
-- In rows and grids, fixed-height widgets sit centred.
-- Along a row, text boxes, sliders, progress bars and lists grow.
-- Tab sets, lists and multi-line text boxes take spare height.
-
-## Widgets and events
-
-| Widget | State property | Events |
-|---|---|---|
-| `Label` | `text` (also `heading`, `bold`, `color`, `font_size`, `wrap`, `text_align`) | — |
-| `Button` | `text` | `clicked` |
-| `CheckBox` | `checked` | `toggled` |
-| `RadioButton` | `checked` (exclusive per parent or `group`) | `toggled` |
-| `TextEdit` | `text` (`placeholder`, `rows`, `multiline`, `password`, `read_only`) | `changed`, `submitted` |
-| `ComboBox` | `selected`, `items` | `changed` |
-| `Slider` / `SpinBox` | `value` (`min`, `max`, `step`) | `changed` |
-| `ProgressBar` | `value` (`min`, `max`, `text`) | — |
-| `ListView` | `selected`, `items`, `rows` | `changed`, `activated` (double-click) |
-| `Image` | `source`, `size` | — |
-| `Separator`, `Spacer` | — | — |
-
-State lives in properties: a value your code sets overrides the file
-(`form.set(id, name, value)` or `form.widget(id).set_text(…)`).
-
-`cargo run -p perox-ui --example gallery` shows everything.
+Message boxes are truly modal (the OS's own alert). Slint 1.19 has no OS-level window
+modality yet, so a `Dialog` leaves its parent usable; use a message box for a blocking
+question. A complete app is in [examples/word-counter](../../examples/word-counter).

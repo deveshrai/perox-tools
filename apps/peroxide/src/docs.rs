@@ -8,9 +8,9 @@ use perox_editor::syntax::Lang;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DocId(pub u64);
 
-/// A `.pxui` form, which opens in the designer.
+/// A `.slint` file, which opens in the designer.
 pub fn is_form(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e == "pxui")
+    path.extension().is_some_and(|e| e == "slint")
 }
 
 #[derive(Debug)]
@@ -18,7 +18,7 @@ pub struct OpenDoc {
     pub id: DocId,
     pub path: PathBuf,
     pub editor: EditorState,
-    /// `.pxui` forms: the designer, and whether it's showing (else the source is).
+    /// `.slint` files: the designer, and whether it's showing (else the source is).
     pub designer: Option<Box<perox_designer::Designer>>,
     pub design_view: bool,
 }

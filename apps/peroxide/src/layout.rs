@@ -264,7 +264,7 @@ fn form_header(ui: &mut egui::Ui, doc: &mut crate::docs::OpenDoc) {
             ui.horizontal(|ui| {
                 for (design, icon, label, tip) in [
                     (true, Icon::PencilRuler, "Design", "Edit the form visually"),
-                    (false, Icon::Code, "Source", "Edit the .pxui text"),
+                    (false, Icon::Code, "Source", "Edit the .slint text"),
                 ] {
                     let b = egui::Button::selectable(
                         doc.design_view == design,
@@ -283,7 +283,7 @@ fn form_header(ui: &mut egui::Ui, doc: &mut crate::docs::OpenDoc) {
 }
 
 impl PaneUi<'_> {
-    /// The form designer for a `.pxui` document. Its edits go into the document.
+    /// The form designer for a `.slint` document. Its edits go into the document.
     fn design(&mut self, ui: &mut egui::Ui, id: DocId) {
         let Some(doc) = self.docs.get_mut(id) else {
             return;
@@ -292,15 +292,10 @@ impl PaneUi<'_> {
             return;
         };
         let source = doc.editor.core.text();
-        let stem = doc
-            .path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
         if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.any_pressed()) {
             self.focused = Some(id);
         }
-        let actions = designer.show(ui, &source, &stem);
+        let actions = designer.show(ui, &source, &doc.path);
         for action in actions {
             match action {
                 perox_designer::Action::Edit(edits) => {
@@ -309,10 +304,14 @@ impl PaneUi<'_> {
                 }
                 perox_designer::Action::Undo => doc.editor.undo(),
                 perox_designer::Action::Redo => doc.editor.redo(),
-                perox_designer::Action::OpenHandler { form, method } => {
+                perox_designer::Action::OpenHandler {
+                    form,
+                    method,
+                    params,
+                } => {
                     self.actions.push((
                         "designer.open_handler",
-                        json!({ "form": form, "method": method }),
+                        json!({ "form": form, "method": method, "params": params }),
                     ));
                 }
             }

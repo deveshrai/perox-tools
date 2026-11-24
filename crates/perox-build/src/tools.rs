@@ -73,7 +73,7 @@ pub fn env() -> Vec<(String, String)> {
 }
 
 /// The folder holding the runtime crates new apps depend on (`perox-ui`,
-/// `perox-forms`). Order: `PEROXIDE_SDK`; the install's `sdk` folder (next to the
+/// `perox-slint`). Order: `PEROXIDE_SDK`; the install's `sdk` folder (next to the
 /// executable, or `Contents/Resources/sdk` in a macOS bundle); this source tree's
 /// `crates/` (development builds).
 pub fn sdk_dir() -> Option<PathBuf> {

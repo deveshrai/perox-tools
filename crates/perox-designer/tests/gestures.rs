@@ -1,14 +1,17 @@
 //! The designer driven headlessly with synthetic mouse and keyboard input. Each
-//! gesture must turn into a minimal edit of the `.pxui` text.
+//! gesture must turn into a minimal edit of the `.slint` text.
 
 use eframe::egui::{self, Event, Modifiers, PointerButton, Pos2, Rect, vec2};
 use perox_designer::{Action, Designer};
+
+/// `(component, method, params)` of each "open handler" request.
+type Opened = Vec<(String, String, Vec<(String, String)>)>;
 
 struct Harness {
     ctx: egui::Context,
     designer: Designer,
     src: String,
-    opened: Vec<(String, String)>,
+    opened: Opened,
 }
 
 impl Harness {
@@ -33,13 +36,17 @@ impl Harness {
         let mut actions = Vec::new();
         let (designer, src) = (&mut self.designer, &self.src);
         let mut out = self.ctx.run_ui(input, |ui| {
-            actions = designer.show(ui, src, "main");
+            actions = designer.show(ui, src, std::path::Path::new("main.slint"));
         });
         out.textures_delta.clear();
         for a in actions {
             match a {
-                Action::Edit(edits) => self.src = perox_forms::edit::apply(&self.src, &edits),
-                Action::OpenHandler { form, method } => self.opened.push((form, method)),
+                Action::Edit(edits) => self.src = perox_slint::edit::apply(&self.src, &edits),
+                Action::OpenHandler {
+                    form,
+                    method,
+                    params,
+                } => self.opened.push((form, method, params)),
                 Action::Undo | Action::Redo => {}
             }
         }
@@ -106,22 +113,67 @@ impl Harness {
     }
 }
 
-const FORM: &str = "// keep this comment\nWindow main {\n    title: \"T\"\n    size: 400 x 300\n\n    VBox {\n        Button a { text: \"A\" }\n        Button b { text: \"B\" }\n    }\n}\n";
+const FORM: &str = "// keep this comment\nimport { Button, VerticalBox } from \"std-widgets.slint\";\nexport component Main inherits Window {\n    title: \"T\";\n    width: 400px;\n    height: 300px;\n\n    VerticalBox {\n        a := Button { text: \"A\"; }\n        b := Button { text: \"B\"; }\n    }\n}\n";
+
+fn parse(src: &str) -> perox_slint::Component {
+    let d = perox_slint::parse(src);
+    assert!(d.errors.is_empty(), "{src}\n{:?}", d.errors);
+    d.components.into_iter().next().unwrap()
+}
+
+#[test]
+fn the_canvas_shows_slint_and_knows_where_elements_are() {
+    let h = Harness::new(FORM);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
+    );
+    let w = h.rect(&[]);
+    assert_eq!(w.size(), vec2(400.0, 300.0));
+    let (a, b) = (h.rect(&[0, 0]), h.rect(&[0, 1]));
+    assert!(w.contains_rect(a) && w.contains_rect(b));
+    assert!(a.bottom() <= b.top(), "a above b: {a:?} {b:?}");
+}
 
 #[test]
 fn drag_from_the_palette_inserts_between_widgets() {
     let mut h = Harness::new(FORM);
     let a = h.rect(&[0, 0]);
-    let from = h.palette("Label").center();
+    let from = h.palette("Text").center();
     // Lower half of `a`: lands between a and b.
     h.drag(from, a.center() + vec2(0.0, a.height() * 0.3));
-    let f = perox_forms::parse(&h.src);
-    assert!(f.errors.is_empty(), "{}", h.src);
-    let vbox = f.at(&[0]).unwrap();
-    let kinds: Vec<_> = vbox.children.iter().map(|c| c.kind.as_str()).collect();
-    assert_eq!(kinds, ["Button", "Label", "Button"], "{}", h.src);
+    let c = parse(&h.src);
+    let kinds: Vec<_> = c
+        .at(&[0])
+        .unwrap()
+        .children
+        .iter()
+        .map(|c| c.kind.as_str())
+        .collect();
+    assert_eq!(kinds, ["Button", "Text", "Button"], "{}", h.src);
     assert!(h.src.starts_with("// keep this comment\n"));
     assert_eq!(h.designer.selected, Some(vec![0, 1]));
+}
+
+#[test]
+fn dropping_a_std_widget_imports_it() {
+    let mut h = Harness::new(FORM);
+    let a = h.rect(&[0, 0]);
+    let from = h.palette("LineEdit").center();
+    h.drag(from, a.center() + vec2(0.0, a.height() * 0.3));
+    assert!(
+        h.src
+            .contains("import { Button, VerticalBox, LineEdit } from"),
+        "{}",
+        h.src
+    );
+    assert!(h.src.contains("line_edit1 := LineEdit { }"), "{}", h.src);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
+    );
 }
 
 #[test]
@@ -131,8 +183,8 @@ fn click_selects_and_delete_removes() {
     h.click(b.center());
     assert_eq!(h.designer.selected, Some(vec![0, 1]));
     h.key(egui::Key::Delete);
-    assert!(!h.src.contains("Button b"), "{}", h.src);
-    assert!(h.src.contains("Button a"));
+    assert!(!h.src.contains("b := Button"), "{}", h.src);
+    assert!(h.src.contains("a := Button"));
     assert_eq!(h.designer.selected, Some(vec![0]));
 }
 
@@ -142,8 +194,8 @@ fn dragging_a_widget_moves_it() {
     let a = h.rect(&[0, 0]);
     let b = h.rect(&[0, 1]);
     h.drag(a.center(), b.center() + vec2(0.0, b.height() * 0.4));
-    let f = perox_forms::parse(&h.src);
-    let ids: Vec<_> = f
+    let c = parse(&h.src);
+    let ids: Vec<_> = c
         .at(&[0])
         .unwrap()
         .children
@@ -160,31 +212,24 @@ fn resizing_the_window_writes_its_size() {
     let w = h.designer.layout.window.unwrap();
     let corner = w.right_bottom() - vec2(2.0, 2.0);
     h.drag(corner, corner + vec2(100.0, 50.0));
-    assert!(h.src.contains("size: 500 x 350"), "{}", h.src);
+    assert!(
+        h.src.contains("width: 500px;") && h.src.contains("height: 350px;"),
+        "{}",
+        h.src
+    );
 }
 
-const FREE: &str = "Window main {\n    title: \"T\"\n    size: 400 x 300\n    layout: free\n\n    Button a { text: \"A\"; x: 16; y: 16 }\n}\n";
-
-fn content_origin(h: &Harness, path: &[usize]) -> Pos2 {
-    let i = h
-        .designer
-        .layout
-        .elements
-        .iter()
-        .position(|(p, _)| p == path)
-        .unwrap();
-    h.designer.layout.contents[i].min
-}
+const FREE: &str = "import { Button } from \"std-widgets.slint\";\nexport component Main inherits Window {\n    title: \"T\";\n    preferred-width: 400px;\n    preferred-height: 300px;\n\n    a := Button { text: \"A\"; x: 16px; y: 16px; }\n}\n";
 
 #[test]
 fn drop_into_a_free_window_places_at_the_pointer_snapped() {
     let mut h = Harness::new(FREE);
-    let origin = content_origin(&h, &[]);
-    let from = h.palette("Label").center();
+    let origin = h.rect(&[]).min;
+    let from = h.palette("Text").center();
     h.drag(from, origin + vec2(101.0, 61.0));
-    let f = perox_forms::parse(&h.src);
-    let l = f.at(&[1]).unwrap();
-    assert_eq!(l.kind, "Label", "{}", h.src);
+    let c = parse(&h.src);
+    let l = c.at(&[1]).unwrap();
+    assert_eq!(l.kind, "Text", "{}", h.src);
     assert_eq!(
         (l.num_prop("x"), l.num_prop("y")),
         (Some(104.0), Some(64.0)),
@@ -197,10 +242,10 @@ fn drop_into_a_free_window_places_at_the_pointer_snapped() {
 fn dragging_in_a_free_window_moves_by_the_drag() {
     let mut h = Harness::new(FREE);
     let a = h.rect(&[0]);
+    assert_eq!(a.min - h.rect(&[]).min, vec2(16.0, 16.0));
     let from = a.center();
     h.drag(from, from + vec2(40.0, 24.0));
-    let f = perox_forms::parse(&h.src);
-    let b = f.at(&[0]).unwrap();
+    let b = parse(&h.src).at(&[0]).unwrap().clone();
     assert_eq!(
         (b.num_prop("x"), b.num_prop("y")),
         (Some(56.0), Some(40.0)),
@@ -217,8 +262,7 @@ fn resize_handles_write_geometry() {
     h.click(a.center());
     let corner = a.right_bottom();
     h.drag(corner, corner + vec2(50.0, 20.0));
-    let f = perox_forms::parse(&h.src);
-    let b = f.at(&[0]).unwrap();
+    let b = parse(&h.src).at(&[0]).unwrap().clone();
     assert_eq!(
         (b.num_prop("x"), b.num_prop("y")),
         (Some(16.0), Some(16.0)),
@@ -231,6 +275,8 @@ fn resize_handles_write_geometry() {
         "snapped right edge: {}",
         h.src
     );
+    // And the canvas shows the new size.
+    assert!((h.rect(&[0]).width() - w as f32).abs() < 1.0);
 }
 
 #[test]
@@ -241,7 +287,7 @@ fn arrow_keys_nudge() {
     h.key(egui::Key::ArrowRight);
     h.key(egui::Key::ArrowDown);
     assert!(
-        h.src.contains("x: 17") && h.src.contains("y: 17"),
+        h.src.contains("x: 17px") && h.src.contains("y: 17px"),
         "{}",
         h.src
     );
@@ -252,23 +298,93 @@ fn break_layout_keeps_widgets_where_they_are() {
     let mut h = Harness::new(FORM);
     let b_before = h.rect(&[0, 1]);
     let rects = h.designer.layout.elements.clone();
-    let contents = h.designer.layout.contents.clone();
     h.src = perox_designer::free::break_layout(
         &h.src,
-        perox_designer::free::Drawn {
-            rects: &rects,
-            contents: &contents,
-        },
+        "Main",
+        perox_designer::free::Drawn { rects: &rects },
         &[0],
     )
     .unwrap();
     h.frame(vec![]);
     h.frame(vec![]);
-    assert!(h.src.contains("Panel"), "{}", h.src);
+    assert!(h.src.contains("Rectangle {"), "{}", h.src);
     let b_after = h.rect(&[0, 1]);
     assert!(
         (b_before.min - b_after.min).length() < 1.0,
         "{b_before:?} {b_after:?}\n{}",
         h.src
+    );
+    assert!((b_before.size() - b_after.size()).length() < 1.0);
+}
+
+#[test]
+fn go_to_handler_declares_and_wires_a_callback() {
+    let mut h = Harness::new(FORM);
+    let actions = h.designer.go_to_handler(&h.src.clone(), &[0, 0], "clicked");
+    let mut opened = None;
+    for a in actions {
+        match a {
+            Action::Edit(e) => h.src = perox_slint::edit::apply(&h.src, &e),
+            Action::OpenHandler {
+                form,
+                method,
+                params,
+            } => opened = Some((form, method, params)),
+            _ => {}
+        }
+    }
+    assert_eq!(opened, Some(("Main".into(), "a_clicked".into(), vec![])));
+    assert!(
+        h.src.contains(
+            "    callback a_clicked();
+"
+        ),
+        "{}",
+        h.src
+    );
+    assert!(
+        h.src
+            .contains("a := Button { text: \"A\"; clicked => { root.a_clicked(); } }"),
+        "{}",
+        h.src
+    );
+    // The second time it just opens it.
+    let again = h.designer.go_to_handler(&h.src.clone(), &[0, 0], "clicked");
+    assert!(
+        matches!(again.as_slice(), [Action::OpenHandler { .. }]),
+        "{again:?}"
+    );
+    // With parameters.
+    let src = "import { LineEdit } from \"std-widgets.slint\";\nexport component Main inherits Window {\n    name := LineEdit { }\n}\n";
+    let mut h = Harness::new(src);
+    let actions = h.designer.go_to_handler(src, &[0], "edited");
+    let Some(Action::OpenHandler { params, .. }) = actions.last() else {
+        panic!("{actions:?}")
+    };
+    assert_eq!(
+        params,
+        &[("text".to_owned(), "slint::SharedString".to_owned())]
+    );
+    for a in &actions {
+        if let Action::Edit(e) = a {
+            h.src = perox_slint::edit::apply(&h.src, e);
+        }
+    }
+    assert!(
+        h.src.contains("callback name_edited(text: string);"),
+        "{}",
+        h.src
+    );
+    assert!(
+        h.src
+            .contains("edited(text) => { root.name_edited(text); }"),
+        "{}",
+        h.src
+    );
+    h.frame(vec![]);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
     );
 }

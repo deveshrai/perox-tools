@@ -9,39 +9,42 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phases 1 and 2 are done.** It's a real Rust IDE with rust-analyzer, plus a
-> form designer. **File → New GUI App** gives you a window to design, a button wired to Rust
-> code, and Run. Next up: debugger and pro tooling. See [docs/roadmap.md](docs/roadmap.md).
+> Status: **Phases 1 and 2 are done; forms now use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
+> It's a real Rust IDE with rust-analyzer, plus a form designer for `.slint` files.
+> **File → New GUI App** gives you a native-looking window to design, a button wired to
+> Rust code, an About dialog, and Run. Next up: debugger and pro tooling. See
+> [docs/roadmap.md](docs/roadmap.md).
 
 ## Screenshots
 
-**The form designer.** Drag widgets from the palette onto the form. Layouts work like
-Qt's. Edit properties and events in the inspector. Every change is a small edit to the
-`.pxui` text, so Undo, the Source view and git diffs all agree.
+**The form designer.** Your app's UI is plain `.slint`, drawn on the canvas by Slint
+itself in the style your app will use (Cupertino on macOS, Fluent on Windows and Linux;
+switch styles in the toolbar). Drag widgets from the palette; layouts work like Qt's. Edit
+properties and events in the inspector. Every change is a small edit to the `.slint` text,
+so Undo, the Source view and git diffs all agree, and hand-written Slint opens fine.
 
 ![The PeroxIDE form designer](docs/screenshots/designer.png)
 
-**Free placement, like VB or Qt without a layout.** Use a `Panel`, or set a window,
-group box or tab to `layout: free`. Then drop widgets anywhere on the snap grid, move
-them, and resize them with handles. **Break layout** turns a layout into free placement
-without moving anything. **Lay out vertically / horizontally / in a grid** goes back,
-ordering widgets by where they sit.
+**Free placement, like VB or Qt without a layout.** In Slint, anything that isn't a layout
+(a window, a `Rectangle`, a tab) places its children by `x`/`y`. Drop widgets anywhere on
+the snap grid, move them, resize them with handles, nudge them with the arrow keys.
+**Break layout** turns a layout into free placement without moving anything; **Lay out
+vertically / horizontally / in a grid** goes back, ordering widgets by where they sit.
 
 ![Free placement in the designer](docs/screenshots/free-placement.png)
 
-**The code-behind, with rust-analyzer.** The designer generates typed accessors
-(`ui.result()`) and a handlers trait. Completion, inlay hints and hover work on them like
-any Rust code. "Go to handler" in the inspector adds the method for you.
+**Go to handler.** The arrow next to an event declares a callback on the window, wires the
+widget to it, and adds a typed method to your `impl MainWindowHandlers` block, ready to
+fill in. rust-analyzer completes the generated `get_*`/`set_*` accessors like any Rust code.
 
-![Completion on generated form accessors](docs/screenshots/complete.png)
+![Go to handler adds the Rust method](docs/screenshots/go-to-handler.png)
 
-**What runs.** The same runtime draws the designer canvas and your app, so what you
-design is what ships. Left: [examples/word-counter](examples/word-counter). Right:
-`cargo run -p perox-ui --example gallery`.
+**What runs.** Real native windows. Left: [examples/word-counter](examples/word-counter).
+Right: a new GUI app with a widget added in the designer.
 
 <p>
   <img src="docs/screenshots/word-counter-app.png" alt="The word counter example app" width="48%">
-  <img src="docs/screenshots/widget-gallery.png" alt="The perox-ui widget gallery" width="48%">
+  <img src="docs/screenshots/new-app.png" alt="A new app from the template" width="48%">
 </p>
 
 Claude Code can drive all of it, the designer included, over MCP ([docs/mcp.md](docs/mcp.md)).
@@ -59,7 +62,7 @@ The toolchain is pinned in `rust-toolchain.toml`. Each platform also needs:
 | OS | Install |
 |---|---|
 | macOS | Xcode Command Line Tools: `xcode-select --install` |
-| Linux (Debian/Ubuntu) | `sudo apt install build-essential libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev` |
+| Linux (Debian/Ubuntu) | `sudo apt install build-essential libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libfontconfig-dev` |
 | Windows | Visual Studio Build Tools with "Desktop development with C++" |
 
 ## Find your way around
@@ -83,8 +86,8 @@ crates/perox-lsp/   the rust-analyzer client (GPL-3.0-or-later)
 crates/perox-project/ Cargo projects and the file tree (GPL-3.0-or-later)
 crates/perox-build/ running cargo (GPL-3.0-or-later)
 crates/perox-designer/ the form designer (GPL-3.0-or-later)
-crates/perox-forms/ the .pxui language and code generation (MIT OR Apache-2.0)
-crates/perox-ui/    the form runtime that ships in your app (MIT OR Apache-2.0)
+crates/perox-slint/ .slint editing and the handlers codegen for build.rs (MIT OR Apache-2.0)
+crates/perox-ui/    the runtime in your app: handlers, message boxes, dialogs (MIT OR Apache-2.0)
 crates/perox-icons/, perox-terminal/  icons and the terminal
 examples/           apps built with PeroxIDE
 docs/               ADRs, roadmap, spikes
@@ -94,10 +97,12 @@ toolchain-set/      the pinned toolchain + bundled crates, and the check that pr
 ## License
 
 - **The IDE** (everything not listed below): [GPL-3.0-or-later](LICENSE).
-- **Everything that ends up inside *your* apps**: the `perox-ui` runtime, the `.pxui`
-  format and the component SDK are **MIT OR Apache-2.0**
-  ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). Apps you build
-  with PeroxIDE are yours, under any license you like.
+- **Our code inside *your* apps** (`perox-ui`, `perox-slint`, generated code) is
+  **MIT OR Apache-2.0** ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)).
+- **Your apps also use [Slint](https://slint.dev)**, so they follow one of Slint's
+  licenses: GPL-3.0, the free royalty-free license (keep the `AboutSlint` credit the
+  template puts in the About dialog), or a paid Slint license. See
+  [ADR 0011](docs/adr/0011-slint-for-user-apps.md).
 
 The reasoning is in [ADR 0004](docs/adr/0004-licensing.md). Contributions need the
 [CLA](CLA.md).

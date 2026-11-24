@@ -259,37 +259,57 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         // ── form designer ──
         (
             CommandSpec::new("designer.open_handler", "Go to Event Handler", Access::Edit)
-                .description("Shows an event handler in the form's code-behind (the `impl <Form>Handlers for …` block), adding an empty method if it's missing.")
+                .description("Shows a callback handler in the code-behind (the `impl <Component>Handlers for …` block), adding an empty method if it's missing.")
                 .params(json!({
                     "type": "object",
                     "properties": {
-                        "form": { "type": "string", "description": "Generated form type, e.g. MainWindow" },
-                        "method": { "type": "string" }
+                        "form": { "type": "string", "description": "Component, e.g. MainWindow" },
+                        "method": { "type": "string" },
+                        "params": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "[[name, Rust type], …] for a new method" }
                     },
                     "required": ["form", "method"]
                 })),
             |s, inv| {
                 let form = inv.str_arg("form")?.to_owned();
                 let method = inv.str_arg("method")?.to_owned();
-                open_handler(s, &form, &method)
+                let params: Vec<(String, String)> = inv.args["params"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| Some((p[0].as_str()?.to_owned(), p[1].as_str()?.to_owned())))
+                    .collect();
+                open_handler(s, &form, &method, &params)
             },
         ),
         (
             CommandSpec::new("designer.tree", "Form Tree", Access::Read)
-                .description("A .pxui form as a tree: each widget's kind, id, path (#0.1), properties (as .pxui source) and event handlers. Also lists syntax errors.")
-                .params(path_schema(json!({}))),
+                .description("A .slint file's components, and the designed one as a tree: each element's kind, id, path (#0.1), properties (as .slint expressions) and callbacks. Also lists syntax errors and the preview's compile errors.")
+                .params(path_schema(json!({ "component": { "type": "string", "description": "Default: the file's main window" } }))),
             |s, inv| {
-                let (_, text) = form_text(s, inv)?;
-                let file = perox_forms::parse(&text);
-                let errors: Vec<_> = file.errors.iter().map(|e| e.message.clone()).collect();
-                Ok(json!({ "root": file.root().map(|r| form_json(r, &mut Vec::new())), "errors": errors }))
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let c = doc.component(&comp).ok_or_else(|| err(format!("No component `{comp}`.")))?;
+                let mut errors: Vec<String> = doc.errors.iter().map(|e| e.message.clone()).collect();
+                if let Some(d) = s.docs.get(id).and_then(|d| d.designer.as_ref()) {
+                    errors.extend(d.preview.diagnostics.iter().cloned());
+                }
+                let callbacks: Vec<String> = c.callbacks.iter().map(|cb| s_slice(&text, &cb.span)).collect();
+                Ok(json!({
+                    "components": doc.components.iter().map(|c| &c.name).collect::<Vec<_>>(),
+                    "component": comp,
+                    "callbacks": callbacks,
+                    "root": form_json(&c.root, &mut Vec::new()),
+                    "errors": errors,
+                }))
             },
         ),
         (
-            CommandSpec::new("designer.add_widget", "Add Widget", Access::Edit)
-                .description("Adds a widget to a form (in the editor, unsaved). Kinds: VBox HBox Grid GroupBox Tabs Tab Label Button TextEdit CheckBox RadioButton ComboBox Slider SpinBox ProgressBar ListView Image Separator Spacer. Property values are .pxui source: \"\\\"Hello\\\"\", \"12\", \"true\", \"640 x 480\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
+            CommandSpec::new("designer.add_widget", "Add Element", Access::Edit)
+                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView Image TouchArea, or any component. Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
                 .params(path_schema(json!({
-                    "parent": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "component": { "type": "string" },
+                    "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
                     "index": { "type": "integer", "minimum": 0, "description": "Child position; default: last" },
                     "kind": { "type": "string" },
                     "id": { "type": "string" },
@@ -297,44 +317,51 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 }))),
             |s, inv| {
                 let (id, text) = form_text(s, inv)?;
-                let file = perox_forms::parse(&text);
-                let parent = widget_path(&file, inv.str_arg("parent")?)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let parent = widget_path(&doc, &comp, inv.str_arg("parent")?)?;
                 let index = opt_usize(inv, "index").unwrap_or(usize::MAX);
                 let mut props = Vec::new();
                 for (k, v) in inv.args["props"].as_object().into_iter().flatten() {
-                    let src = v.as_str().ok_or_else(|| err(format!("`{k}` must be a string of .pxui source")))?;
-                    let value = perox_forms::parse_value(src).ok_or_else(|| err(format!("`{src}` isn't a valid value for `{k}`")))?;
-                    props.push((k.clone(), value));
+                    let src = v.as_str().ok_or_else(|| err(format!("`{k}` must be a string with a .slint expression")))?;
+                    props.push((k.clone(), src.to_owned()));
                 }
                 let kind = inv.str_arg("kind")?;
-                let wid = inv.args["id"].as_str();
-                let edits = perox_forms::edit::add_widget(&text, &parent, index, kind, wid, &props).map_err(|e| err(e.to_string()))?;
-                apply_form_edits(s, id, edits);
-                let count = file.at(&parent).map_or(0, |p| p.children.len());
+                // Like the designer: widgets code talks to get an id.
+                let auto = doc
+                    .component(&comp)
+                    .filter(|_| perox_designer::catalog::wants_id(kind))
+                    .map(|c| perox_designer::unique_id(c, &perox_designer::catalog::snake(kind)));
+                let wid = inv.args["id"].as_str().or(auto.as_deref());
+                let mut work = text.clone();
+                perox_designer::free::step(&mut work, perox_slint::edit::add_element(&text, &comp, &parent, index, kind, wid, &props))
+                    .map_err(|e| err(e.to_string()))?;
+                perox_designer::free::import(&mut work, kind);
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &work));
+                let count = doc.component(&comp).and_then(|c| c.at(&parent)).map_or(0, |p| p.children.len());
                 let mut path = parent;
                 path.push(index.min(count));
-                Ok(json!({ "added": path_key(&path) }))
+                Ok(json!({ "added": path_key(&path), "id": wid }))
             },
         ),
         (
-            CommandSpec::new("designer.set_property", "Set Widget Property", Access::Edit)
-                .description("Sets a widget property to a .pxui value (\"\\\"text\\\"\", \"12\", \"true\", \"640 x 480\", \"center\"), or removes it when value is null. Only that value's text changes.")
+            CommandSpec::new("designer.set_property", "Set Element Property", Access::Edit)
+                .description("Sets an element property to a .slint expression (\"\\\"text\\\"\", \"12px\", \"true\", \"center\", \"root.width / 2\"), or removes it when value is null. Only that value's text changes.")
                 .params(path_schema(json!({
-                    "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
                     "name": { "type": "string" },
                     "value": { "type": ["string", "null"] }
                 }))),
             |s, inv| {
                 let (id, text) = form_text(s, inv)?;
-                let file = perox_forms::parse(&text);
-                let path = widget_path(&file, inv.str_arg("widget")?)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
                 let name = inv.str_arg("name")?;
                 let edits = match inv.args["value"].as_str() {
-                    Some(src) => {
-                        let value = perox_forms::parse_value(src).ok_or_else(|| err(format!("`{src}` isn't a valid .pxui value")))?;
-                        perox_forms::edit::set_property(&text, &path, name, &value)
-                    }
-                    None => perox_forms::edit::remove_property(&text, &path, name),
+                    Some(v) => perox_slint::edit::set_property(&text, &comp, &path, name, v),
+                    None => perox_slint::edit::remove_property(&text, &comp, &path, name),
                 }
                 .map_err(|e| err(e.to_string()))?;
                 apply_form_edits(s, id, edits);
@@ -342,53 +369,58 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
-            CommandSpec::new("designer.remove_widget", "Remove Widget", Access::Edit)
-                .description("Removes a widget (and its children) from a form.")
-                .params(path_schema(json!({ "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }) }))),
+            CommandSpec::new("designer.remove_widget", "Remove Element", Access::Edit)
+                .description("Removes an element (and its children) from a component.")
+                .params(path_schema(json!({ "component": { "type": "string" }, "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }) }))),
             |s, inv| {
                 let (id, text) = form_text(s, inv)?;
-                let file = perox_forms::parse(&text);
-                let path = widget_path(&file, inv.str_arg("widget")?)?;
-                let edits = perox_forms::edit::remove_widget(&text, &path).map_err(|e| err(e.to_string()))?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
+                let edits = perox_slint::edit::remove_element(&text, &comp, &path).map_err(|e| err(e.to_string()))?;
                 apply_form_edits(s, id, edits);
                 Ok(json!({ "removed": path_key(&path) }))
             },
         ),
         (
-            CommandSpec::new("designer.move_widget", "Move Widget", Access::Edit)
-                .description("Moves a widget to child position `index` of `parent` (positions as before the move).")
+            CommandSpec::new("designer.move_widget", "Move Element", Access::Edit)
+                .description("Moves an element to child position `index` of `parent` (positions as before the move).")
                 .params(path_schema(json!({
-                    "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
-                    "parent": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
                     "index": { "type": "integer", "minimum": 0 }
                 }))),
             |s, inv| {
                 let (id, text) = form_text(s, inv)?;
-                let file = perox_forms::parse(&text);
-                let from = widget_path(&file, inv.str_arg("widget")?)?;
-                let parent = widget_path(&file, inv.str_arg("parent")?)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let from = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
+                let parent = widget_path(&doc, &comp, inv.str_arg("parent")?)?;
                 let index = opt_usize(inv, "index").unwrap_or(usize::MAX);
-                let edits = perox_forms::edit::move_widget(&text, &from, &parent, index).map_err(|e| err(e.to_string()))?;
+                let edits = perox_slint::edit::move_element(&text, &comp, &from, &parent, index).map_err(|e| err(e.to_string()))?;
                 apply_form_edits(s, id, edits);
                 Ok(json!({ "ok": true }))
             },
         ),
         (
             CommandSpec::new("designer.set_handler", "Set Event Handler", Access::Edit)
-                .description("Wires a widget event (clicked, changed, submitted, toggled, activated) to a handler method name, or unwires it when method is null. The method becomes part of the generated <Form>Handlers trait.")
+                .description("Wires an element's callback (clicked, edited, accepted, toggled, changed, selected, …) to a root callback `method` (declared if missing, and so a method of the generated <Component>Handlers trait), or unwires it when method is null.")
                 .params(path_schema(json!({
-                    "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }),
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
                     "event": { "type": "string" },
                     "method": { "type": ["string", "null"] }
                 }))),
             |s, inv| {
                 let (id, text) = form_text(s, inv)?;
-                let file = perox_forms::parse(&text);
-                let path = widget_path(&file, inv.str_arg("widget")?)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
                 let event = inv.str_arg("event")?;
                 let edits = match inv.args["method"].as_str() {
-                    Some(m) => perox_forms::edit::set_handler(&text, &path, event, m),
-                    None => perox_forms::edit::remove_handler(&text, &path, event),
+                    Some(m) => perox_designer::wire_event(&text, &comp, &path, event, m).map(|new| perox_slint::edit::diff(&text, &new)),
+                    None => perox_slint::edit::remove_handler(&text, &comp, &path, event),
                 }
                 .map_err(|e| err(e.to_string()))?;
                 apply_form_edits(s, id, edits);
@@ -396,16 +428,46 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.go_to_handler", "Go to Element Handler", Access::Edit)
+                .description("Like double-clicking an event in the designer: wires the element's callback to `<id>_<event>` if it isn't yet, then shows the Rust method (adding it to the `impl <Component>Handlers` block).")
+                .params(path_schema(json!({ "component": { "type": "string" }, "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }), "event": { "type": "string" } }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
+                let event = inv.str_arg("event")?;
+                let mut d = perox_designer::Designer::new();
+                d.component = Some(comp);
+                let actions = d.go_to_handler(&text, &path, event);
+                if let Some(e) = d.error {
+                    return Err(err(e));
+                }
+                let mut opened = Value::Null;
+                for a in actions {
+                    match a {
+                        perox_designer::Action::Edit(edits) => apply_form_edits(s, id, edits),
+                        perox_designer::Action::OpenHandler { form, method, params } => {
+                            opened = open_handler(s, &form, &method, &params)?;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(opened)
+            },
+        ),
+        (
             CommandSpec::new("designer.break_layout", "Break Layout", Access::Edit)
-                .description("Qt-style Break Layout: a VBox/HBox/Grid becomes a free Panel, or a Window/GroupBox/Tab gets `layout: free` (taking over its single layout's children). Every widget keeps its place, now as x, y, width, height. The form must be showing in the designer.")
-                .params(path_schema(json!({ "widget": { "type": "string", "description": "Container id or path (# is the window)" } }))),
+                .description("Qt-style Break Layout: a layout (VerticalBox, HorizontalBox, GridBox…) becomes a Rectangle, or a window/tab/rectangle holding a single layout takes over its children. Every element keeps its place, now as x, y, width, height. The form must be showing in the designer.")
+                .params(path_schema(json!({ "component": { "type": "string" }, "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }) }))),
             |s, inv| relayout_command(s, inv, None),
         ),
         (
             CommandSpec::new("designer.lay_out", "Lay Out", Access::Edit)
-                .description("Puts a free container's children into a layout, ordered by where they sit: direction vertical, horizontal or grid. A Panel becomes the layout; a free Window/GroupBox/Tab gets a new layout inside. The form must be showing in the designer.")
+                .description("Puts a container's freely placed children into a layout, ordered by where they sit: direction vertical, horizontal or grid. A nested Rectangle becomes the layout; a window or tab gets a new layout inside. The form must be showing in the designer.")
                 .params(path_schema(json!({
-                    "widget": { "type": "string" },
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
                     "direction": { "type": "string", "enum": ["vertical", "horizontal", "grid"] }
                 }))),
             |s, inv| {
@@ -419,16 +481,18 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
-            CommandSpec::new("designer.select", "Select Widget", Access::Read)
-                .description("Shows a form in the designer with a widget selected (for screenshots and pointing things out).")
-                .params(path_schema(json!({ "widget": json!({ "type": "string", "description": "Widget id, or a path like #0.1 (# is the window)" }) }))),
+            CommandSpec::new("designer.select", "Select Element", Access::Read)
+                .description("Shows a form in the designer with an element selected (for screenshots and pointing things out).")
+                .params(path_schema(json!({ "component": { "type": "string" }, "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }) }))),
             |s, inv| {
                 let (id, text) = form_text(s, inv)?;
-                let file = perox_forms::parse(&text);
-                let path = widget_path(&file, inv.str_arg("widget")?)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
                 if let Some(doc) = s.docs.get_mut(id) {
                     doc.design_view = true;
                     if let Some(d) = doc.designer.as_mut() {
+                        d.component = Some(comp);
                         d.selected = Some(path.clone());
                     }
                 }
@@ -1039,8 +1103,9 @@ fn relayout_command(
     dir: Option<perox_designer::free::Direction>,
 ) -> Result<Value, CommandError> {
     let (id, text) = form_text(s, inv)?;
-    let file = perox_forms::parse(&text);
-    let path = widget_path(&file, inv.str_arg("widget")?)?;
+    let parsed = perox_slint::parse(&text);
+    let comp = component_name(&parsed, inv)?;
+    let path = widget_path(&parsed, &comp, inv.str_arg("widget")?)?;
     let doc = s
         .docs
         .get_mut(id)
@@ -1048,30 +1113,29 @@ fn relayout_command(
     let designer = doc
         .designer
         .as_ref()
-        .filter(|_| doc.design_view)
-        .ok_or_else(|| err("Show the form in the designer first (designer.select)."))?;
+        .filter(|d| doc.design_view && d.component_name() == comp)
+        .ok_or_else(|| err("Show the component in the designer first (designer.select)."))?;
     let drawn = perox_designer::free::Drawn {
         rects: &designer.layout.elements,
-        contents: &designer.layout.contents,
     };
-    if drawn.rects.is_empty() {
+    if drawn.rects.len() < 2 {
         return Err(err("The designer hasn't drawn this form yet; try again."));
     }
     let result = match dir {
-        None => perox_designer::free::break_layout(&text, drawn, &path),
-        Some(d) => perox_designer::free::lay_out(&text, drawn, &path, d),
+        None => perox_designer::free::break_layout(&text, &comp, drawn, &path),
+        Some(d) => perox_designer::free::lay_out(&text, &comp, drawn, &path, d),
     }
     .map_err(|e| err(e.to_string()))?;
-    let edits = perox_forms::edit::diff(&text, &result);
+    let edits = perox_slint::edit::diff(&text, &result);
     apply_form_edits(s, id, edits);
     Ok(json!({ "ok": true }))
 }
 
-/// Opens a `.pxui` file (keeping the current view) and returns it with its text.
+/// Opens a `.slint` file (keeping the current view) and returns it with its text.
 fn form_text(s: &mut AppState, inv: &Invocation) -> Result<(DocId, String), CommandError> {
     let path = resolve(s, inv, "path")?;
     if !crate::docs::is_form(&path) {
-        return Err(err("Not a .pxui form."));
+        return Err(err("Not a .slint file."));
     }
     let id = open_file(s, &path, None, None)?;
     let text = s
@@ -1082,7 +1146,23 @@ fn form_text(s: &mut AppState, inv: &Invocation) -> Result<(DocId, String), Comm
     Ok((id, text))
 }
 
-fn apply_form_edits(s: &mut AppState, id: DocId, edits: Vec<perox_forms::edit::TextEdit>) {
+/// The `component` argument, else the file's main component.
+fn component_name(doc: &perox_slint::Document, inv: &Invocation) -> Result<String, CommandError> {
+    match inv.args["component"].as_str() {
+        Some(c) if doc.component(c).is_some() => Ok(c.to_owned()),
+        Some(c) => Err(err(format!("No component `{c}` in this file."))),
+        None => doc
+            .main_component()
+            .map(|i| doc.components[i].name.clone())
+            .ok_or_else(|| err("This file has no component.")),
+    }
+}
+
+fn s_slice(text: &str, r: &std::ops::Range<usize>) -> String {
+    text.get(r.clone()).unwrap_or_default().to_owned()
+}
+
+fn apply_form_edits(s: &mut AppState, id: DocId, edits: Vec<perox_slint::edit::TextEdit>) {
     if let Some(doc) = s.docs.get_mut(id) {
         let edits: Vec<_> = edits.into_iter().map(|e| (e.range, e.text)).collect();
         doc.editor.apply_byte_edits(&edits);
@@ -1095,8 +1175,15 @@ fn path_key(path: &[usize]) -> String {
     format!("#{}", parts.join("."))
 }
 
-/// A widget id or `#0.1` path.
-fn widget_path(file: &perox_forms::File, w: &str) -> Result<Vec<usize>, CommandError> {
+/// An element id or `#0.1` path.
+fn widget_path(
+    doc: &perox_slint::Document,
+    comp: &str,
+    w: &str,
+) -> Result<Vec<usize>, CommandError> {
+    let c = doc
+        .component(comp)
+        .ok_or_else(|| err(format!("No component `{comp}`.")))?;
     let path = if let Some(rest) = w.strip_prefix('#') {
         rest.split('.')
             .filter(|p| !p.is_empty())
@@ -1106,15 +1193,15 @@ fn widget_path(file: &perox_forms::File, w: &str) -> Result<Vec<usize>, CommandE
             })
             .collect::<Result<Vec<_>, _>>()?
     } else {
-        file.find(w)
-            .ok_or_else(|| err(format!("No widget named `{w}`.")))?
+        c.find(w)
+            .ok_or_else(|| err(format!("No element named `{w}`.")))?
     };
-    file.at(&path)
+    c.at(&path)
         .ok_or_else(|| err(format!("Nothing at `{w}`.")))?;
     Ok(path)
 }
 
-fn form_json(el: &perox_forms::Element, path: &mut Vec<usize>) -> Value {
+fn form_json(el: &perox_slint::Element, path: &mut Vec<usize>) -> Value {
     let props: serde_json::Map<String, Value> = el
         .props
         .iter()
@@ -1123,7 +1210,7 @@ fn form_json(el: &perox_forms::Element, path: &mut Vec<usize>) -> Value {
     let handlers: serde_json::Map<String, Value> = el
         .handlers
         .iter()
-        .map(|h| (h.event.clone(), Value::String(h.method.clone())))
+        .map(|h| (h.event.clone(), Value::String(h.body.clone())))
         .collect();
     let mut children = Vec::new();
     for (i, c) in el.children.iter().enumerate() {
@@ -1143,7 +1230,12 @@ fn form_json(el: &perox_forms::Element, path: &mut Vec<usize>) -> Value {
 
 /// Finds `impl <form>Handlers for …` in the project, opens it at `method`, adding the
 /// method if needed.
-fn open_handler(s: &mut AppState, form: &str, method: &str) -> Result<Value, CommandError> {
+fn open_handler(
+    s: &mut AppState,
+    form: &str,
+    method: &str,
+    params: &[(String, String)],
+) -> Result<Value, CommandError> {
     let trait_name = format!("{form}Handlers");
     let text_of = |s: &AppState, p: &Path| match s.docs.by_path(p).and_then(|id| s.docs.get(id)) {
         Some(d) => Some(d.editor.core.text()),
@@ -1175,7 +1267,7 @@ fn open_handler(s: &mut AppState, form: &str, method: &str) -> Result<Value, Com
         open_file(s, &path, Some(line_of(&text, at)), None)?;
         return Ok(json!({ "path": rel(s, &path), "line": line_of(&text, at), "added": false }));
     }
-    let (at, insert, cursor) = crate::code_behind::new_method(&text, body, form, method);
+    let (at, insert, cursor) = crate::code_behind::new_method(&text, body, form, method, params);
     let id = open_file(s, &path, None, None)?;
     if let Some(doc) = s.docs.get_mut(id) {
         doc.editor.apply_byte_edits(&[(at..at, insert.clone())]);

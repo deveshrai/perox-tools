@@ -208,7 +208,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
-        std::fs::write(dir.join("src/ui/form.pxui"), "").unwrap();
+        std::fs::write(dir.join("src/ui/form.slint"), "").unwrap();
         std::fs::write(dir.join("target/debug/junk"), "").unwrap();
         std::fs::write(dir.join(".hidden"), "").unwrap();
 
@@ -230,7 +230,7 @@ mod tests {
             [
                 PathBuf::from("Cargo.toml"),
                 PathBuf::from("src/main.rs"),
-                PathBuf::from("src/ui/form.pxui")
+                PathBuf::from("src/ui/form.slint")
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);

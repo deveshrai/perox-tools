@@ -1,0 +1,14 @@
+import { AboutSlint, StandardButton, VerticalBox } from "std-widgets.slint";
+
+// Shown from the About button. `AboutSlint` credits Slint, as its royalty-free
+// license asks.
+export component AboutDialog inherits Dialog {
+    title: "About Word Counter";
+
+    VerticalBox {
+        Text { text: "Word Counter"; font-size: 18px; font-weight: 700; }
+        Text { text: "An example app made with PeroxIDE."; }
+        AboutSlint { }
+    }
+    StandardButton { kind: ok; }
+}

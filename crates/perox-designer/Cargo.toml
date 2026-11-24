@@ -1,6 +1,6 @@
 [package]
 name = "perox-designer"
-description = "PeroxIDE's form designer: canvas, widget palette, object tree, property inspector. Every change is a minimal edit to the .pxui text."
+description = "PeroxIDE's form designer for .slint files: canvas rendered by Slint, widget palette, object tree, property inspector. Every change is a minimal edit to the .slint text."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,9 +10,13 @@ publish.workspace = true
 
 [dependencies]
 eframe.workspace = true
-perox-forms.workspace = true
+i-slint-compiler.workspace = true
+i-slint-core.workspace = true
 perox-icons.workspace = true
-perox-ui.workspace = true
+perox-slint.workspace = true
+slint = { workspace = true, features = ["renderer-software"] }
+slint-interpreter = { workspace = true, features = ["internal-highlight"] }
+spin_on = "0.1"
 
 [lints]
 workspace = true

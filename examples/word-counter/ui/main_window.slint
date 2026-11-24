@@ -1,0 +1,33 @@
+import { Button, CheckBox, HorizontalBox, TextEdit, VerticalBox } from "std-widgets.slint";
+
+// The main window. Open it in PeroxIDE's designer, or edit it by hand.
+export component MainWindow inherits Window {
+    title: "Word Counter";
+    preferred-width: 480px;
+    preferred-height: 320px;
+
+    // What the Rust code reads and writes.
+    in-out property <string> text <=> input.text;
+    in-out property <bool> ignore-numbers <=> ignore_numbers.checked;
+    in-out property <string> result: "0 words";
+
+    callback input_edited(text: string);
+    callback ignore_numbers_toggled();
+    callback clear_clicked();
+    callback about_clicked();
+
+    VerticalBox {
+        Text { text: "Paste or type some text:"; }
+        input := TextEdit {
+            placeholder-text: "Text to count";
+            edited(text) => { root.input_edited(text); }
+        }
+        HorizontalBox {
+            ignore_numbers := CheckBox { text: "Ignore numbers"; toggled => { root.ignore_numbers_toggled(); } }
+            Rectangle { }
+            about := Button { text: "About"; clicked => { root.about_clicked(); } }
+            clear := Button { text: "Clear"; clicked => { root.clear_clicked(); } }
+        }
+        Text { text: root.result; font-weight: 700; }
+    }
+}

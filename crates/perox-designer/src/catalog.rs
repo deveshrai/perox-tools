@@ -1,23 +1,30 @@
-//! What the designer knows about each element kind: palette entry, default
-//! properties for a new one, editable properties and events.
+//! What the designer knows about Slint elements: palette entries, where they come from
+//! (`std-widgets.slint` or built in), defaults for a new one, editable properties and
+//! callbacks. Anything not listed still works: it's shown with its properties as source.
 
 use std::borrow::Cow;
 
-use perox_forms::Value;
 use perox_icons::Icon;
+
+pub const STD_WIDGETS: &str = "std-widgets.slint";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PropKind {
+    /// `string`
     Text,
-    /// A whole number or decimal.
-    Number,
+    /// `length` (written with `px`)
+    Length,
+    /// `int`
+    Int,
+    /// `float`
+    Float,
     Bool,
     Color,
-    Size,
-    /// `items: [...]`, edited one per line.
+    /// `[string]` model, edited one per line.
     Items,
+    /// An enum; values written as-is.
     Choice(&'static [&'static str]),
-    /// Anything else, edited as `.pxui` source (`columns: [0, 1]`).
+    /// Anything else, edited as a `.slint` expression.
     Source,
 }
 
@@ -36,367 +43,483 @@ const fn p(name: &'static str, kind: PropKind, help: &'static str) -> PropSpec {
     }
 }
 
+/// A callback an element offers: `edited(text: string)`.
+#[derive(Debug, Clone, Copy)]
+pub struct Event {
+    pub name: &'static str,
+    /// `(name, type)`.
+    pub params: &'static [(&'static str, &'static str)],
+}
+
+const fn e(name: &'static str, params: &'static [(&'static str, &'static str)]) -> Event {
+    Event { name, params }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Group {
+    Layout,
+    Container,
+    Widget,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Kind {
     pub name: &'static str,
     pub icon: Icon,
-    pub layout: bool,
+    pub group: Group,
+    /// Import it from `std-widgets.slint` (else it's built in).
+    pub std: bool,
     pub props: &'static [PropSpec],
-    pub events: &'static [&'static str],
+    pub events: &'static [Event],
 }
 
 use PropKind::*;
 
-const ALIGN: PropKind = Choice(&["stretch", "start", "center", "end"]);
-const JUSTIFY: PropKind = Choice(&["start", "center", "end", "between", "around"]);
 const BOX: &[PropSpec] = &[
-    p("spacing", Number, "Gap between children (6)"),
-    p("margin", Number, "Space inside the edges"),
-    p("align", ALIGN, "Cross-axis alignment of children"),
-    p("justify", JUSTIFY, "Where spare space goes along the axis"),
+    p("spacing", Length, "Gap between children"),
+    p("padding", Length, "Space inside the edges"),
+    p(
+        "alignment",
+        Choice(&[
+            "stretch",
+            "start",
+            "center",
+            "end",
+            "space-between",
+            "space-around",
+        ]),
+        "Where spare space goes along the axis",
+    ),
 ];
 
-const LAYOUT_MODE: PropKind = Choice(&["stack", "free"]);
+const GRID: &[PropSpec] = &[
+    p("spacing", Length, "Gap between cells"),
+    p("padding", Length, "Space inside the edges"),
+];
+
+const FONT: &[PropSpec] = &[
+    p("text", Text, ""),
+    p("font-size", Length, ""),
+    p("font-weight", Int, "100–900 (400 normal, 700 bold)"),
+    p("color", Color, ""),
+    p(
+        "horizontal-alignment",
+        Choice(&["left", "center", "right"]),
+        "",
+    ),
+    p(
+        "vertical-alignment",
+        Choice(&["top", "center", "bottom"]),
+        "",
+    ),
+    p("wrap", Choice(&["no-wrap", "word-wrap", "char-wrap"]), ""),
+    p("overflow", Choice(&["clip", "elide"]), ""),
+];
 
 pub const KINDS: &[Kind] = &[
     Kind {
-        name: "Panel",
-        icon: Icon::SquareDashed,
-        layout: true,
-        props: &[
-            p("frame", Bool, "Draw a border"),
-            p("margin", Number, "Space inside the edges (0)"),
-        ],
-        events: &[],
-    },
-    Kind {
-        name: "VBox",
+        name: "VerticalBox",
         icon: Icon::Rows3,
-        layout: true,
+        group: Group::Layout,
+        std: true,
         props: BOX,
         events: &[],
     },
     Kind {
-        name: "HBox",
+        name: "HorizontalBox",
         icon: Icon::Columns3,
-        layout: true,
+        group: Group::Layout,
+        std: true,
         props: BOX,
         events: &[],
     },
     Kind {
-        name: "Grid",
+        name: "GridBox",
         icon: Icon::Grid3x3,
-        layout: true,
+        group: Group::Layout,
+        std: true,
+        props: GRID,
+        events: &[],
+    },
+    Kind {
+        name: "Rectangle",
+        icon: Icon::SquareDashed,
+        group: Group::Container,
+        std: false,
         props: &[
-            p(
-                "columns",
-                Source,
-                "[0, 1]: 0 fits content, n takes n shares",
-            ),
-            p("spacing", Number, "Gap between cells (6)"),
-            p("margin", Number, "Space inside the edges"),
+            p("background", Color, ""),
+            p("border-width", Length, ""),
+            p("border-color", Color, ""),
+            p("border-radius", Length, ""),
         ],
         events: &[],
     },
     Kind {
         name: "GroupBox",
         icon: Icon::Group,
-        layout: true,
-        props: &[
-            p(
-                "layout",
-                LAYOUT_MODE,
-                "free: place children anywhere (x, y)",
-            ),
-            p("title", Text, "Shown in the frame"),
-            p("spacing", Number, "Gap between children (6)"),
-            p("margin", Number, "Space inside the frame (8)"),
-        ],
+        group: Group::Container,
+        std: true,
+        props: &[p("title", Text, "Shown in the frame")],
         events: &[],
     },
     Kind {
-        name: "Tabs",
+        name: "TabWidget",
         icon: Icon::PanelTop,
-        layout: true,
-        props: &[p("selected", Number, "The page shown first (0)")],
-        events: &["changed"],
+        group: Group::Container,
+        std: true,
+        props: &[p("current-index", Int, "The page shown")],
+        events: &[],
     },
     Kind {
         name: "Tab",
         icon: Icon::AppWindow,
-        layout: true,
+        group: Group::Container,
+        std: false,
+        props: &[p("title", Text, "The tab's label")],
+        events: &[],
+    },
+    Kind {
+        name: "ScrollView",
+        icon: Icon::ScrollText,
+        group: Group::Container,
+        std: true,
         props: &[
-            p(
-                "layout",
-                LAYOUT_MODE,
-                "free: place children anywhere (x, y)",
-            ),
-            p("title", Text, "The tab's label"),
-            p("spacing", Number, "Gap between children (6)"),
-            p("margin", Number, "Space inside the page (8)"),
+            p("viewport-width", Length, "Width of the scrolled content"),
+            p("viewport-height", Length, "Height of the scrolled content"),
         ],
         events: &[],
     },
     Kind {
-        name: "Label",
+        name: "Text",
         icon: Icon::Type,
-        layout: false,
-        props: &[
-            p("text", Text, ""),
-            p("heading", Bool, "Large heading font"),
-            p("bold", Bool, ""),
-            p("color", Color, ""),
-            p("font_size", Number, "Points"),
-            p("wrap", Bool, "Wrap to the available width"),
-            p("monospace", Bool, ""),
-            p("text_align", Choice(&["left", "center", "right"]), ""),
-        ],
+        group: Group::Widget,
+        std: false,
+        props: FONT,
         events: &[],
     },
     Kind {
         name: "Button",
         icon: Icon::RectangleHorizontal,
-        layout: false,
-        props: &[p("text", Text, "")],
-        events: &["clicked"],
+        group: Group::Widget,
+        std: true,
+        props: &[
+            p("text", Text, ""),
+            p("primary", Bool, "The default action's look"),
+            p("checkable", Bool, "Stays down when clicked"),
+            p("checked", Bool, ""),
+        ],
+        events: &[e("clicked", &[])],
+    },
+    Kind {
+        name: "LineEdit",
+        icon: Icon::TextCursorInput,
+        group: Group::Widget,
+        std: true,
+        props: &[
+            p("text", Text, ""),
+            p("placeholder-text", Text, "Shown while empty"),
+            p(
+                "input-type",
+                Choice(&["text", "password", "number", "decimal"]),
+                "",
+            ),
+            p("read-only", Bool, ""),
+            p("font-size", Length, ""),
+            p(
+                "horizontal-alignment",
+                Choice(&["left", "center", "right"]),
+                "",
+            ),
+        ],
+        events: &[
+            e("edited", &[("text", "string")]),
+            e("accepted", &[("text", "string")]),
+        ],
     },
     Kind {
         name: "TextEdit",
-        icon: Icon::TextCursorInput,
-        layout: false,
+        icon: Icon::LetterText,
+        group: Group::Widget,
+        std: true,
         props: &[
             p("text", Text, ""),
-            p("placeholder", Text, "Shown while empty"),
-            p("rows", Number, "More than 1 makes it multi-line"),
-            p("multiline", Bool, ""),
-            p("password", Bool, "Hide the characters"),
-            p("read_only", Bool, ""),
-            p("monospace", Bool, ""),
+            p("placeholder-text", Text, "Shown while empty"),
+            p("read-only", Bool, ""),
+            p("wrap", Choice(&["no-wrap", "word-wrap", "char-wrap"]), ""),
+            p("font-size", Length, ""),
         ],
-        events: &["changed", "submitted"],
+        events: &[e("edited", &[("text", "string")])],
     },
     Kind {
         name: "CheckBox",
         icon: Icon::SquareCheck,
-        layout: false,
+        group: Group::Widget,
+        std: true,
         props: &[p("text", Text, ""), p("checked", Bool, "")],
-        events: &["toggled"],
+        events: &[e("toggled", &[])],
     },
     Kind {
-        name: "RadioButton",
-        icon: Icon::CircleDot,
-        layout: false,
-        props: &[
-            p("text", Text, ""),
-            p("checked", Bool, ""),
-            p(
-                "group",
-                Text,
-                "Exclusive with others in the group (default: same parent)",
-            ),
-        ],
-        events: &["toggled"],
+        name: "Switch",
+        icon: Icon::ToggleLeft,
+        group: Group::Widget,
+        std: true,
+        props: &[p("text", Text, ""), p("checked", Bool, "")],
+        events: &[e("toggled", &[])],
     },
     Kind {
         name: "ComboBox",
         icon: Icon::SquareChevronDown,
-        layout: false,
+        group: Group::Widget,
+        std: true,
         props: &[
-            p("items", Items, "One per line"),
-            p("selected", Number, "Index"),
+            p("model", Items, "One per line"),
+            p("current-index", Int, ""),
         ],
-        events: &["changed"],
-    },
-    Kind {
-        name: "Slider",
-        icon: Icon::SlidersHorizontal,
-        layout: false,
-        props: &[
-            p("value", Number, ""),
-            p("min", Number, "(0)"),
-            p("max", Number, "(100)"),
-            p("step", Number, ""),
-            p("show_value", Bool, "Show the number box (true)"),
-        ],
-        events: &["changed"],
+        events: &[e("selected", &[("current-value", "string")])],
     },
     Kind {
         name: "SpinBox",
         icon: Icon::Hash,
-        layout: false,
+        group: Group::Widget,
+        std: true,
         props: &[
-            p("value", Number, ""),
-            p("min", Number, ""),
-            p("max", Number, ""),
-            p("step", Number, "(1)"),
-            p("prefix", Text, ""),
-            p("suffix", Text, ""),
+            p("value", Int, ""),
+            p("minimum", Int, "(0)"),
+            p("maximum", Int, "(100)"),
+            p("step-size", Int, "(1)"),
         ],
-        events: &["changed"],
+        events: &[e("edited", &[("value", "int")])],
     },
     Kind {
-        name: "ProgressBar",
-        icon: Icon::Gauge,
-        layout: false,
+        name: "Slider",
+        icon: Icon::SlidersHorizontal,
+        group: Group::Widget,
+        std: true,
         props: &[
-            p("value", Number, ""),
-            p("min", Number, "(0)"),
-            p("max", Number, "(100)"),
-            p("text", Text, "Instead of the percentage"),
+            p("value", Float, ""),
+            p("minimum", Float, "(0)"),
+            p("maximum", Float, "(100)"),
+            p("step", Float, "(1)"),
+            p("orientation", Choice(&["horizontal", "vertical"]), ""),
         ],
+        events: &[
+            e("changed", &[("value", "float")]),
+            e("released", &[("value", "float")]),
+        ],
+    },
+    Kind {
+        name: "ProgressIndicator",
+        icon: Icon::Gauge,
+        group: Group::Widget,
+        std: true,
+        props: &[p("progress", Float, "0 to 1"), p("indeterminate", Bool, "")],
         events: &[],
     },
     Kind {
-        name: "ListView",
+        name: "Spinner",
+        icon: Icon::LoaderCircle,
+        group: Group::Widget,
+        std: true,
+        props: &[p("progress", Float, "0 to 1"), p("indeterminate", Bool, "")],
+        events: &[],
+    },
+    Kind {
+        name: "StandardListView",
         icon: Icon::List,
-        layout: false,
-        props: &[
-            p("items", Items, "One per line"),
-            p("selected", Number, "Index"),
-            p("rows", Number, "Visible rows (5)"),
-        ],
-        events: &["changed", "activated"],
+        group: Group::Widget,
+        std: true,
+        props: &[p("current-item", Int, "Selected row (-1: none)")],
+        events: &[e("current-item-changed", &[("current-item", "int")])],
     },
     Kind {
         name: "Image",
         icon: Icon::Image,
-        layout: false,
+        group: Group::Widget,
+        std: false,
         props: &[
-            p("source", Text, "Path or URL"),
-            p("size", Size, "(64 x 64)"),
+            p("source", Source, "@image-url(\"path.png\")"),
+            p(
+                "image-fit",
+                Choice(&["fill", "contain", "cover", "preserve"]),
+                "",
+            ),
+            p("colorize", Color, "Tint (for icons)"),
         ],
         events: &[],
     },
     Kind {
-        name: "Separator",
-        icon: Icon::SeparatorHorizontal,
-        layout: false,
-        props: &[],
-        events: &[],
-    },
-    Kind {
-        name: "Spacer",
-        icon: Icon::Space,
-        layout: false,
-        props: &[p("size", Number, "Minimum size")],
-        events: &[],
+        name: "TouchArea",
+        icon: Icon::SquareMousePointer,
+        group: Group::Container,
+        std: false,
+        props: &[p(
+            "mouse-cursor",
+            Choice(&["default", "pointer", "text", "move"]),
+            "",
+        )],
+        events: &[e("clicked", &[]), e("double-clicked", &[])],
     },
 ];
 
 pub const WINDOW: Kind = Kind {
     name: "Window",
     icon: Icon::AppWindow,
-    layout: true,
+    group: Group::Container,
+    std: false,
     props: &[
-        p(
-            "layout",
-            LAYOUT_MODE,
-            "free: place children anywhere (x, y)",
-        ),
         p("title", Text, "Title bar text"),
-        p("size", Size, "Initial size"),
-        p("min_size", Size, ""),
-        p("resizable", Bool, "(true)"),
-        p("spacing", Number, "Gap between children (6)"),
-        p("margin", Number, "Space inside the window (10)"),
+        p("preferred-width", Length, "Initial width"),
+        p("preferred-height", Length, "Initial height"),
+        p("min-width", Length, ""),
+        p("min-height", Length, ""),
+        p("background", Color, ""),
+        p("icon", Source, "@image-url(\"icon.png\")"),
     ],
     events: &[],
 };
 
-/// Size and placement properties every element accepts.
+pub const DIALOG: Kind = Kind {
+    name: "Dialog",
+    icon: Icon::MessageSquareWarning,
+    group: Group::Container,
+    std: false,
+    props: WINDOW.props,
+    events: &[],
+};
+
+/// Size properties every element accepts.
 pub const COMMON: &[PropSpec] = &[
-    p("width", Number, "Fixed width"),
-    p("height", Number, "Fixed height"),
-    p("min_width", Number, ""),
-    p("max_width", Number, ""),
-    p("min_height", Number, ""),
-    p("max_height", Number, ""),
-    p("stretch", Number, "Share of spare space"),
+    p("width", Length, "Fixed width"),
+    p("height", Length, "Fixed height"),
+    p("min-width", Length, ""),
+    p("max-width", Length, ""),
+    p("min-height", Length, ""),
+    p("max-height", Length, ""),
+    p("preferred-width", Length, ""),
+    p("preferred-height", Length, ""),
     p("visible", Bool, "(true)"),
-    p("enabled", Bool, "(true)"),
-    p("tooltip", Text, ""),
+    p("enabled", Bool, "(true) for widgets"),
 ];
 
-/// Position of a child of a free container.
+/// Position of a child of a container without a layout.
 pub const FREE_CHILD: &[PropSpec] = &[
-    p("x", Number, "From the container's left"),
-    p("y", Number, "From the container's top"),
+    p("x", Length, "From the parent's left"),
+    p("y", Length, "From the parent's top"),
 ];
 
-/// Extra properties for a child of a `Grid`.
+/// Properties of a child of a layout.
+pub const LAYOUT_CHILD: &[PropSpec] = &[
+    p("horizontal-stretch", Float, "Share of spare width"),
+    p("vertical-stretch", Float, "Share of spare height"),
+];
+
+/// Extra properties for a child of a `GridBox`.
 pub const GRID_CHILD: &[PropSpec] = &[
-    p("row", Number, "0-based"),
-    p("column", Number, "0-based"),
-    p("row_span", Number, ""),
-    p("column_span", Number, ""),
+    p("row", Int, "0-based"),
+    p("col", Int, "0-based"),
+    p("rowspan", Int, ""),
+    p("colspan", Int, ""),
 ];
 
 pub fn kind(name: &str) -> Option<&'static Kind> {
-    if name == "Window" {
-        return Some(&WINDOW);
+    match name {
+        "Window" => Some(&WINDOW),
+        "Dialog" => Some(&DIALOG),
+        _ => KINDS.iter().find(|k| k.name == name),
     }
-    KINDS.iter().find(|k| k.name == name)
 }
 
 pub fn icon(name: &str) -> Icon {
     kind(name).map_or(Icon::Puzzle, |k| k.icon)
 }
 
-/// Kinds that accept children; `Tabs` takes only `Tab`s.
+/// Layouts place their children; everything else that takes children places them by
+/// `x`/`y` (free placement).
+pub fn is_layout(kind: &str) -> bool {
+    matches!(
+        kind,
+        "VerticalBox"
+            | "HorizontalBox"
+            | "GridBox"
+            | "VerticalLayout"
+            | "HorizontalLayout"
+            | "GridLayout"
+            | "GroupBox"
+    )
+}
+
+/// `GroupBox` lays its children out in a single grid cell, so it takes one (usually a
+/// layout).
+pub fn takes_one_child(kind: &str) -> bool {
+    matches!(kind, "GroupBox" | "ScrollView")
+}
+
+/// Kinds that accept children; `TabWidget` takes only `Tab`s, and `Tab` goes nowhere else.
 pub fn accepts(parent: &str, child: &str) -> bool {
     match parent {
-        "Tabs" => child == "Tab",
-        "Window" | "VBox" | "HBox" | "Grid" | "GroupBox" | "Tab" | "Panel" => child != "Tab",
-        _ => false,
+        "TabWidget" => child == "Tab",
+        _ if child == "Tab" => false,
+        "Window" | "Dialog" | "PopupWindow" | "Rectangle" | "Tab" | "TouchArea" | "GroupBox"
+        | "ScrollView" | "Flickable" => true,
+        _ => is_layout(parent),
     }
 }
 
-/// Properties a freshly dropped widget gets.
-pub fn defaults(kind: &str) -> Vec<(String, Value)> {
-    let s = |k: &str, v: &str| (k.to_owned(), Value::Str(v.to_owned()));
-    let n = |k: &str, v: f64| (k.to_owned(), Value::Num(v));
-    let items = |k: &str| {
-        (
-            k.to_owned(),
-            Value::List(vec![
-                Value::Str("One".into()),
-                Value::Str("Two".into()),
-                Value::Str("Three".into()),
-            ]),
-        )
-    };
+/// Is a container that places children by `x`/`y`.
+pub fn is_free(kind: &str) -> bool {
+    !is_layout(kind) && accepts(kind, "Rectangle")
+}
+
+/// The axis children flow along in a layout.
+pub fn is_horizontal(kind: &str) -> bool {
+    matches!(kind, "HorizontalBox" | "HorizontalLayout")
+}
+
+pub fn is_grid(kind: &str) -> bool {
+    matches!(kind, "GridBox" | "GridLayout")
+}
+
+/// Properties a freshly dropped element gets, as expressions.
+pub fn defaults(kind: &str) -> Vec<(String, String)> {
+    let s = |k: &str, v: &str| (k.to_owned(), perox_slint::syntax::quote(v));
+    let n = |k: &str, v: &str| (k.to_owned(), v.to_owned());
     match kind {
-        "Label" => vec![s("text", "Label")],
+        "Text" => vec![s("text", "Label")],
         "Button" => vec![s("text", "Button")],
         "CheckBox" => vec![s("text", "Check box")],
-        "RadioButton" => vec![s("text", "Option")],
+        "Switch" => vec![s("text", "Switch")],
         "GroupBox" => vec![s("title", "Group")],
         "Tab" => vec![s("title", "Page")],
-        "ComboBox" => vec![items("items"), n("selected", 0.0)],
-        "ListView" => vec![items("items")],
-        "Slider" | "ProgressBar" => vec![n("value", 50.0)],
+        "ComboBox" => vec![n("model", "[\"One\", \"Two\", \"Three\"]")],
+        "StandardListView" => vec![n(
+            "model",
+            "[{ text: \"One\" }, { text: \"Two\" }, { text: \"Three\" }]",
+        )],
+        "Slider" => vec![n("value", "50")],
+        "ProgressIndicator" => vec![n("progress", "0.5")],
+        "Rectangle" => vec![n("border-width", "1px"), n("border-color", "#80808080")],
         _ => Vec::new(),
     }
 }
 
-/// Starting size for a container dropped into a free area (it has no children to size
-/// it yet).
+/// Starting size for an element dropped into a free area, when it has no natural size.
 pub fn free_default_size(kind: &str) -> Option<(f64, f64)> {
     match kind {
-        "Panel" | "GroupBox" | "VBox" | "HBox" | "Grid" => Some((200.0, 120.0)),
-        "Tabs" => Some((280.0, 180.0)),
-        "ListView" => Some((160.0, 120.0)),
+        "Rectangle" | "GroupBox" | "VerticalBox" | "HorizontalBox" | "GridBox" | "TouchArea"
+        | "ScrollView" => Some((200.0, 120.0)),
+        "TabWidget" => Some((280.0, 180.0)),
+        "StandardListView" | "TextEdit" => Some((160.0, 120.0)),
         _ => None,
     }
 }
 
-/// `TextEdit` → `text_edit`.
-pub fn snake(kind: &str) -> String {
+/// `LineEdit` → `line-edit`, `TabWidget` → `tab-widget`.
+pub fn kebab(kind: &str) -> String {
     let mut out = String::new();
     for (i, c) in kind.chars().enumerate() {
         if c.is_ascii_uppercase() {
             if i > 0 {
-                out.push('_');
+                out.push('-');
             }
             out.push(c.to_ascii_lowercase());
         } else {
@@ -406,11 +529,47 @@ pub fn snake(kind: &str) -> String {
     out
 }
 
-/// Widgets that usually need an id (code reads or handles them). Layouts and labels
-/// stay anonymous until you name them.
+/// `line-edit` → `line_edit`: Rust-friendly names for ids and handlers.
+pub fn snake(kind: &str) -> String {
+    kebab(kind).replace('-', "_")
+}
+
+/// Elements that usually need an id (code reads or handles them). Layouts, containers
+/// and labels stay anonymous until you name them.
 pub fn wants_id(kind: &str) -> bool {
     !matches!(
         kind,
-        "VBox" | "HBox" | "Grid" | "GroupBox" | "Tab" | "Panel" | "Label" | "Separator" | "Spacer"
+        "VerticalBox"
+            | "HorizontalBox"
+            | "GridBox"
+            | "Rectangle"
+            | "GroupBox"
+            | "Tab"
+            | "Text"
+            | "ScrollView"
+            | "Spinner"
     )
+}
+
+/// The events of a kind, falling back to nothing for unknown kinds.
+pub fn events(kind: &str) -> &'static [Event] {
+    self::kind(kind).map_or(&[], |k| k.events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn containment_rules() {
+        assert!(accepts("VerticalBox", "Button"));
+        assert!(accepts("TabWidget", "Tab"));
+        assert!(!accepts("TabWidget", "Button"));
+        assert!(!accepts("VerticalBox", "Tab"));
+        assert!(!accepts("Button", "Text"));
+        assert!(is_free("Window") && is_free("Rectangle") && is_free("Tab"));
+        assert!(!is_free("VerticalBox") && !is_free("Button"));
+        assert_eq!(kebab("StandardListView"), "standard-list-view");
+        assert_eq!(snake("LineEdit"), "line_edit");
+    }
 }
