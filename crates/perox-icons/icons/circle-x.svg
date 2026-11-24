@@ -1,17 +1,6 @@
-<!-- @license lucide-static v0.460.0 - ISC -->
-<svg
-  class="lucide lucide-circle-x"
-  xmlns="http://www.w3.org/2000/svg"
-  width="24"
-  height="24"
-  viewBox="0 0 24 24"
-  fill="none"
-  stroke="#ffffff"
-  stroke-width="2"
-  stroke-linecap="round"
-  stroke-linejoin="round"
->
-  <circle cx="12" cy="12" r="10" />
-  <path d="m15 9-6 6" />
-  <path d="m9 9 6 6" />
+<!-- Lucide 0.460.0 (ISC) shapes, PeroxIDE colours: see style.py -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="10" fill="#ec5f67" stroke="#26324d" stroke-width="1.6"/>
+  <path d="m15 9-6 6" fill="none" stroke="#26324d" stroke-width="1.6"/>
+  <path d="m9 9 6 6" fill="none" stroke="#26324d" stroke-width="1.6"/>
 </svg>

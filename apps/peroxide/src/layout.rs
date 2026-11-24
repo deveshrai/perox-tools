@@ -515,7 +515,6 @@ impl PaneUi<'_> {
             ui.weak("No problems.");
             return;
         }
-        let theme = perox_editor::theme::Theme::for_visuals(ui.visuals());
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -528,7 +527,7 @@ impl PaneUi<'_> {
                     let first = msg.lines().next().unwrap_or_default().to_owned();
                     let resp = ui
                         .horizontal(|ui| {
-                            ui.add(icon.colored(theme.severity(sev)));
+                            ui.add(icon.image(ui));
                             let r = ui.add(
                                 egui::Label::new(first)
                                     .sense(egui::Sense::click())
@@ -653,14 +652,11 @@ impl PaneUi<'_> {
             }
             None => match self.build.last {
                 Some((k, true)) => {
-                    ui.add(
-                        perox_icons::Icon::CircleCheck
-                            .colored(egui::Color32::from_rgb(0x4e, 0xc9, 0x6b)),
-                    );
+                    ui.add(perox_icons::Icon::CircleCheck.image(ui));
                     ui.label(format!("cargo {} finished", k.verb()));
                 }
                 Some((k, false)) => {
-                    ui.add(perox_icons::Icon::CircleX.colored(ui.visuals().error_fg_color));
+                    ui.add(perox_icons::Icon::CircleX.image(ui));
                     ui.colored_label(
                         ui.visuals().error_fg_color,
                         format!("cargo {} failed", k.verb()),

@@ -261,13 +261,12 @@ impl State {
     }
 
     fn icon(self, ui: &egui::Ui) -> egui::Image<'static> {
-        let green = egui::Color32::from_rgb(0x4e, 0xc9, 0x6b);
         match self {
-            State::NotRun => Icon::CircleDashed.colored(ui.visuals().weak_text_color()),
-            State::Running => Icon::LoaderCircle.colored(ui.visuals().warn_fg_color),
-            State::Passed => Icon::CircleCheck.colored(green),
-            State::Failed => Icon::CircleX.colored(ui.visuals().error_fg_color),
-            State::Ignored => Icon::CircleSlash.colored(ui.visuals().weak_text_color()),
+            State::NotRun => Icon::CircleDashed.image(ui),
+            State::Running => Icon::LoaderCircle.image(ui),
+            State::Passed => Icon::CircleCheck.image(ui),
+            State::Failed => Icon::CircleX.image(ui),
+            State::Ignored => Icon::CircleSlash.image(ui),
         }
     }
 

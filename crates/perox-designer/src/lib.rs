@@ -504,7 +504,7 @@ impl Designer {
             }
             if let Some(e) = &self.error {
                 ui.separator();
-                ui.add(Icon::TriangleAlert.colored(ui.visuals().warn_fg_color));
+                ui.add(Icon::TriangleAlert.image(ui));
                 ui.colored_label(ui.visuals().warn_fg_color, e);
             } else if let Some(err) = self
                 .doc
@@ -514,7 +514,7 @@ impl Designer {
                 .or_else(|| self.preview.diagnostics.first().cloned())
             {
                 ui.separator();
-                ui.add(Icon::CircleX.colored(ui.visuals().error_fg_color));
+                ui.add(Icon::CircleX.image(ui));
                 ui.colored_label(ui.visuals().error_fg_color, format!("{err} (fix it in Source)"));
             }
         });
@@ -811,8 +811,7 @@ impl Designer {
         );
         let icon_rect =
             Rect::from_min_size(rect.min + vec2(6.0, 4.0), Vec2::splat(galley.size().y));
-        egui::Image::new(catalog::icon(&kind).source())
-            .tint(ui.visuals().text_color())
+        egui::Image::new(catalog::icon(&kind).source(ui.visuals().dark_mode))
             .paint_at(ui, icon_rect);
         painter.galley(rect.min + vec2(24.0, 4.0), galley, Color32::WHITE);
     }
@@ -1637,15 +1636,13 @@ impl Designer {
             }
             None => "Use from code: adds get_/set_ methods for this property".to_owned(),
         };
-        // Lit in the accent colour when code can use it, faint when not.
-        let color = if exposed.is_some() {
-            ui.visuals().selection.stroke.color
+        // In full colour when code can use it, washed out when not.
+        let icon = if exposed.is_some() {
+            Icon::Code.image(ui)
         } else {
-            ui.visuals().weak_text_color().gamma_multiply(0.6)
-        };
-        let icon = Icon::Code
-            .colored(color)
-            .fit_to_exact_size(Vec2::splat(13.0));
+            Icon::Code.faded(ui)
+        }
+        .fit_to_exact_size(Vec2::splat(13.0));
         let b = egui::Button::image(icon)
             .frame(false)
             .min_size(vec2(width, 0.0));

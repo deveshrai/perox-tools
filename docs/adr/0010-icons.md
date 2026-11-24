@@ -21,3 +21,10 @@ colour (or a status colour) when drawn. **No emoji anywhere in the UI.** Command
 ## Alternatives considered
 - Codicons (VS Code's): CC-BY-4.0 needs attribution in the UI. Phosphor, Tabler: fine too;
   Lucide has the most IDE-relevant glyphs (regex, whole-word, case-sensitive, file kinds).
+
+## Amendment (2026-11-24): colour style
+Icons are now flat colour fills with outlines ("lineal colour"), still on Lucide's
+shapes. `crates/perox-icons/style.py` generates a light-theme set (navy outlines) and a
+dark-theme set (light outlines) from the untouched Lucide sources; the app picks one from
+the theme and no longer tints icons.
+

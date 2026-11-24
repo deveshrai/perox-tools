@@ -1,19 +1,9 @@
-<!-- @license lucide-static v0.460.0 - ISC -->
-<svg
-  class="lucide lucide-align-center-horizontal"
-  xmlns="http://www.w3.org/2000/svg"
-  width="24"
-  height="24"
-  viewBox="0 0 24 24"
-  fill="none"
-  stroke="#ffffff"
-  stroke-width="2"
-  stroke-linecap="round"
-  stroke-linejoin="round"
->
-  <path d="M2 12h20" />
-  <path d="M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4" />
-  <path d="M10 8V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v4" />
-  <path d="M20 16v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1" />
-  <path d="M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1" />
+<!-- Lucide 0.460.0 (ISC) shapes, PeroxIDE colours: see style.py -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4" fill="#5fa8ec" stroke="#26324d" stroke-width="1.6"/>
+  <path d="M10 8V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v4" fill="#5fa8ec" stroke="#26324d" stroke-width="1.6"/>
+  <path d="M20 16v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1" fill="#5fa8ec" stroke="#26324d" stroke-width="1.6"/>
+  <path d="M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1" fill="#5fa8ec" stroke="#26324d" stroke-width="1.6"/>
+  <path d="M2 12h20" fill="none" stroke="#26324d" stroke-width="3.8"/>
+  <path d="M2 12h20" fill="none" stroke="#5fa8ec" stroke-width="2.0"/>
 </svg>

@@ -1,19 +1,13 @@
-<!-- @license lucide-static v0.460.0 - ISC -->
-<svg
-  class="lucide lucide-list-tree"
-  xmlns="http://www.w3.org/2000/svg"
-  width="24"
-  height="24"
-  viewBox="0 0 24 24"
-  fill="none"
-  stroke="#ffffff"
-  stroke-width="2"
-  stroke-linecap="round"
-  stroke-linejoin="round"
->
-  <path d="M21 12h-8" />
-  <path d="M21 6H8" />
-  <path d="M21 18h-8" />
-  <path d="M3 6v4c0 1.1.9 2 2 2h3" />
-  <path d="M3 10v6c0 1.1.9 2 2 2h3" />
+<!-- Lucide 0.460.0 (ISC) shapes, PeroxIDE colours: see style.py -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M21 12h-8" fill="none" stroke="#26324d" stroke-width="3.8"/>
+  <path d="M21 12h-8" fill="none" stroke="#9d7ce6" stroke-width="2.0"/>
+  <path d="M21 6H8" fill="none" stroke="#26324d" stroke-width="3.8"/>
+  <path d="M21 6H8" fill="none" stroke="#9d7ce6" stroke-width="2.0"/>
+  <path d="M21 18h-8" fill="none" stroke="#26324d" stroke-width="3.8"/>
+  <path d="M21 18h-8" fill="none" stroke="#9d7ce6" stroke-width="2.0"/>
+  <path d="M3 6v4c0 1.1.9 2 2 2h3" fill="none" stroke="#26324d" stroke-width="3.8"/>
+  <path d="M3 6v4c0 1.1.9 2 2 2h3" fill="none" stroke="#9d7ce6" stroke-width="2.0"/>
+  <path d="M3 10v6c0 1.1.9 2 2 2h3" fill="none" stroke="#26324d" stroke-width="3.8"/>
+  <path d="M3 10v6c0 1.1.9 2 2 2h3" fill="none" stroke="#9d7ce6" stroke-width="2.0"/>
 </svg>

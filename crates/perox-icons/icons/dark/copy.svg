@@ -1,0 +1,5 @@
+<!-- Lucide 0.460.0 (ISC) shapes, PeroxIDE colours: see style.py -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" fill="#5cc87a" stroke="#d3dcea" stroke-width="1.6"/>
+  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" fill="none" stroke="#d3dcea" stroke-width="1.6"/>
+</svg>

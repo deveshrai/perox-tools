@@ -1,17 +1,6 @@
-<!-- @license lucide-static v0.460.0 - ISC -->
-<svg
-  class="lucide lucide-git-commit-horizontal"
-  xmlns="http://www.w3.org/2000/svg"
-  width="24"
-  height="24"
-  viewBox="0 0 24 24"
-  fill="none"
-  stroke="#ffffff"
-  stroke-width="2"
-  stroke-linecap="round"
-  stroke-linejoin="round"
->
-  <circle cx="12" cy="12" r="3" />
-  <line x1="3" x2="9" y1="12" y2="12" />
-  <line x1="15" x2="21" y1="12" y2="12" />
+<!-- Lucide 0.460.0 (ISC) shapes, PeroxIDE colours: see style.py -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="3" fill="#f7c548" stroke="#26324d" stroke-width="1.6"/>
+  <line x1="3" x2="9" y1="12" y2="12" fill="none" stroke="#26324d" stroke-width="1.6"/>
+  <line x1="15" x2="21" y1="12" y2="12" fill="none" stroke="#26324d" stroke-width="1.6"/>
 </svg>
