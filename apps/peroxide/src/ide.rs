@@ -411,7 +411,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.add_widget", "Add Element", Access::Edit)
-                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea; ToolBar (a HorizontalBox named toolbar, for buttons that run actions: see designer.use_action); menus: MenuBar (in a Window, goes first) Menu (title) MenuItem (title, shortcut: \"@keys(Control + O)\", event activated) MenuSeparator ContextMenuArea (its Menu goes first, then the content it covers); non-visual: Timer (interval: \"500ms\", running, event triggered; goes at the top of the root). Or any component (other std-widgets ones are imported too). Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
+                .description("Adds an element to a component (in the editor, unsaved), importing it from std-widgets.slint if needed. Kinds: VerticalBox HorizontalBox GridBox Rectangle GroupBox TabWidget Tab ScrollView Text Button LineEdit TextEdit CheckBox Switch ComboBox SpinBox Slider ProgressIndicator Spinner StandardListView StandardTableView Path Image TouchArea; ToolBar (a HorizontalBox named toolbar, for buttons that run actions: see designer.use_action); menus: MenuBar (in a Window, goes first) Menu (title) MenuItem (title, shortcut: \"@keys(Control + O)\", event activated) MenuSeparator ContextMenuArea (its Menu goes first, then the content it covers); non-visual: Timer (interval: \"500ms\", running, event triggered; goes at the top of the root). Or any component (other std-widgets ones are imported too; the project's own and its libraries' are imported from their files). In a component, kind \"@children\" marks where the elements forms put inside it go. Property values are .slint expressions: \"\\\"Hello\\\"\", \"12px\", \"true\", \"#ff8800\", \"[\\\"a\\\", \\\"b\\\"]\".")
                 .params(path_schema(json!({
                     "component": { "type": "string" },
                     "parent": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
@@ -425,6 +425,14 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 let doc = perox_slint::parse(&text);
                 let comp = component_name(&doc, inv)?;
                 let kind = inv.str_arg("kind")?;
+                if kind == "@children" {
+                    // Where a component shows what forms put inside it.
+                    let parent = widget_path(&doc, &comp, inv.str_arg("parent")?)?;
+                    let index = opt_usize(inv, "index").unwrap_or(usize::MAX);
+                    let edits = perox_slint::edit::add_children_slot(&text, &comp, &parent, index).map_err(|e| err(e.to_string()))?;
+                    apply_form_edits(s, id, edits);
+                    return Ok(json!({ "added": "@children", "in": path_key(&parent) }));
+                }
                 // Like the designer: non-visual elements live at the top of the root.
                 let (parent, default_index) = if perox_designer::catalog::is_non_visual(kind) {
                     let lead = doc.component(&comp).map_or(0, |c| {
@@ -780,6 +788,99 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.declare_property", "Declare Property", Access::Edit)
+                .description("Declares a property on a component's root: `in` for what forms using a component set on it, `out` for what it reports, `in-out` for both (and what Rust can read and write on a window), `private` for its own use. Type is a Slint type (string, length, int, float, bool, color, brush, image, [string], a struct…); `default` is a .slint expression. Remove one with designer.remove_declaration.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "name": { "type": "string" },
+                    "type": { "type": "string" },
+                    "visibility": { "type": "string", "enum": ["in", "out", "in-out", "private"], "description": "Default: in" },
+                    "default": { "type": "string" }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let name = inv.str_arg("name")?;
+                if doc.component(&comp).and_then(|c| c.property(name)).is_some() {
+                    return Err(err(format!("`{name}` is declared already.")));
+                }
+                let vis = inv.args["visibility"].as_str().unwrap_or("in");
+                let edits = perox_slint::edit::declare_property(&text, &comp, vis, name, inv.str_arg("type")?, inv.args["default"].as_str())
+                    .map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "declared": name }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.declare_callback", "Declare Callback", Access::Edit)
+                .description("Declares a callback on a component's root: an event the component raises (`callback picked(index: int);`), which forms using it handle like a button's clicked, and which a window's Rust handlers trait gets as a method. `params` is a list of [name, type].")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "name": { "type": "string" },
+                    "params": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let params: Vec<(String, String)> = inv.args["params"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| Some((p.get(0)?.as_str()?.to_owned(), p.get(1)?.as_str()?.to_owned())))
+                    .collect();
+                let decl: Vec<(Option<&str>, &str)> = params.iter().map(|(n, t)| (Some(n.as_str()), t.as_str())).collect();
+                let edits = perox_slint::edit::add_callback(&text, &comp, inv.str_arg("name")?, &decl).map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "ok": true }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.remove_declaration", "Remove Declaration", Access::Edit)
+                .description("Removes a property or callback declaration from a component's root (what code or other forms no longer use). Bindings that still use it will show as errors in designer.tree.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "name": { "type": "string" }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let name = inv.str_arg("name")?;
+                let c = doc.component(&comp).ok_or_else(|| err("No such component."))?;
+                let edits = if c.property(name).is_some() {
+                    perox_slint::edit::remove_property_decl(&text, &comp, name)
+                } else if c.callback(name).is_some() {
+                    perox_slint::edit::remove_callback(&text, &comp, name)
+                } else {
+                    return Err(err(format!("`{name}` isn't declared on {comp}.")));
+                }
+                .map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "removed": name }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.set_header", "Repeat or Show If", Access::Edit)
+                .description("Makes an element repeat for each item of a model (`for item in root.items`, also `for item[i] in …`) or show only when a condition holds (`if root.show`), or, with null, a plain element again. Inside, `item` (and `i`) can be used in its properties.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "header": { "type": ["string", "null"] }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
+                let edits = perox_slint::edit::set_header(&text, &comp, &path, inv.args["header"].as_str())
+                    .map_err(|_| err("`header` is `for item in model` or `if condition` (or null)."))?;
+                apply_form_edits(s, id, edits);
+                Ok(json!({ "ok": true }))
+            },
+        ),
+        (
             CommandSpec::new("designer.resources", "Form Resources", Access::Read)
                 .description("Images in a .slint file's folder (paths for @image-url, relative to the file) and the fonts it imports, with their family names.")
                 .params(path_schema(json!({}))),
@@ -956,12 +1057,14 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.set_handler", "Set Event Handler", Access::Edit)
-                .description("Wires an element's callback (clicked, edited, accepted, toggled, changed, selected, …) to a root callback `method` (declared if missing, and so a method of the generated <Component>Handlers trait), or unwires it when method is null.")
+                .description("Wires an element's callback (clicked, edited, accepted, toggled, changed, selected, …) to a root callback `method` (declared if missing, and so a method of the generated <Component>Handlers trait), or unwires it when method is null. Or, with `code` instead of `method`, gives it .slint statements to run (`root.current = i; root.picked(i);`), for behaviour that stays in the form; `params` names the event's arguments.")
                 .params(path_schema(json!({
                     "component": { "type": "string" },
                     "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
                     "event": { "type": "string" },
-                    "method": { "type": ["string", "null"] }
+                    "method": { "type": ["string", "null"] },
+                    "code": { "type": "string" },
+                    "params": { "type": "array", "items": { "type": "string" } }
                 }))),
             |s, inv| {
                 let (id, text) = form_text(s, inv)?;
@@ -969,6 +1072,12 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 let comp = component_name(&doc, inv)?;
                 let path = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
                 let event = inv.str_arg("event")?;
+                if let Some(code) = inv.args["code"].as_str() {
+                    let params: Vec<&str> = inv.args["params"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).collect();
+                    let edits = perox_slint::edit::set_handler(&text, &comp, &path, event, &params, code).map_err(|e| err(e.to_string()))?;
+                    apply_form_edits(s, id, edits);
+                    return Ok(json!({ "ok": true }));
+                }
                 let edits = match inv.args["method"].as_str() {
                     Some(m) => perox_designer::wire_event(&text, &comp, &path, event, m).map(|new| perox_slint::edit::diff(&text, &new)),
                     None => perox_slint::edit::remove_handler(&text, &comp, &path, event),

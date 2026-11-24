@@ -419,6 +419,11 @@ pub const KINDS: &[Kind] = &[
             ),
             p("viewbox-x", Float, ""),
             p("viewbox-y", Float, ""),
+            p(
+                "fit",
+                Choice(&["contain", "cover", "fill", "preserve"]),
+                "How the view box fits the element: contain keeps its shape, fill stretches it",
+            ),
         ],
         events: &[],
     },
@@ -582,7 +587,7 @@ pub fn enum_type(prop: &str) -> Option<&'static str> {
         "vertical-alignment" => "TextVerticalAlignment",
         "wrap" => "TextWrap",
         "overflow" => "TextOverflow",
-        "image-fit" => "ImageFit",
+        "image-fit" | "fit" => "ImageFit",
         "alignment" => "LayoutAlignment",
         "mouse-cursor" => "MouseCursor",
         "kind" => "StandardButtonKind",
@@ -639,12 +644,44 @@ pub fn kind(name: &str) -> Option<&'static Kind> {
 }
 
 pub fn icon(name: &str) -> Icon {
+    // The plain layouts (no style padding) look like their Box cousins.
+    let name = match name {
+        "VerticalLayout" => "VerticalBox",
+        "HorizontalLayout" => "HorizontalBox",
+        "GridLayout" => "GridBox",
+        n => n,
+    };
     kind(name).map_or(Icon::Puzzle, |k| k.icon)
+}
+
+thread_local! {
+    /// The project's components that take children (`@children`), with the kind of the
+    /// element holding the slot (a layout lays them out; anything else places them by
+    /// `x`/`y`). Set by the designer as it lists the project's components.
+    static CUSTOM_CONTAINERS: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Tells the catalog which project components take children (see `CUSTOM_CONTAINERS`).
+pub fn set_custom_containers(list: Vec<(String, String)>) {
+    CUSTOM_CONTAINERS.with(|c| *c.borrow_mut() = list);
+}
+
+/// For a project component that takes children: the kind of element its slot is in.
+fn custom_slot(kind: &str) -> Option<String> {
+    CUSTOM_CONTAINERS.with(|c| {
+        c.borrow()
+            .iter()
+            .find(|(n, _)| n == kind)
+            .map(|(_, k)| k.clone())
+    })
 }
 
 /// Layouts place their children; everything else that takes children places them by
 /// `x`/`y` (free placement).
 pub fn is_layout(kind: &str) -> bool {
+    if let Some(slot) = custom_slot(kind) {
+        return is_layout(&slot);
+    }
     matches!(
         kind,
         "VerticalBox"
@@ -679,6 +716,7 @@ pub fn accepts(parent: &str, child: &str) -> bool {
             | "ScrollView" | "Flickable" | "ContextMenuArea",
             _,
         ) => true,
+        _ if custom_slot(parent).is_some() => true,
         _ => is_layout(parent),
     }
 }
@@ -707,10 +745,16 @@ pub fn is_free(kind: &str) -> bool {
 
 /// The axis children flow along in a layout.
 pub fn is_horizontal(kind: &str) -> bool {
+    if let Some(slot) = custom_slot(kind) {
+        return is_horizontal(&slot);
+    }
     matches!(kind, "HorizontalBox" | "HorizontalLayout")
 }
 
 pub fn is_grid(kind: &str) -> bool {
+    if let Some(slot) = custom_slot(kind) {
+        return is_grid(&slot);
+    }
     matches!(kind, "GridBox" | "GridLayout")
 }
 
@@ -852,5 +896,12 @@ mod tests {
         assert!(accepts("ContextMenuArea", "Menu") && accepts("ContextMenuArea", "VerticalBox"));
         assert!(!accepts("MenuItem", "Text"));
         assert!(is_non_visual("Timer") && !has_geometry("MenuItem") && has_geometry("Button"));
+        // A project component with `@children` in a VerticalBox: a vertical container.
+        assert!(!accepts("Card", "Text"));
+        set_custom_containers(vec![("Card".into(), "VerticalBox".into())]);
+        assert!(accepts("Card", "Text") && is_layout("Card") && !is_horizontal("Card"));
+        set_custom_containers(vec![("Panel".into(), "Rectangle".into())]);
+        assert!(accepts("Panel", "Text") && is_free("Panel"));
+        set_custom_containers(Vec::new());
     }
 }

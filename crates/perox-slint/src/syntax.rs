@@ -280,6 +280,9 @@ pub struct Element {
     /// For an element made by `for item in model : Elem { }` or `if cond : Elem { }`: that
     /// header, `for item in model` / `if cond` (`span` covers it too).
     pub header: Option<String>,
+    /// It has `@children`: where a component puts the elements forms give it, and before
+    /// which of its own children (`children.len()` for after all of them).
+    pub slot: Option<usize>,
 }
 
 impl Element {
@@ -435,6 +438,17 @@ impl Component {
     }
 
     /// Ends with `Window` or `Dialog`: it opens as a window.
+    /// The element holding `@children`, if this component takes children.
+    pub fn children_slot(&self) -> Option<(Vec<usize>, &Element)> {
+        let mut found = None;
+        self.root.walk(&mut Vec::new(), &mut |el, p| {
+            if found.is_none() && el.slot.is_some() {
+                found = Some((p.to_vec(), el));
+            }
+        });
+        found
+    }
+
     pub fn is_window(&self) -> bool {
         matches!(self.root.kind.as_str(), "Window" | "Dialog" | "PopupWindow")
     }
@@ -571,6 +585,7 @@ fn build_element(
         children: Vec::new(),
         others: Vec::new(),
         header: None,
+        slot: None,
     };
     for child in el.children() {
         match child.kind() {
@@ -645,6 +660,10 @@ fn build_element(
                 } else {
                     out.others.push(trimmed(&child));
                 }
+            }
+            SyntaxKind::ChildrenPlaceholder => {
+                out.slot = Some(out.children.len());
+                out.others.push(trimmed(&child));
             }
             _ => out.others.push(trimmed(&child)),
         }

@@ -16,6 +16,12 @@ pub struct Offer {
     pub from: Option<String>,
     /// The palette group: `Project` or the library's name.
     pub group: String,
+    /// It takes children (`@children`): the kind of element holding the slot.
+    pub slot: Option<String>,
+}
+
+fn slot_of(c: &perox_slint::Component) -> Option<String> {
+    c.children_slot().map(|(_, el)| el.kind.clone())
 }
 
 fn is_reusable(c: &perox_slint::Component) -> bool {
@@ -100,11 +106,13 @@ pub fn offers(file: &Path, src: &str, current: &str, ui: &Path) -> Vec<Offer> {
         match f {
             // In this file: no import needed.
             None => out.push(Offer {
+                slot: slot_of(&c),
                 name: c.name,
                 from: None,
                 group: "Project".into(),
             }),
             Some(f) if c.exported => out.push(Offer {
+                slot: slot_of(&c),
                 name: c.name,
                 from: Some(relative(&f, here)),
                 group: "Project".into(),
@@ -123,8 +131,9 @@ pub fn offers(file: &Path, src: &str, current: &str, ui: &Path) -> Vec<Offer> {
                 for (alias, doc, name) in
                     perox_slint::codegen::exported_components(&path, &mut read)
                 {
-                    if doc.component(&name).is_some_and(is_reusable) {
+                    if let Some(c) = doc.component(&name).filter(|c| is_reusable(c)) {
                         out.push(Offer {
+                            slot: slot_of(c),
                             name: alias,
                             from: Some(format!("@{lib}")),
                             group: lib.clone(),
@@ -142,6 +151,7 @@ pub fn offers(file: &Path, src: &str, current: &str, ui: &Path) -> Vec<Offer> {
                     for c in perox_slint::parse(&text).components {
                         if c.exported && is_reusable(&c) {
                             out.push(Offer {
+                                slot: slot_of(&c),
                                 name: c.name,
                                 from: Some(format!("@{lib}/{}", relative(&f, &path))),
                                 group: lib.clone(),
@@ -236,6 +246,7 @@ mod tests {
         )
         .unwrap();
         let o = offers(&ui.join("main.slint"), main_src, "Main", &ui);
+        assert!(o.iter().all(|o| o.slot.is_none()));
         let got: Vec<(&str, Option<&str>, &str)> = o
             .iter()
             .map(|o| (o.name.as_str(), o.from.as_deref(), o.group.as_str()))

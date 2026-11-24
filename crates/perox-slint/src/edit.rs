@@ -232,7 +232,16 @@ pub fn set_property(
 ) -> Result<Vec<TextEdit>, EditError> {
     check(&[name])?;
     let doc = parse(src);
-    let el = element(component(&doc, comp)?, path)?;
+    let c = component(&doc, comp)?;
+    let el = element(c, path)?;
+    // A property the component declares on itself: its declaration holds the value
+    // (`in property <string> title: "Card";`); a second binding wouldn't compile.
+    if path.is_empty()
+        && let Some(decl) = c.property(name).filter(|d| d.alias.is_none())
+        && !el.props.iter().any(|p| p.name == name)
+    {
+        return Ok(vec![declaration_value(src, &decl.span, Some(value))]);
+    }
     Ok(vec![match el.props.iter().find(|p| p.name == name) {
         Some(p) => TextEdit {
             range: p.value_span.clone(),
@@ -242,6 +251,28 @@ pub fn set_property(
     }])
 }
 
+/// The edit that sets (or, with `None`, removes) the value of a property declaration:
+/// `in property <string> title: "Card";` ↔ `in property <string> title;`.
+fn declaration_value(src: &str, span: &Range<usize>, value: Option<&str>) -> TextEdit {
+    let text = &src[span.clone()];
+    let body = text.trim_end().trim_end_matches(';');
+    let after_type = body.rfind('>').map_or(0, |i| i + 1);
+    let end = span.start + body.len();
+    match body[after_type..].find(':') {
+        Some(colon) => {
+            let start = span.start + after_type + colon;
+            TextEdit {
+                range: start..end,
+                text: value.map(|v| format!(": {v}")).unwrap_or_default(),
+            }
+        }
+        None => TextEdit {
+            range: end..end,
+            text: value.map(|v| format!(": {v}")).unwrap_or_default(),
+        },
+    }
+}
+
 pub fn remove_property(
     src: &str,
     comp: &str,
@@ -249,7 +280,14 @@ pub fn remove_property(
     name: &str,
 ) -> Result<Vec<TextEdit>, EditError> {
     let doc = parse(src);
-    let el = element(component(&doc, comp)?, path)?;
+    let c = component(&doc, comp)?;
+    let el = element(c, path)?;
+    if path.is_empty()
+        && !el.props.iter().any(|p| p.name == name)
+        && let Some(decl) = c.property(name).filter(|d| d.alias.is_none())
+    {
+        return Ok(vec![declaration_value(src, &decl.span, None)]);
+    }
     Ok(el
         .props
         .iter()
@@ -479,6 +517,53 @@ pub fn add_element(
         p,
         index.min(p.children.len()),
         &body,
+    )])
+}
+
+/// Makes the element at `path` repeated or conditional: `header` is `for item in model`
+/// or `if condition` (written before it with ` : `), or `None` for a plain element again.
+pub fn set_header(
+    src: &str,
+    comp: &str,
+    path: &[usize],
+    header: Option<&str>,
+) -> Result<Vec<TextEdit>, EditError> {
+    if path.is_empty() {
+        return Err(EditError::NoSuchElement);
+    }
+    let doc = parse(src);
+    let el = element(component(&doc, comp)?, path)?;
+    let start = el.id_span.as_ref().map_or(el.kind_span.start, |r| r.start);
+    let text = match header.map(str::trim).filter(|h| !h.is_empty()) {
+        Some(h) => {
+            if !(h.starts_with("for ") || h.starts_with("if ")) {
+                return Err(EditError::NoSuchElement);
+            }
+            format!("{h} : ")
+        }
+        None => String::new(),
+    };
+    Ok(vec![TextEdit {
+        range: el.span.start..start,
+        text,
+    }])
+}
+
+/// Puts `@children` into `parent` at child position `index`: where a component shows the
+/// elements a form places inside it.
+pub fn add_children_slot(
+    src: &str,
+    comp: &str,
+    parent: &[usize],
+    index: usize,
+) -> Result<Vec<TextEdit>, EditError> {
+    let doc = parse(src);
+    let p = element(component(&doc, comp)?, parent)?;
+    Ok(vec![insert_child_edit(
+        src,
+        p,
+        index.min(p.children.len()),
+        "@children",
     )])
 }
 
@@ -722,15 +807,36 @@ pub fn add_property(
     ty: &str,
     init: Option<&str>,
 ) -> Result<Vec<TextEdit>, EditError> {
+    declare_property(src, comp, "in-out", name, ty, init)
+}
+
+/// Declares a root property: `<visibility> property <ty> name: init;` (`in` for what
+/// users of a component set, `out` for what it reports, `in-out` for both, `private`).
+pub fn declare_property(
+    src: &str,
+    comp: &str,
+    visibility: &str,
+    name: &str,
+    ty: &str,
+    init: Option<&str>,
+) -> Result<Vec<TextEdit>, EditError> {
     check(&[name])?;
+    if !matches!(visibility, "in" | "out" | "in-out" | "private") {
+        return Err(EditError::NoSuchElement);
+    }
     let doc = parse(src);
     let c = component(&doc, comp)?;
     if c.property(name).is_some() {
         return Ok(Vec::new());
     }
+    let vis = if visibility == "private" {
+        String::new()
+    } else {
+        format!("{visibility} ")
+    };
     let line = match init {
-        Some(v) => format!("in-out property <{ty}> {name}: {v};"),
-        None => format!("in-out property <{ty}> {name};"),
+        Some(v) => format!("{vis}property <{ty}> {name}: {v};"),
+        None => format!("{vis}property <{ty}> {name};"),
     };
     let after = c
         .properties
@@ -890,6 +996,78 @@ mod tests {
         let out = apply(src, &move_element(src, "W", &[0, 0], &[0], 2).unwrap());
         assert!(out.contains("Rectangle { }\n        for name in"), "{out}");
         assert!(crate::parse(&out).errors.is_empty(), "{out}");
+    }
+
+    #[test]
+    fn a_components_own_property_is_set_in_its_declaration() {
+        let src = "export component Card inherits Rectangle {\n    in property <string> title: \"Card\";\n    in property <length> gap;\n    width: 10px;\n}\n";
+        let out = apply(
+            src,
+            &set_property(src, "Card", &[], "title", "\"\"").unwrap(),
+        );
+        assert!(out.contains("in property <string> title: \"\";"), "{out}");
+        let out = apply(
+            &out,
+            &set_property(&out, "Card", &[], "gap", "8px").unwrap(),
+        );
+        assert!(out.contains("in property <length> gap: 8px;"), "{out}");
+        let out = apply(&out, &remove_property(&out, "Card", &[], "gap").unwrap());
+        assert!(out.contains("in property <length> gap;"), "{out}");
+        // Ordinary bindings are untouched.
+        let out = apply(
+            &out,
+            &set_property(&out, "Card", &[], "width", "20px").unwrap(),
+        );
+        assert!(out.contains("width: 20px;"), "{out}");
+        assert!(parse(&out).errors.is_empty(), "{out}");
+    }
+
+    #[test]
+    fn headers_make_elements_repeat_or_depend() {
+        let src = "export component W inherits Window {\n    VerticalLayout {\n        row := Text { text: \"x\"; }\n    }\n}\n";
+        let out = apply(
+            src,
+            &set_header(src, "W", &[0, 0], Some("for item in root.items")).unwrap(),
+        );
+        assert!(
+            out.contains("for item in root.items : row := Text {"),
+            "{out}"
+        );
+        let d = parse(&out);
+        assert!(d.errors.is_empty(), "{out}");
+        assert_eq!(
+            d.components[0].at(&[0, 0]).unwrap().header.as_deref(),
+            Some("for item in root.items")
+        );
+        let out2 = apply(
+            &out,
+            &set_header(&out, "W", &[0, 0], Some("if root.show")).unwrap(),
+        );
+        assert!(
+            out2.contains("        if root.show : row := Text {"),
+            "{out2}"
+        );
+        let back = apply(&out2, &set_header(&out2, "W", &[0, 0], None).unwrap());
+        assert_eq!(back, src);
+        assert!(set_header(src, "W", &[0, 0], Some("while x")).is_err());
+    }
+
+    #[test]
+    fn a_children_slot_goes_where_asked() {
+        let src = "export component Card inherits Rectangle {\n    VerticalLayout {\n        Text { text: \"Title\"; }\n    }\n}\n";
+        let out = apply(
+            src,
+            &add_children_slot(src, "Card", &[0], usize::MAX).unwrap(),
+        );
+        assert!(
+            out.contains("Text { text: \"Title\"; }\n        @children\n    }"),
+            "{out}"
+        );
+        let d = parse(&out);
+        assert!(d.errors.is_empty(), "{out}");
+        let (path, el) = d.components[0].children_slot().unwrap();
+        assert_eq!(path, vec![0]);
+        assert_eq!(el.slot, Some(1));
     }
 
     #[test]

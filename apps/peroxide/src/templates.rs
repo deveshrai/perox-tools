@@ -274,7 +274,6 @@ export component {name} inherits Dialog {{
 
 // A reusable part: drop it on any form from the designer's palette (This project).
 export component {name} inherits Rectangle {{
-    // What forms set on it.
     in property <string> title: "{title}";
 
     VerticalBox {{

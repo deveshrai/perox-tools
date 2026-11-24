@@ -33,6 +33,9 @@ use perox_slint::{Component, Document, Element, Value};
 
 use catalog::{PropKind, PropSpec};
 
+/// The palette's "Children go here": `@children` in a component.
+const CHILDREN_SLOT: &str = "@children";
+
 /// Colours of Slint's `Palette` (std-widgets): they follow the style and colour scheme.
 const PALETTE_COLORS: &[&str] = &[
     "background",
@@ -427,6 +430,22 @@ impl Designer {
                         );
                     }
                 }
+                // Designing a component (not a window): where forms' elements go.
+                if self.current().is_some_and(|c| !c.is_window() && c.children_slot().is_none())
+                    && (filter.is_empty() || "children".contains(&filter))
+                {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("This component").small().weak());
+                    let r = palette_row(ui, Icon::SquareDashed, "Children go here");
+                    self.layout.palette.push((CHILDREN_SLOT, r.rect));
+                    if r.drag_started() {
+                        DragAndDrop::set_payload(ui.ctx(), Drag::New(CHILDREN_SLOT.to_owned()));
+                    }
+                    if r.double_clicked() {
+                        self.insert_at_selection(source, CHILDREN_SLOT, actions);
+                    }
+                    r.on_hover_text("@children: where the elements a form puts inside this component go");
+                }
                 let offers = self.component_offers(source);
                 let mut group = String::new();
                 for o in offers {
@@ -506,6 +525,11 @@ impl Designer {
                 let (ui, _) = translations::location(&dir);
                 components::offers(&self.file, source, &self.component_name(), &ui)
             };
+            catalog::set_custom_containers(
+                list.iter()
+                    .filter_map(|o| Some((o.name.clone(), o.slot.clone()?)))
+                    .collect(),
+            );
             self.offers = Some((std::time::Instant::now(), list));
         }
         self.offers
@@ -592,6 +616,11 @@ impl Designer {
     ) {
         let Some(c) = self.current() else { return };
         let comp = c.name.clone();
+        if kind == CHILDREN_SLOT {
+            let r = edit::add_children_slot(source, &comp, parent, index);
+            self.apply(actions, r);
+            return;
+        }
         // Non-visual elements live at the top of the root: the menu bar first, then
         // timers, before anything drawn.
         let (parent, index) = if catalog::is_non_visual(kind) {
@@ -2238,6 +2267,21 @@ impl Designer {
                     self.apply(actions, edit::set_id(source, &c.name, &path, id));
                 }
             });
+            ui.horizontal(|ui| {
+                label_cell(ui, RichText::new("Repeat / if")).on_hover_text(
+                    "`for item in root.items` makes one per item; `if root.show` shows it only then. Empty: always one.",
+                );
+                let current = el.header.clone().unwrap_or_default();
+                if let Some(new) = self.text_field(ui, &format!("{path:?}/#header"), &current, false) {
+                    let h = new.trim();
+                    let r = edit::set_header(source, &c.name, &path, (!h.is_empty()).then_some(h));
+                    if r.is_err() {
+                        self.error = Some("Write `for item in model` or `if condition`".into());
+                    } else {
+                        self.apply(actions, r);
+                    }
+                }
+            });
         }
 
         self.menu_buttons(ui, &el, &path, source, actions);
@@ -2378,6 +2422,7 @@ impl Designer {
             this.apply_text(out, source, r);
         };
         if path.is_empty() {
+            self.declarations(ui, c, source, out);
             egui::CollapsingHeader::new("Actions")
                 .default_open(true)
                 .show(ui, |ui| {
@@ -2476,6 +2521,74 @@ impl Designer {
                     });
             });
         }
+    }
+
+    /// The root's declared properties (not "use from code" aliases): what forms using a
+    /// component set, and what a window shares with Rust. Remove, or declare a new one.
+    fn declarations(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Component,
+        source: &str,
+        out: &mut Vec<Action>,
+    ) {
+        egui::CollapsingHeader::new("Declared properties")
+            .default_open(!c.is_window())
+            .show(ui, |ui| {
+                for p in c.properties.iter().filter(|p| p.alias.is_none()) {
+                    ui.horizontal(|ui| {
+                        label_cell(ui, RichText::new(&p.name).strong());
+                        ui.weak(format!(
+                            "{} {}",
+                            p.visibility,
+                            p.ty.as_deref().unwrap_or("?")
+                        ));
+                        if small_icon_button(ui, Icon::Trash2, "Remove the declaration").clicked() {
+                            self.apply(out, edit::remove_property_decl(source, &c.name, &p.name));
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    let name = self.buffers.entry("#decl-name".into()).or_default();
+                    ui.add(
+                        egui::TextEdit::singleline(name)
+                            .hint_text("name")
+                            .desired_width(90.0),
+                    );
+                    let ty = self
+                        .buffers
+                        .entry("#decl-type".into())
+                        .or_insert_with(|| "string".into());
+                    egui::ComboBox::from_id_salt("decl-type")
+                        .selected_text(ty.as_str())
+                        .width(70.0)
+                        .show_ui(ui, |ui| {
+                            for t in [
+                                "string", "length", "int", "float", "bool", "brush", "image",
+                                "[string]",
+                            ] {
+                                ui.selectable_value(ty, t.to_owned(), t);
+                            }
+                        });
+                    let vis = if c.is_window() { "in-out" } else { "in" };
+                    if ui
+                        .button("Declare")
+                        .on_hover_text(format!("`{vis} property <type> name;`"))
+                        .clicked()
+                    {
+                        let name = self.buffers.get("#decl-name").cloned().unwrap_or_default();
+                        let ty = self.buffers.get("#decl-type").cloned().unwrap_or_default();
+                        let name = name.trim().replace(' ', "_");
+                        if !name.is_empty() && c.property(&name).is_none() {
+                            self.apply(
+                                out,
+                                edit::declare_property(source, &c.name, vis, &name, &ty, None),
+                            );
+                            self.buffers.remove("#decl-name");
+                        }
+                    }
+                });
+            });
     }
 
     /// Building menus: a menu bar takes menus; a menu takes items, separators and
@@ -2667,6 +2780,16 @@ impl Designer {
                 PropKind::Image
             }
             (_, Some(Value::Expr(_))) => PropKind::Source,
+            // A name where a value of the property's own type was expected
+            // (`item.symbol`, `root.up`): it's an expression. Only enum choices, theme
+            // colours and data are names.
+            (PropKind::Choice(_), Some(Value::Ident(_))) => spec.kind,
+            (PropKind::Color, Some(Value::Ident(i))) if i.starts_with("Palette.") => spec.kind,
+            (PropKind::Data(_) | PropKind::Source, _) => spec.kind,
+            (_, Some(Value::Ident(_))) => PropKind::Source,
+            // A value of another type (a number in a text property…): as source too.
+            (PropKind::Text | PropKind::Font, Some(v)) if v.as_str().is_none() => PropKind::Source,
+            (PropKind::Bool, Some(v)) if v.as_bool().is_none() => PropKind::Source,
             (k, _) => k,
         };
         match kind {
