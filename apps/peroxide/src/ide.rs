@@ -324,7 +324,8 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     "component": { "type": "string" }, "style": { "type": "string" },
                     "dark": { "type": "boolean" }, "scale": { "type": "number", "minimum": 0.5, "maximum": 4 },
                     "width": { "type": "number" }, "height": { "type": "number" },
-                    "out": { "type": "string" }
+                    "out": { "type": "string" },
+                    "language": { "type": "string", "description": "Show it translated (a language from i18n.strings)" }
                 }))),
             |s, inv| {
                 let path = resolve(s, inv, "path")?;
@@ -353,7 +354,11 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     (None, None) => None,
                     _ => return Err(err("Give both `width` and `height`, or neither.")),
                 };
-                let (w, h, rgba) = perox_designer::preview::render_component(&text, &path, &component, &style, dark, size, scale)
+                let language = inv.args["language"].as_str().map(|l| {
+                    let (dir, domain) = perox_designer::translations::location(path.parent().unwrap_or(std::path::Path::new(".")));
+                    (dir.join(perox_slint::i18n::DIR), domain, l.to_owned())
+                });
+                let (w, h, rgba) = perox_designer::preview::render_component_in(&text, &path, &component, &style, dark, size, scale, language)
                     .map_err(|e| err(format!("The form doesn't compile:\n{e}")))?;
                 let root = s.project.as_ref().map(|p| p.root.clone()).ok_or_else(|| err("No project is open."))?;
                 let out = match inv.args["out"].as_str() {
@@ -503,6 +508,85 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     }
                 }
                 Ok(json!({ "style": ui_settings.style, "color_scheme": ui_settings.color_scheme }))
+            },
+        ),
+        (
+            CommandSpec::new("i18n.strings", "Translatable Strings", Access::Read)
+                .description("The translatable (@tr) strings of the .slint files in a form's ui/ folder, each with its context (the component) and its translation in every language (null: not translated yet). Files: ui/translations/<lang>/LC_MESSAGES/<crate>.po, bundled into the app by the build.")
+                .params(path_schema(json!({}))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let (ui, domain) = perox_designer::translations::location(path.parent().unwrap_or(std::path::Path::new(".")));
+                let langs = perox_slint::i18n::languages(&ui);
+                let pos: Vec<_> = langs.iter().map(|l| {
+                    std::fs::read_to_string(perox_slint::i18n::po_path(&ui, l, &domain)).map(|t| perox_slint::i18n::parse_po(&t)).unwrap_or_default()
+                }).collect();
+                let strings: Vec<_> = perox_slint::i18n::extract_dir(&ui).into_iter().map(|m| {
+                    let tr: serde_json::Map<String, serde_json::Value> = langs.iter().zip(&pos)
+                        .map(|(l, po)| (l.clone(), po.get(&m.context, &m.id).map_or(serde_json::Value::Null, |t| t.into())))
+                        .collect();
+                    json!({ "context": m.context, "text": m.id, "plural": m.plural, "translations": tr })
+                }).collect();
+                Ok(json!({ "domain": domain, "languages": langs, "strings": strings }))
+            },
+        ),
+        (
+            CommandSpec::new("i18n.add_language", "Add Language", Access::Edit)
+                .description("Adds a language (de, fr, pt_BR, …): writes its .po with every translatable string, untranslated. Also brings existing languages up to date with the forms (new strings added, gone ones dropped). Save the forms first.")
+                .params(path_schema(json!({ "language": { "type": "string" } }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let lang = inv.str_arg("language")?;
+                if !perox_slint::i18n::is_language_tag(lang) {
+                    return Err(err("`language` is a tag like de, fr or pt_BR."));
+                }
+                let (ui, domain) = perox_designer::translations::location(path.parent().unwrap_or(std::path::Path::new(".")));
+                let written = perox_slint::i18n::sync(&ui, &domain, Some(lang)).map_err(|e| err(e.to_string()))?;
+                Ok(json!({ "written": written }))
+            },
+        ),
+        (
+            CommandSpec::new("i18n.translate", "Translate String", Access::Edit)
+                .description("Sets one string's translation in a language and saves its .po. `context` is the component the text is in (see i18n.strings); default: the only string with that text.")
+                .params(path_schema(json!({
+                    "language": { "type": "string" },
+                    "text": { "type": "string", "description": "The text as written in the form" },
+                    "context": { "type": "string" },
+                    "translation": { "type": "string" }
+                }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let lang = inv.str_arg("language")?;
+                let text = inv.str_arg("text")?;
+                let (ui, domain) = perox_designer::translations::location(path.parent().unwrap_or(std::path::Path::new(".")));
+                if !perox_slint::i18n::languages(&ui).iter().any(|l| l == lang) {
+                    return Err(err(format!("No `{lang}` yet: i18n.add_language first.")));
+                }
+                let msgs = perox_slint::i18n::extract_dir(&ui);
+                let matching: Vec<_> = msgs.iter().filter(|m| m.id == text && inv.args["context"].as_str().is_none_or(|c| c == m.context)).collect();
+                let m = match matching.as_slice() {
+                    [one] => (*one).clone(),
+                    [] => return Err(err(format!("No translatable string `{text}` (save the form, and is it @tr?)."))),
+                    _ => return Err(err("That text is in several components: give `context`.")),
+                };
+                let po_path = perox_slint::i18n::po_path(&ui, lang, &domain);
+                let mut po = std::fs::read_to_string(&po_path).map(|t| perox_slint::i18n::parse_po(&t)).unwrap_or_default();
+                po.set(&m.context, &m.id, inv.str_arg("translation")?);
+                std::fs::write(&po_path, perox_slint::i18n::write_po(lang, &msgs, &po)).map_err(|e| err(e.to_string()))?;
+                Ok(json!({ "context": m.context, "saved": po_path }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.make_translatable", "Make All Text Translatable", Access::Edit)
+                .description("Wraps every plain text, title and placeholder-text string of a component in @tr(…), so it can be translated. Returns how many it changed.")
+                .params(path_schema(json!({ "component": { "type": "string" } }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let (new, n) = perox_designer::translations::make_translatable(&text, &comp).map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
+                Ok(json!({ "changed": n }))
             },
         ),
         (

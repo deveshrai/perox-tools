@@ -330,6 +330,12 @@ pub mod build {
         if let Some(p) = crate::project::find(&dir) {
             println!("cargo:rerun-if-changed={}", p.display());
         }
+        // ui/translations/<lang>/LC_MESSAGES/<crate>.po, bundled into the app.
+        let translations = dir.join(crate::i18n::DIR);
+        if translations.is_dir() {
+            println!("cargo:rerun-if-changed={}", translations.display());
+            config = config.with_bundled_translations(translations);
+        }
         if let Err(e) = slint_build::compile_with_config(path, config) {
             panic!("Slint compile error in {}: {e}", path.display());
         }

@@ -15,7 +15,7 @@ i-slint-core.workspace = true
 perox-icons.workspace = true
 perox-slint.workspace = true
 slint = { workspace = true, features = ["renderer-software"] }
-slint-interpreter = { workspace = true, features = ["internal-highlight"] }
+slint-interpreter = { workspace = true, features = ["internal-highlight", "bundle-translations"] }
 spin_on = "0.1"
 rfd.workspace = true
 ttf-parser.workspace = true

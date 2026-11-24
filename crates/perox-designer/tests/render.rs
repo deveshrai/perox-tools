@@ -50,3 +50,32 @@ fn compile_errors_are_reported() {
     .unwrap_err();
     assert!(!err.is_empty());
 }
+
+#[test]
+fn the_preview_shows_a_translation() {
+    let root = std::env::temp_dir().join(format!("perox-tr-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let ui = root.join("ui");
+    std::fs::create_dir_all(&ui).unwrap();
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"notes\"\n").unwrap();
+    let src = "export component Main inherits Window {\n    out property <string> label: @tr(\"Save\");\n    Text { text: root.label; }\n}\n";
+    let file = ui.join("main.slint");
+    std::fs::write(&file, src).unwrap();
+    perox_slint::i18n::sync(&ui, "notes", Some("de")).unwrap();
+    let po_path = perox_slint::i18n::po_path(&ui, "de", "notes");
+    let mut po = perox_slint::i18n::parse_po(&std::fs::read_to_string(&po_path).unwrap());
+    po.set("Main", "Save", "Speichern");
+    let msgs = perox_slint::i18n::extract(src);
+    std::fs::write(&po_path, perox_slint::i18n::write_po("de", &msgs, &po)).unwrap();
+
+    let mut p = perox_designer::preview::Preview::default();
+    p.update(src, &file, "Main", "fluent", false);
+    assert_eq!(p.string_property("label").as_deref(), Some("Save"));
+    p.language = Some((ui.join("translations"), "notes".into(), "de".into()));
+    p.update(src, &file, "Main", "fluent", false);
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.string_property("label").as_deref(), Some("Speichern"));
+    p.language = None;
+    p.update(src, &file, "Main", "fluent", false);
+    assert_eq!(p.string_property("label").as_deref(), Some("Save"));
+}

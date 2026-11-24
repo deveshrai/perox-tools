@@ -133,7 +133,7 @@ inheritance, tab order. Each part uses what Slint 1.19 already has, so the resul
 | Actions and toolbars: one handler and one enabled flag shared by menu items and toolbar buttons | root callbacks and properties | ✅ |
 | Resources: images and fonts copied into the project, image and font pickers, images in the palette | `@image-url`, `import "font.ttf"` | ✅ |
 | Themes: app style and colour scheme per project (built and previewed), theme colours | Slint styles, `Palette` | ✅ |
-| i18n: translatable text, string extraction, translation editor, preview in a language | `@tr()`, gettext `.po`, bundled translations | |
+| i18n: translatable text, string extraction, translation editor, preview in a language | `@tr()`, gettext `.po`, bundled translations | ✅ |
 | Model/view and data-aware controls: list and table models, SQLite queries into tables | `VecModel`, `sqlx` in `perox-ui` | |
 | Form inheritance: new form from an existing one; inherited elements shown, not editable | `inherits` | |
 | Tab order: show the focus order on the canvas and change it | element order | |

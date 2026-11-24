@@ -2,6 +2,7 @@
 
 pub mod codegen;
 pub mod edit;
+pub mod i18n;
 pub mod project;
 pub mod syntax;
 

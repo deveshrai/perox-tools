@@ -33,6 +33,7 @@ PK, GR, LG, W = "#f28aa5", "#8a9bb4", "#e8edf4", "#ffffff"
 #   lines   "ink" or "line" for every open part (default: "ink" when the icon has a
 #           filled shape, "line" otherwise)
 ICONS = {
+    "languages": (T, {}, "line"),
     "timer": (Y, {}, None),
     "menu": (B, {}, "line"),
     "square-menu": (LB, {}, None),

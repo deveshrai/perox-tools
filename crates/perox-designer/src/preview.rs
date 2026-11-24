@@ -74,6 +74,9 @@ pub struct Preview {
     /// Size and scale of the last render.
     rendered: Option<(Vec2, f32)>,
     path: PathBuf,
+    /// Show the form in a language: its translations folder, the gettext domain (the
+    /// crate's name) and the language. `None`: the text as written.
+    pub language: Option<(PathBuf, String, String)>,
 }
 
 impl std::fmt::Debug for Preview {
@@ -97,7 +100,19 @@ impl Preview {
     /// file's location (for its imports); it needn't exist.
     pub fn update(&mut self, source: &str, path: &Path, component: &str, style: &str, dark: bool) {
         let scheme = if dark { "dark" } else { "light" };
-        let key = hash(&[source, component, style, scheme, &path.to_string_lossy()]);
+        let lang_key = self
+            .language
+            .as_ref()
+            .map(|(d, dom, l)| format!("{}|{dom}|{l}", d.display()))
+            .unwrap_or_default();
+        let key = hash(&[
+            source,
+            component,
+            style,
+            scheme,
+            &path.to_string_lossy(),
+            &lang_key,
+        ]);
         if self.built.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
@@ -106,6 +121,10 @@ impl Preview {
         let mut compiler = slint_interpreter::Compiler::default();
         compiler.set_style(style.to_owned());
         compiler.set_edition((1, 19));
+        if let Some((dir, domain, _)) = &self.language {
+            compiler.set_translation_domain(domain.clone());
+            compiler.set_bundled_translations_path(dir.clone());
+        }
         // A handle on the std widgets' palette, to pick light or dark. Appended, so every
         // element's source offset stays the same.
         let with_palette =
@@ -147,10 +166,21 @@ impl Preview {
             );
             w.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
         }
+        // After the component exists (Slint's rule); "" is the text as written.
+        let lang = self.language.as_ref().map_or("", |(_, _, l)| l.as_str());
+        let _ = slint::select_bundled_translation(lang);
         self.instance = Some(instance);
         self.window = window;
         self.rendered = None;
         self.path = path.to_owned();
+    }
+
+    /// A string property of the shown component (for tests and agents).
+    pub fn string_property(&self, name: &str) -> Option<String> {
+        match self.instance.as_ref()?.get_property(name).ok()? {
+            slint_interpreter::Value::String(s) => Some(s.to_string()),
+            _ => None,
+        }
     }
 
     pub fn is_ready(&self) -> bool {
@@ -286,7 +316,25 @@ pub fn render_component(
     size: Option<Vec2>,
     scale: f32,
 ) -> Result<(usize, usize, Vec<u8>), String> {
-    let mut p = Preview::default();
+    render_component_in(source, path, component, style, dark, size, scale, None)
+}
+
+/// [`render_component`] in a language: `(translations folder, domain, language)`.
+#[allow(clippy::too_many_arguments)]
+pub fn render_component_in(
+    source: &str,
+    path: &Path,
+    component: &str,
+    style: &str,
+    dark: bool,
+    size: Option<Vec2>,
+    scale: f32,
+    language: Option<(PathBuf, String, String)>,
+) -> Result<(usize, usize, Vec<u8>), String> {
+    let mut p = Preview {
+        language,
+        ..Default::default()
+    };
     p.update(source, path, component, style, dark);
     if !p.diagnostics.is_empty() {
         return Err(p.diagnostics.join("\n"));

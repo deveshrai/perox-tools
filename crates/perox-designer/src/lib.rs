@@ -14,6 +14,7 @@ pub mod free;
 pub mod keys;
 pub mod preview;
 pub mod resources;
+pub mod translations;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -122,6 +123,10 @@ pub struct Designer {
     /// An import to add along with the property edit being applied: a font file
     /// (`(None, "fonts/X.ttf")`) or a name (`(Some("Palette"), "std-widgets.slint")`).
     pending_import: Option<(Option<String>, String)>,
+    /// The Translations window.
+    pub translations: translations::Editor,
+    /// Preview the form in this language (`None`: as written).
+    pub preview_lang: Option<String>,
     /// The app's style settings, and when they were read.
     app_ui: Option<(std::time::Instant, perox_slint::project::UiSettings)>,
     /// The last edit that couldn't be made.
@@ -289,6 +294,7 @@ impl Designer {
             self.tray(ui, base);
             self.canvas(ui, source, path, &mut actions);
         });
+        self.translations.show(ui.ctx());
         self.keyboard(ui, source, &mut actions);
         self.drag_preview(ui);
         if self.selected != self.last_selected && !self.keep_multi {
@@ -687,6 +693,7 @@ impl Designer {
                 self.dark = Some(!dark);
             }
             self.app_style_menu(ui);
+            self.language_menu(ui, source, actions);
             let names: Vec<String> = self.doc.components.iter().map(|c| c.name.clone()).collect();
             if names.len() > 1 {
                 let current = self.component_name();
@@ -1018,6 +1025,56 @@ impl Designer {
     // ---- canvas ----
 
     /// The source with live (being-dragged) values applied, for the preview.
+    /// The language menu: preview in a translation, open the Translations window, make
+    /// the form's text translatable.
+    fn language_menu(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
+        let label = self
+            .preview_lang
+            .clone()
+            .unwrap_or_else(|| "As written".into());
+        let r = ui.menu_button(label, |ui| {
+            let (dir, _) = translations::location(&self.form_dir());
+            let langs = perox_slint::i18n::languages(&dir);
+            ui.label(RichText::new("Preview in").small().weak());
+            if ui
+                .radio(self.preview_lang.is_none(), "The text as written")
+                .clicked()
+            {
+                self.preview_lang = None;
+            }
+            for l in &langs {
+                if ui
+                    .radio(self.preview_lang.as_deref() == Some(l.as_str()), l)
+                    .clicked()
+                {
+                    self.preview_lang = Some(l.clone());
+                }
+            }
+            ui.separator();
+            if ui.button("Translations…").clicked() {
+                self.translations.open(&self.form_dir());
+                ui.close();
+            }
+            if ui
+                .button("Make all text translatable")
+                .on_hover_text("Wraps every text, title and placeholder in this form in @tr(…)")
+                .clicked()
+            {
+                let comp = self.component_name();
+                match translations::make_translatable(source, &comp) {
+                    Ok((text, n)) => {
+                        self.apply_text(actions, source, Ok(text));
+                        self.error = (n == 0).then(|| "No plain text left to translate".into());
+                    }
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+                ui.close();
+            }
+        });
+        r.response
+            .on_hover_text("Languages: preview a translation, edit translations");
+    }
+
     /// The App Style menu: the style and colour scheme the app is built with.
     fn app_style_menu(&mut self, ui: &mut egui::Ui) {
         let current = self.app_ui();
@@ -1232,6 +1289,10 @@ impl Designer {
         };
         let style = self.style();
         let dark = self.preview_dark(ui.visuals().dark_mode);
+        self.preview.language = self.preview_lang.as_ref().map(|l| {
+            let (dir, domain) = translations::location(&self.form_dir());
+            (dir.join(perox_slint::i18n::DIR), domain, l.clone())
+        });
         self.preview.update(&shown, &path, &c.name, &style, dark);
 
         let size = self.window_size();
@@ -2220,6 +2281,9 @@ impl Designer {
         let kind = match (spec.kind, value) {
             (PropKind::Keys, Some(Value::Expr(e))) if keys::inner(e).is_some() => PropKind::Keys,
             (PropKind::Keys, None) => PropKind::Keys,
+            (PropKind::Text, Some(Value::Expr(e))) if perox_slint::i18n::tr_text(e).is_some() => {
+                PropKind::Text
+            }
             (PropKind::Image, Some(Value::Expr(e))) if resources::image_path(e).is_some() => {
                 PropKind::Image
             }
@@ -2380,9 +2444,43 @@ impl Designer {
                 })
             }
             PropKind::Text => {
-                let current = value.and_then(Value::as_str).unwrap_or_default().to_owned();
-                self.text_field(ui, &key, &current, false)
-                    .map(|t| perox_slint::syntax::quote(&t))
+                let tr = match value {
+                    Some(Value::Expr(e)) => perox_slint::i18n::tr_text(e),
+                    _ => None,
+                };
+                let translatable = tr.is_some();
+                let current = tr
+                    .or_else(|| value.and_then(Value::as_str).map(str::to_owned))
+                    .unwrap_or_default();
+                let wrap = |t: &str, on: bool| {
+                    if on {
+                        perox_slint::i18n::tr(t)
+                    } else {
+                        perox_slint::syntax::quote(t)
+                    }
+                };
+                let mut out = self
+                    .text_field(ui, &key, &current, false)
+                    .map(|t| wrap(&t, translatable));
+                let r = ui
+                    .add(
+                        egui::Button::image(if translatable {
+                            Icon::Languages.image(ui)
+                        } else {
+                            Icon::Languages.faded(ui)
+                        })
+                        .selected(translatable)
+                        .frame(false),
+                    )
+                    .on_hover_text(if translatable {
+                        "Translatable (@tr): click to make it plain text"
+                    } else {
+                        "Make it translatable (@tr)"
+                    });
+                if r.clicked() && (value.is_some() || !current.is_empty()) {
+                    out = Some(wrap(&current, !translatable));
+                }
+                out
             }
             PropKind::Length | PropKind::Int | PropKind::Float => {
                 let unit = match kind {

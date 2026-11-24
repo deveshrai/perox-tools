@@ -37,6 +37,7 @@ macro_rules! icons {
 icons! {
     Table => "table",
     Timer => "timer",
+    Languages => "languages",
     Menu => "menu",
     SquareMenu => "square-menu",
     Keyboard => "keyboard",

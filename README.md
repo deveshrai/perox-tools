@@ -75,6 +75,14 @@ and light or dark.
 
 ![Material, dark, with a theme colour](docs/screenshots/app-style.png)
 
+**Translations.** The globe next to a text property makes it translatable
+(`@tr("Save")`); *Make all text translatable* does a whole form. *Translations…* shows
+every string against each language in a table, saved as standard gettext `.po` files in
+`ui/translations/`. The designer previews any language, the build bundles them all, and
+the app starts in the system's language. Agents can do the same with `i18n.*`.
+
+<img src="docs/screenshots/translated-app.png" alt="An app built in PeroxIDE, running in German" width="50%">
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`
