@@ -67,8 +67,16 @@ pub struct Designer {
     pub style: Option<String>,
     /// Preview in the dark colour scheme (default: like the IDE's theme).
     pub dark: Option<bool>,
-    /// The selected element's path (`[]` is the root).
+    /// The selected element's path (`[]` is the root): the primary selection.
     pub selected: Option<Vec<usize>>,
+    /// More selected elements (Shift- or Cmd-click), besides `selected`.
+    pub multi: Vec<Vec<usize>>,
+    /// `selected` as of the last frame: a change not made by a modifier-click starts a
+    /// new single selection.
+    last_selected: Option<Vec<usize>>,
+    keep_multi: bool,
+    /// What Copy put on the clipboard (`.slint` element source).
+    clipboard: String,
     /// Window size while the corner handle is being dragged.
     resize: Option<Vec2>,
     resize_from: Option<Vec2>,
@@ -193,7 +201,42 @@ impl Designer {
         });
         self.keyboard(ui, source, &mut actions);
         self.drag_preview(ui);
+        if self.selected != self.last_selected && !self.keep_multi {
+            self.multi.clear();
+        }
+        self.keep_multi = false;
+        self.last_selected = self.selected.clone();
         actions
+    }
+
+    /// Everything selected, primary first, without elements whose parent is also
+    /// selected.
+    pub fn selection(&self) -> Vec<Vec<usize>> {
+        let mut all: Vec<Vec<usize>> = self.selected.iter().cloned().collect();
+        for p in &self.multi {
+            if !all.contains(p) && self.element(p).is_some() {
+                all.push(p.clone());
+            }
+        }
+        let snapshot = all.clone();
+        all.retain(|p| !snapshot.iter().any(|q| q != p && p.starts_with(q)));
+        all
+    }
+
+    /// Shift/Cmd-click: add `p` to the selection, or take it out.
+    fn toggle(&mut self, p: Vec<usize>) {
+        self.keep_multi = true;
+        if self.selected.as_ref() == Some(&p) {
+            self.selected = if self.multi.is_empty() {
+                None
+            } else {
+                Some(self.multi.remove(0))
+            };
+        } else if let Some(i) = self.multi.iter().position(|q| *q == p) {
+            self.multi.remove(i);
+        } else if let Some(old) = self.selected.replace(p) {
+            self.multi.insert(0, old);
+        }
     }
 
     fn apply(
@@ -387,6 +430,36 @@ impl Designer {
                 self.snap_off = !self.snap_off;
             }
             ui.separator();
+            let selection = self.selection();
+            let can_align = selection.len() >= 2
+                && self
+                    .current()
+                    .is_some_and(|c| free::common_free_parent(c, &selection).is_some());
+            for (how, icon, tip, min) in [
+                (free::Arrange::Left, Icon::AlignStartVertical, "Align left edges (to the first selected)", 2),
+                (free::Arrange::CenterH, Icon::AlignCenterVertical, "Align centres horizontally", 2),
+                (free::Arrange::Right, Icon::AlignEndVertical, "Align right edges", 2),
+                (free::Arrange::Top, Icon::AlignStartHorizontal, "Align top edges", 2),
+                (free::Arrange::CenterV, Icon::AlignCenterHorizontal, "Align centres vertically", 2),
+                (free::Arrange::Bottom, Icon::AlignEndHorizontal, "Align bottom edges", 2),
+                (free::Arrange::DistributeH, Icon::AlignHorizontalDistributeCenter, "Space evenly across", 3),
+                (free::Arrange::DistributeV, Icon::AlignVerticalDistributeCenter, "Space evenly down", 3),
+            ] {
+                let enabled = can_align && selection.len() >= min;
+                let tip = format!("{tip}. Shift-click to select several freely placed elements.");
+                if ui
+                    .add_enabled_ui(enabled, |ui| icon_button(ui, icon, &tip))
+                    .inner
+                    .clicked()
+                {
+                    let rects = self.layout.elements.clone();
+                    let comp = self.component_name();
+                    let result = free::arrange(source, &comp, free::Drawn { rects: &rects }, &selection, how);
+                    self.keep_multi = true;
+                    self.apply_text(actions, source, result);
+                }
+            }
+            ui.separator();
             // Style and component pickers.
             let style = self.style();
             egui::ComboBox::from_id_salt("designer_style")
@@ -449,20 +522,199 @@ impl Designer {
     }
 
     fn delete_selected(&mut self, source: &str, actions: &mut Vec<Action>) {
-        let Some(sel) = self.selected.clone().filter(|s| !s.is_empty()) else {
+        let mut paths: Vec<Vec<usize>> = self
+            .selection()
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .collect();
+        let Some(first) = paths.first().cloned() else {
             return;
         };
+        // Later and deeper first, so earlier paths stay valid.
+        paths.sort();
+        paths.reverse();
         let comp = self.component_name();
-        if self.apply(actions, edit::remove_element(source, &comp, &sel)) {
-            let mut parent = sel;
+        let mut work = source.to_owned();
+        let result = (|| {
+            for p in &paths {
+                let s = work.clone();
+                free::step(&mut work, edit::remove_element(&s, &comp, p))?;
+            }
+            Ok(work)
+        })();
+        if self.apply_text(actions, source, result) {
+            let mut parent = first;
             parent.pop();
             self.selected = Some(parent);
+            self.multi.clear();
         }
+    }
+
+    /// The selection's source, one element after another: what Copy puts on the
+    /// clipboard.
+    fn copy_selection(&self, source: &str) -> Option<String> {
+        let paths: Vec<Vec<usize>> = self
+            .selection()
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .collect();
+        let c = self.current()?;
+        let blocks: Vec<String> = paths
+            .iter()
+            .filter_map(|p| c.at(p))
+            .map(|el| edit::element_block(source, el))
+            .collect();
+        (!blocks.is_empty()).then(|| blocks.join("\n"))
+    }
+
+    /// Pastes `.slint` elements: into the selected container, else after the selected
+    /// element. Ids that already exist get new ones; freely placed copies move 16 px so
+    /// they don't hide the originals. Text that isn't elements is ignored.
+    pub fn paste(&mut self, source: &str, text: &str) -> Vec<Action> {
+        self.sync(source);
+        let mut actions = Vec::new();
+        let Some(c) = self.current().cloned() else {
+            return actions;
+        };
+        // Is it elements? Parse it inside a throwaway component.
+        let probe = perox_slint::parse(&format!("component PeroxPaste {{\n{text}\n}}"));
+        let Some(pc) = probe.components.first().filter(|_| probe.errors.is_empty()) else {
+            return actions;
+        };
+        let pasted = pc.root.children.clone();
+        if pasted.is_empty() {
+            return actions;
+        }
+        let sel = self.selected.clone().unwrap_or_default();
+        let fits = |el: &Element| pasted.iter().all(|p| catalog::accepts(&el.kind, &p.kind));
+        let (parent, index) = match c.at(&sel) {
+            Some(el) if fits(el) => (sel.clone(), usize::MAX),
+            _ if !sel.is_empty() => {
+                let mut parent = sel.clone();
+                let i = parent.pop().unwrap_or(0);
+                (parent, i + 1)
+            }
+            _ => {
+                self.error = Some("Select where to paste".into());
+                return actions;
+            }
+        };
+        let Some(target) = c.at(&parent).cloned() else {
+            return actions;
+        };
+        // New ids for clashes (and for repeats within the paste).
+        let mut block = text.trim().to_owned();
+        let mut taken: Vec<String> = Vec::new();
+        c.root
+            .walk(&mut Vec::new(), &mut |el, _| taken.extend(el.id.clone()));
+        let mut renames: Vec<(String, String)> = Vec::new();
+        pc.root.walk(&mut Vec::new(), &mut |el, _| {
+            if let Some(id) = &el.id
+                && taken.contains(id)
+            {
+                let base = id.trim_end_matches(|ch: char| ch.is_ascii_digit());
+                let new = (1..)
+                    .map(|n| format!("{base}{n}"))
+                    .find(|n| !taken.contains(n))
+                    .unwrap_or_default();
+                taken.push(new.clone());
+                renames.push((id.clone(), new));
+            }
+        });
+        for (old, new) in &renames {
+            block = replace_word(&block, old, new);
+        }
+        let comp = c.name.clone();
+        let count = target.children.len();
+        let first = if index == usize::MAX {
+            count
+        } else {
+            index.min(count)
+        };
+        let mut work = source.to_owned();
+        let result = (|| {
+            free::step(
+                &mut work,
+                edit::insert_source(source, &comp, &parent, index, &block),
+            )?;
+            let doc = perox_slint::parse(&work);
+            let nc = doc
+                .component(&comp)
+                .ok_or(EditError::NoSuchElement)?
+                .clone();
+            for k in 0..pasted.len() {
+                let mut p = parent.clone();
+                p.push(first + k);
+                if let Some(el) = nc.at(&p) {
+                    let mut kinds = Vec::new();
+                    el.walk(&mut Vec::new(), &mut |e, _| kinds.push(e.kind.clone()));
+                    for kind in kinds {
+                        free::import(&mut work, &kind);
+                    }
+                    if catalog::is_free(&target.kind)
+                        && let (Some(x), Some(y)) = (el.num_prop("x"), el.num_prop("y"))
+                    {
+                        free::set_position(
+                            &mut work,
+                            &comp,
+                            &p,
+                            Pos2::new(x as f32 + 16.0, y as f32 + 16.0),
+                        )?;
+                    }
+                }
+            }
+            Ok(work)
+        })();
+        if self.apply_text(&mut actions, source, result) {
+            let mut p = parent.clone();
+            p.push(first);
+            self.selected = Some(p);
+            self.multi = (1..pasted.len())
+                .map(|k| {
+                    let mut q = parent.clone();
+                    q.push(first + k);
+                    q
+                })
+                .collect();
+            self.keep_multi = true;
+        }
+        actions
     }
 
     fn keyboard(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
         // Only when no text field has the keyboard.
         if ui.memory(|m| m.focused().is_some()) {
+            return;
+        }
+        // Clipboard: egui turns Cmd+C/X/V into these events.
+        let (copy, cut, paste) = ui.input(|i| {
+            let mut out = (false, false, None);
+            for e in &i.events {
+                match e {
+                    egui::Event::Copy => out.0 = true,
+                    egui::Event::Cut => out.1 = true,
+                    egui::Event::Paste(t) => out.2 = Some(t.clone()),
+                    _ => {}
+                }
+            }
+            out
+        });
+        let duplicate = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::D));
+        if copy || cut || duplicate {
+            if let Some(text) = self.copy_selection(source) {
+                ui.ctx().copy_text(text.clone());
+                self.clipboard = text;
+                if cut {
+                    self.delete_selected(source, actions);
+                } else if duplicate {
+                    let text = self.clipboard.clone();
+                    actions.extend(self.paste(source, &text));
+                }
+            }
+            return;
+        }
+        if let Some(text) = paste {
+            actions.extend(self.paste(source, &text));
             return;
         }
         let (delete, escape, undo, redo) = ui.input_mut(|i| {
@@ -732,11 +984,19 @@ impl Designer {
                 StrokeKind::Outside,
             );
         }
-        if let Some(sel) = &self.selected
-            && !sel.is_empty()
-            && let Some((_, r)) = rects.iter().find(|(p, _)| p == sel)
-        {
-            painter.rect_stroke(*r, 0.0, Stroke::new(2.0, accent), StrokeKind::Outside);
+        for (i, sel) in self.selection().iter().enumerate() {
+            if sel.is_empty() {
+                continue;
+            }
+            if let Some((_, r)) = rects.iter().find(|(p, _)| p == sel) {
+                // The primary selection is solid; the others lighter.
+                let c = if i == 0 {
+                    accent
+                } else {
+                    accent.gamma_multiply(0.6)
+                };
+                painter.rect_stroke(*r, 0.0, Stroke::new(2.0, c), StrokeKind::Outside);
+            }
         }
     }
 
@@ -750,7 +1010,12 @@ impl Designer {
         if r.clicked()
             && let Some(p) = r.interact_pointer_pos().and_then(|p| hit(rects, p, None))
         {
-            self.selected = Some(p);
+            let m = ui.input(|i| i.modifiers);
+            if (m.shift || m.command) && !p.is_empty() {
+                self.toggle(p);
+            } else {
+                self.selected = Some(p);
+            }
             self.error = None;
         }
         if r.drag_started()
@@ -1718,6 +1983,23 @@ fn hit(rects: &[(Vec<usize>, Rect)], p: Pos2, excluded: Option<&[usize]>) -> Opt
         .rev()
         .find(|(path, r)| r.contains(p) && !excluded.is_some_and(|e| path.starts_with(e)))
         .map(|(path, _)| path.clone())
+}
+
+/// Replaces whole-word `old` (a Slint identifier) with `new`.
+fn replace_word(text: &str, old: &str, new: &str) -> String {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find(old) {
+        let before_ok = rest[..i].chars().last().is_none_or(|c| !is_ident(c));
+        let after = &rest[i + old.len()..];
+        let after_ok = after.chars().next().is_none_or(|c| !is_ident(c));
+        out.push_str(&rest[..i]);
+        out.push_str(if before_ok && after_ok { new } else { old });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `button1`, `button2`, …: the first id not already in the component.

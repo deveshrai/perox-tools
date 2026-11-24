@@ -447,3 +447,89 @@ fn the_preview_follows_the_dark_switch() {
         );
     }
 }
+
+const THREE: &str = "import { Button } from \"std-widgets.slint\";\nexport component Main inherits Window {\n    preferred-width: 400px;\n    preferred-height: 300px;\n    a := Button { text: \"A\"; x: 16px; y: 16px; }\n    b := Button { text: \"B\"; x: 120px; y: 64px; }\n    c := Button { text: \"C\"; x: 240px; y: 40px; }\n}\n";
+
+impl Harness {
+    fn shift_click(&mut self, at: Pos2) {
+        // egui reads held keys from ModifiersChanged, as a real window sends it.
+        let m = Modifiers::SHIFT;
+        self.frame(vec![Event::ModifiersChanged(m), Event::PointerMoved(at)]);
+        self.frame(vec![Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: m,
+        }]);
+        self.frame(vec![Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: m,
+        }]);
+        self.frame(vec![Event::ModifiersChanged(Modifiers::NONE)]);
+    }
+}
+
+#[test]
+fn shift_click_selects_several_and_they_align() {
+    let mut h = Harness::new(THREE);
+    let (a, b, c) = (h.rect(&[0]), h.rect(&[1]), h.rect(&[2]));
+    h.click(a.center());
+    h.shift_click(b.center());
+    h.shift_click(c.center());
+    assert_eq!(h.designer.selection(), vec![vec![2], vec![1], vec![0]]);
+    // Shift-click again takes one out.
+    h.shift_click(b.center());
+    assert_eq!(h.designer.selection(), vec![vec![2], vec![0]]);
+    let rects = h.designer.layout.elements.clone();
+    h.src = perox_designer::free::arrange(
+        &h.src,
+        "Main",
+        perox_designer::free::Drawn { rects: &rects },
+        &h.designer.selection(),
+        perox_designer::free::Arrange::Top,
+    )
+    .unwrap();
+    assert!(
+        h.src
+            .contains("a := Button { text: \"A\"; x: 16px; y: 40px; }"),
+        "{}",
+        h.src
+    );
+    // Deleting removes all of them.
+    h.frame(vec![]);
+    h.key(egui::Key::Delete);
+    assert!(
+        !h.src.contains("a := ") && !h.src.contains("c := ") && h.src.contains("b := "),
+        "{}",
+        h.src
+    );
+}
+
+#[test]
+fn copy_and_paste_elements() {
+    let mut h = Harness::new(THREE);
+    let a = h.rect(&[0]);
+    h.click(a.center());
+    h.frame(vec![Event::Copy]);
+    h.frame(vec![Event::Paste(
+        "a := Button { text: \"A\"; x: 16px; y: 16px; }".into(),
+    )]);
+    assert!(
+        h.src
+            .contains("a1 := Button { text: \"A\"; x: 32px; y: 32px; }"),
+        "{}",
+        h.src
+    );
+    assert_eq!(h.designer.selected, Some(vec![1]));
+    // Not Slint: ignored.
+    let before = h.src.clone();
+    h.frame(vec![Event::Paste("hello world".into())]);
+    assert_eq!(h.src, before);
+    assert!(
+        h.designer.preview.diagnostics.is_empty(),
+        "{:?}",
+        h.designer.preview.diagnostics
+    );
+}

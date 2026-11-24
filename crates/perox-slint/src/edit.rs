@@ -450,6 +450,34 @@ pub fn add_element(
     )])
 }
 
+/// An element's source with its indentation removed (the first line starts at column 0,
+/// later lines relative to it): what copy puts on the clipboard.
+pub fn element_block(src: &str, el: &Element) -> String {
+    reindent(&src[el.span.clone()], &indent_at(src, el.span.start), "")
+}
+
+/// Inserts `block` (one or more elements' source, as [`element_block`] gives it) as
+/// child `index` of `parent` (`usize::MAX`: at the end).
+pub fn insert_source(
+    src: &str,
+    comp: &str,
+    parent: &[usize],
+    index: usize,
+    block: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    let doc = parse(src);
+    let p = element(component(&doc, comp)?, parent)?;
+    let unit = indent_unit(src);
+    // Re-indent with this file's unit if the block used another.
+    let block = block.trim_end();
+    Ok(vec![insert_child_edit(
+        src,
+        p,
+        index.min(p.children.len()),
+        &block.replace('\t', &unit),
+    )])
+}
+
 pub fn remove_element(src: &str, comp: &str, path: &[usize]) -> Result<Vec<TextEdit>, EditError> {
     if path.is_empty() {
         return Err(EditError::Root);
@@ -857,6 +885,25 @@ mod tests {
         assert!(add_callback(SRC, "Main", "go", &[]).unwrap().is_empty());
         let out = run(remove_callback(SRC, "Main", "go"));
         assert!(!out.contains("callback"), "{out}");
+    }
+
+    #[test]
+    fn copy_and_paste_source() {
+        let doc = parse(SRC);
+        let b = doc.components[0].at(&[0, 1]).unwrap();
+        let block = element_block(SRC, b);
+        assert_eq!(block, "b := Text { text: \"B\"; }");
+        let out = run(insert_source(
+            SRC,
+            "Main",
+            &[],
+            usize::MAX,
+            "c := Rectangle {\n    Text { }\n}",
+        ));
+        assert!(
+            out.contains("    }\n    c := Rectangle {\n        Text { }\n    }\n}"),
+            "{out}"
+        );
     }
 
     #[test]

@@ -100,6 +100,16 @@ pub enum Icon {
     ToggleLeft,
     Moon,
     Sun,
+    AlignStartVertical,
+    AlignCenterVertical,
+    AlignEndVertical,
+    AlignStartHorizontal,
+    AlignCenterHorizontal,
+    AlignEndHorizontal,
+    AlignHorizontalDistributeCenter,
+    AlignVerticalDistributeCenter,
+    ClipboardPaste,
+    Scissors,
     Zap,
 }
 
@@ -193,6 +203,16 @@ impl Icon {
         Icon::ToggleLeft,
         Icon::Moon,
         Icon::Sun,
+        Icon::AlignStartVertical,
+        Icon::AlignCenterVertical,
+        Icon::AlignEndVertical,
+        Icon::AlignStartHorizontal,
+        Icon::AlignCenterHorizontal,
+        Icon::AlignEndHorizontal,
+        Icon::AlignHorizontalDistributeCenter,
+        Icon::AlignVerticalDistributeCenter,
+        Icon::ClipboardPaste,
+        Icon::Scissors,
         Icon::Zap,
     ];
 
@@ -288,6 +308,24 @@ impl Icon {
             Icon::ToggleLeft => egui::include_image!("../icons/toggle-left.svg"),
             Icon::Moon => egui::include_image!("../icons/moon.svg"),
             Icon::Sun => egui::include_image!("../icons/sun.svg"),
+            Icon::AlignStartVertical => egui::include_image!("../icons/align-start-vertical.svg"),
+            Icon::AlignCenterVertical => egui::include_image!("../icons/align-center-vertical.svg"),
+            Icon::AlignEndVertical => egui::include_image!("../icons/align-end-vertical.svg"),
+            Icon::AlignStartHorizontal => {
+                egui::include_image!("../icons/align-start-horizontal.svg")
+            }
+            Icon::AlignCenterHorizontal => {
+                egui::include_image!("../icons/align-center-horizontal.svg")
+            }
+            Icon::AlignEndHorizontal => egui::include_image!("../icons/align-end-horizontal.svg"),
+            Icon::AlignHorizontalDistributeCenter => {
+                egui::include_image!("../icons/align-horizontal-distribute-center.svg")
+            }
+            Icon::AlignVerticalDistributeCenter => {
+                egui::include_image!("../icons/align-vertical-distribute-center.svg")
+            }
+            Icon::ClipboardPaste => egui::include_image!("../icons/clipboard-paste.svg"),
+            Icon::Scissors => egui::include_image!("../icons/scissors.svg"),
             Icon::Zap => egui::include_image!("../icons/zap.svg"),
         }
     }

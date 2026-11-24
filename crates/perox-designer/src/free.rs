@@ -472,3 +472,153 @@ mod tests {
         assert_eq!(snap(13.4, false), 13.0);
     }
 }
+
+/// Align or distribute freely placed siblings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arrange {
+    Left,
+    CenterH,
+    Right,
+    Top,
+    CenterV,
+    Bottom,
+    /// Equal gaps left to right (3 or more).
+    DistributeH,
+    /// Equal gaps top to bottom (3 or more).
+    DistributeV,
+}
+
+/// The common parent of `paths` if they're all freely placed in it.
+pub fn common_free_parent(
+    comp: &perox_slint::Component,
+    paths: &[Vec<usize>],
+) -> Option<Vec<usize>> {
+    let parent = paths.first()?.split_last()?.1.to_vec();
+    let same = paths
+        .iter()
+        .all(|p| p.split_last().is_some_and(|(_, q)| q == parent.as_slice()));
+    let free = comp.at(&parent).is_some_and(|p| catalog::is_free(&p.kind));
+    (same && free).then_some(parent)
+}
+
+/// Lines up `paths` (siblings in a free container) by their drawn rects. Alignment is
+/// to the first path (the primary selection); distribution keeps the outer two where
+/// they are.
+pub fn arrange(
+    src: &str,
+    comp: &str,
+    drawn: Drawn<'_>,
+    paths: &[Vec<usize>],
+    how: Arrange,
+) -> Result<String, EditError> {
+    let doc = perox_slint::parse(src);
+    let c = component(&doc, comp)?;
+    let parent = common_free_parent(c, paths).ok_or(EditError::NoSuchElement)?;
+    let origin = drawn.rect(&parent).ok_or(EditError::NoSuchElement)?.min;
+    let mut items: Vec<(Vec<usize>, Rect)> = paths
+        .iter()
+        .filter_map(|p| {
+            drawn
+                .rect(p)
+                .map(|r| (p.clone(), r.translate(-origin.to_vec2())))
+        })
+        .collect();
+    if items.len() < 2 {
+        return Err(EditError::NoSuchElement);
+    }
+    let reference = items[0].1;
+    let mut moves: Vec<(Vec<usize>, Pos2)> = Vec::new();
+    match how {
+        Arrange::DistributeH | Arrange::DistributeV => {
+            let horizontal = how == Arrange::DistributeH;
+            let key = |r: &Rect| if horizontal { r.left() } else { r.top() };
+            items.sort_by(|a, b| key(&a.1).total_cmp(&key(&b.1)));
+            let len = |r: &Rect| if horizontal { r.width() } else { r.height() };
+            let first = items.first().map(|i| key(&i.1)).unwrap_or(0.0);
+            let last = items.last().map(|i| key(&i.1) + len(&i.1)).unwrap_or(0.0);
+            let total: f32 = items.iter().map(|i| len(&i.1)).sum();
+            let gap = (last - first - total) / (items.len() - 1) as f32;
+            let mut at = first;
+            for (p, r) in &items {
+                let pos = if horizontal {
+                    Pos2::new(at, r.top())
+                } else {
+                    Pos2::new(r.left(), at)
+                };
+                moves.push((p.clone(), pos));
+                at += len(r) + gap;
+            }
+        }
+        _ => {
+            for (p, r) in &items {
+                let x = match how {
+                    Arrange::Left => reference.left(),
+                    Arrange::CenterH => reference.center().x - r.width() / 2.0,
+                    Arrange::Right => reference.right() - r.width(),
+                    _ => r.left(),
+                };
+                let y = match how {
+                    Arrange::Top => reference.top(),
+                    Arrange::CenterV => reference.center().y - r.height() / 2.0,
+                    Arrange::Bottom => reference.bottom() - r.height(),
+                    _ => r.top(),
+                };
+                moves.push((p.clone(), Pos2::new(x, y)));
+            }
+        }
+    }
+    let mut work = src.to_owned();
+    for (p, at) in moves {
+        set_position(
+            &mut work,
+            comp,
+            &p,
+            Pos2::new(at.x.round().max(0.0), at.y.round().max(0.0)),
+        )?;
+    }
+    Ok(work)
+}
+
+#[cfg(test)]
+mod arrange_tests {
+    use super::*;
+    use eframe::egui::pos2;
+
+    #[test]
+    fn align_and_distribute() {
+        let src = "export component W inherits Window {\n    a := Rectangle { x: 10px; y: 10px; }\n    b := Rectangle { x: 50px; y: 30px; }\n    c := Rectangle { x: 200px; y: 5px; }\n}\n";
+        let r = |x: f32, y: f32, w: f32| Rect::from_min_size(pos2(x, y), vec2(w, 20.0));
+        let rects = vec![
+            (vec![], r(0.0, 0.0, 400.0)),
+            (vec![0], r(10.0, 10.0, 20.0)),
+            (vec![1], r(50.0, 30.0, 40.0)),
+            (vec![2], r(200.0, 5.0, 20.0)),
+        ];
+        let all = [vec![0], vec![1], vec![2]];
+        let out = arrange(src, "W", Drawn { rects: &rects }, &all, Arrange::Top).unwrap();
+        assert_eq!(out.matches("y: 10px").count(), 3, "{out}");
+        let out = arrange(
+            src,
+            "W",
+            Drawn { rects: &rects },
+            &[vec![1], vec![0]],
+            Arrange::Right,
+        )
+        .unwrap();
+        assert!(
+            out.contains("a := Rectangle { x: 70px;"),
+            "right edges at 90: {out}"
+        );
+        // 10..30, 50..90, 200..220: free space 210 - 80 = 130 → gaps of 65.
+        let out = arrange(
+            src,
+            "W",
+            Drawn { rects: &rects },
+            &all,
+            Arrange::DistributeH,
+        )
+        .unwrap();
+        assert!(out.contains("b := Rectangle { x: 95px;"), "{out}");
+        assert!(out.contains("c := Rectangle { x: 200px;"), "{out}");
+    }
+}
