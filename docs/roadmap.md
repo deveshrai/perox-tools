@@ -159,6 +159,7 @@ templates, examples, user docs.
 | Part | State |
 |---|---|
 | Packaging user apps: Build › Package App makes a macOS .app and DMG, a Linux .deb and AppImage, a Windows installer; `build.package` over MCP | |
+| App icon and opening animation: a chrome anvil, a bottle pouring liquid metal, rust spreading (two shades only: chrome and rust; concept in `assets/brand/concept`) | |
 | PeroxIDE's own installers, built for all three OSes by a release workflow | |
 | The Toolchain Set in the installer: the pinned Rust toolchain, used without rustup | |
 | Templates: more starting points in File › New GUI App | |
