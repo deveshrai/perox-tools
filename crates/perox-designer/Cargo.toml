@@ -20,3 +20,8 @@ spin_on = "0.1"
 
 [lints]
 workspace = true
+
+# egui's fontique 0.11 switches the shared fontconfig-sys to dlopen mode; Slint's fontique
+# 0.12 must use the same mode or it won't compile (Linux, both in one binary).
+[target.'cfg(target_os = "linux")'.dependencies]
+fontique = { version = "0.12", default-features = false, features = ["fontconfig-dlopen"] }
