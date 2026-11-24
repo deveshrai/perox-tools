@@ -156,6 +156,19 @@ Toolchain Sets per OS ([ADR 0005](adr/0005-toolchain-sets.md)), installers
 (signed and notarized DMG; MSI; AppImage and deb), packaging user apps for all three OSes,
 templates, examples, user docs.
 
+| Part | State |
+|---|---|
+| Packaging user apps: Build › Package App makes a macOS .app and DMG, a Linux .deb and AppImage, a Windows installer; `build.package` over MCP | |
+| PeroxIDE's own installers, built for all three OSes by a release workflow | |
+| The Toolchain Set in the installer: the pinned Rust toolchain, used without rustup | |
+| Templates: more starting points in File › New GUI App | |
+| User guide | |
+| 1.0 | |
+
+Signing and notarization need the publisher's certificates (Apple Developer ID, a Windows
+code-signing certificate). The packaging takes them from the environment when they're
+there; without them it makes unsigned packages, which run after the OS asks.
+
 ## Milestone 2: Android
 Android spike ([spikes/0001](spikes/0001-android-toolchain.md)), IDE on Android, on-device
 APK builds and installation, MCP for Termux and Wi-Fi, packaging user apps as APKs.
