@@ -77,6 +77,9 @@ pub struct Preview {
     /// Show the form in a language: its translations folder, the gettext domain (the
     /// crate's name) and the language. `None`: the text as written.
     pub language: Option<(PathBuf, String, String)>,
+    /// Data shown while designing: `(property, widget kind, rows)`, set on the
+    /// component's exposed data properties (bound queries' results).
+    pub design_data: Vec<(String, String, Vec<Vec<String>>)>,
 }
 
 impl std::fmt::Debug for Preview {
@@ -112,6 +115,7 @@ impl Preview {
             scheme,
             &path.to_string_lossy(),
             &lang_key,
+            &format!("{:?}", self.design_data),
         ]);
         if self.built.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
@@ -165,6 +169,9 @@ impl Preview {
                 slint_interpreter::Value::EnumerationValue("ColorScheme".into(), scheme.into()),
             );
             w.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
+        }
+        for (prop, kind, rows) in &self.design_data {
+            let _ = instance.set_property(prop, design_value(kind, rows));
         }
         // After the component exists (Slint's rule); "" is the text as written.
         let lang = self.language.as_ref().map_or("", |(_, _, l)| l.as_str());
@@ -305,6 +312,33 @@ impl Preview {
     }
 }
 
+/// Rows of text as the model a widget takes: `[[StandardListViewItem]]` for a table,
+/// `[StandardListViewItem]` for a list (first column), `[string]` for a combo box.
+fn design_value(kind: &str, rows: &[Vec<String>]) -> slint_interpreter::Value {
+    use slint::{ModelRc, VecModel};
+    use slint_interpreter::{Struct, Value};
+    let item = |t: &str| {
+        let mut s = Struct::default();
+        s.set_field("text".into(), Value::String(t.into()));
+        Value::Struct(s)
+    };
+    let first = |r: &Vec<String>| r.first().cloned().unwrap_or_default();
+    let model = |v: Vec<Value>| Value::Model(ModelRc::new(VecModel::from(v)));
+    match kind {
+        "StandardTableView" => model(
+            rows.iter()
+                .map(|r| model(r.iter().map(|c| item(c)).collect()))
+                .collect(),
+        ),
+        "ComboBox" => model(
+            rows.iter()
+                .map(|r| Value::String(first(r).into()))
+                .collect(),
+        ),
+        _ => model(rows.iter().map(|r| item(&first(r))).collect()),
+    }
+}
+
 /// Renders a component of a `.slint` source on its own, at its preferred size (or
 /// `size`), for screenshots: width, height and straight RGBA pixels.
 pub fn render_component(
@@ -316,7 +350,17 @@ pub fn render_component(
     size: Option<Vec2>,
     scale: f32,
 ) -> Result<(usize, usize, Vec<u8>), String> {
-    render_component_in(source, path, component, style, dark, size, scale, None)
+    render_component_in(
+        source,
+        path,
+        component,
+        style,
+        dark,
+        size,
+        scale,
+        None,
+        Vec::new(),
+    )
 }
 
 /// [`render_component`] in a language: `(translations folder, domain, language)`.
@@ -330,9 +374,11 @@ pub fn render_component_in(
     size: Option<Vec2>,
     scale: f32,
     language: Option<(PathBuf, String, String)>,
+    design_data: Vec<(String, String, Vec<Vec<String>>)>,
 ) -> Result<(usize, usize, Vec<u8>), String> {
     let mut p = Preview {
         language,
+        design_data,
         ..Default::default()
     };
     p.update(source, path, component, style, dark);

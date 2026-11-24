@@ -42,6 +42,9 @@ directories = "=6.0.0"
 chrono = "=0.4.45"
 rfd = "=0.18.0"
 ttf-parser = "=0.25.1"
+# Same as the Toolchain Set: SQLite for perox-ui's data module and the designer.
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled"] }
+tokio = { version = "=1.54.1", features = ["rt"] }
 notify = "=8.2.2"
 similar = "=3.2.1"
 regex = "=1.13.1"

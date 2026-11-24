@@ -1,6 +1,7 @@
 //! The `.slint` documents PeroxIDE's designer edits (ADR 0011). See the crate README.
 
 pub mod codegen;
+pub mod data;
 pub mod edit;
 pub mod i18n;
 pub mod project;

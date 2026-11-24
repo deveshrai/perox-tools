@@ -4,6 +4,7 @@
 //!   `<Name>Handlers` trait and `connect` for each (see `perox_slint::codegen`).
 //! - [`msgbox`]: native message boxes (information, warning, error, OK/Cancel, Yes/No).
 //! - [`dialog`]: show a `.slint` `Dialog` over a window and get the button that closed it.
+//! - [`data`]: tables as list and table models; SQLite queries (feature `sqlite`).
 //!
 //! ```ignore
 //! perox_ui::include_ui!();
@@ -24,6 +25,7 @@
 //! }
 //! ```
 
+pub mod data;
 pub mod dialog;
 pub mod msgbox;
 

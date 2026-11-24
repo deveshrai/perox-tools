@@ -83,6 +83,15 @@ the app starts in the system's language. Agents can do the same with `i18n.*`.
 
 <img src="docs/screenshots/translated-app.png" alt="An app built in PeroxIDE, running in German" width="50%">
 
+**Data-aware tables and lists.** Point the designer at a SQLite file, select a
+`StandardTableView` (or a list or combo box), write a query and press *Bind*. The preview
+shows the real rows and the columns come from the query. The build generates
+`ui.load_people(&db)` for your code, which runs the query with
+`perox_ui::data::Database` (sqlx) and fills the table. `perox_ui::data::Table` also turns
+any rows of text into the models Slint's lists and tables take.
+
+![A table bound to a query, showing live rows in the designer](docs/screenshots/data-bound-table.png)
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`

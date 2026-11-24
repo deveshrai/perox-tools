@@ -26,6 +26,9 @@ pub struct UiSettings {
     pub style: Option<String>,
     /// `light` or `dark`; `None`: follow the system.
     pub color_scheme: Option<String>,
+    /// The SQLite file the designer runs bound queries on to show data while you design
+    /// (relative to the crate root). The app opens its own database at run time.
+    pub database: Option<String>,
 }
 
 impl UiSettings {
@@ -68,6 +71,7 @@ pub fn read(json: &str) -> UiSettings {
     UiSettings {
         style: get("style", STYLES),
         color_scheme: get("color-scheme", COLOR_SCHEMES),
+        database: p["database"].as_str().map(str::to_owned),
     }
 }
 
@@ -94,6 +98,9 @@ pub fn write(json: &str, s: &UiSettings) -> String {
     }
     if let Some(scheme) = &s.color_scheme {
         ours.insert("color-scheme".into(), scheme.clone().into());
+    }
+    if let Some(db) = &s.database {
+        ours.insert("database".into(), db.clone().into());
     }
     if ours.is_empty() {
         meta.remove("peroxide");
@@ -146,6 +153,7 @@ mod tests {
         let s = UiSettings {
             style: Some("fluent".into()),
             color_scheme: Some("dark".into()),
+            database: Some("data/app.db".into()),
         };
         let out = write(TEMPLATE, &s);
         assert_eq!(read(&out), s);
@@ -165,14 +173,14 @@ mod tests {
         let none = UiSettings::default();
         assert_eq!(none.style_for("macos"), None);
         let dark = UiSettings {
-            style: None,
             color_scheme: Some("dark".into()),
+            ..Default::default()
         };
         assert_eq!(dark.style_for("macos").as_deref(), Some("cupertino-dark"));
         assert_eq!(dark.style_for("windows").as_deref(), Some("fluent-dark"));
         let material = UiSettings {
             style: Some("material".into()),
-            color_scheme: None,
+            ..Default::default()
         };
         assert_eq!(material.style_for("linux").as_deref(), Some("material"));
     }

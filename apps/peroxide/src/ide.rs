@@ -319,7 +319,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.screenshot", "Form Screenshot", Access::Execute)
-                .description("Renders a .slint component (the file's main window by default) to a PNG, exactly as Slint draws it, at its natural size or `width`×`height` points. `style` (fluent, cupertino, material, cosmic; default: the app's, else this OS's), `dark` (default: the app's scheme, else light), `scale` (pixels per point, default 2). Saved under target/peroxide/screenshots/ unless `out` (inside the project) is given; returns the path. Uses unsaved edits if the file is open.")
+                .description("Renders a .slint component (the file's main window by default) to a PNG, exactly as Slint draws it, at its natural size or `width`×`height` points. `style` (fluent, cupertino, material, cosmic; default: the app's, else this OS's), `dark` (default: the app's scheme, else light), `scale` (pixels per point, default 2). Saved under target/peroxide/screenshots/ unless `out` (inside the project) is given; returns the path. Uses unsaved edits if the file is open. Tables bound to queries show the design database's rows.")
                 .params(path_schema(json!({
                     "component": { "type": "string" }, "style": { "type": "string" },
                     "dark": { "type": "boolean" }, "scale": { "type": "number", "minimum": 0.5, "maximum": 4 },
@@ -358,7 +358,10 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     let (dir, domain) = perox_designer::translations::location(path.parent().unwrap_or(std::path::Path::new(".")));
                     (dir.join(perox_slint::i18n::DIR), domain, l.to_owned())
                 });
-                let (w, h, rgba) = perox_designer::preview::render_component_in(&text, &path, &component, &style, dark, size, scale, language)
+                let design_data = perox_designer::data::design_database(path.parent().unwrap_or(std::path::Path::new(".")))
+                    .map(|db| perox_designer::data::design_rows(&mut perox_designer::data::Cache::default(), &db, &text, &component))
+                    .unwrap_or_default();
+                let (w, h, rgba) = perox_designer::preview::render_component_in(&text, &path, &component, &style, dark, size, scale, language, design_data)
                     .map_err(|e| err(format!("The form doesn't compile:\n{e}")))?;
                 let root = s.project.as_ref().map(|p| p.root.clone()).ok_or_else(|| err("No project is open."))?;
                 let out = match inv.args["out"].as_str() {
@@ -587,6 +590,98 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 let (new, n) = perox_designer::translations::make_translatable(&text, &comp).map_err(|e| err(e.to_string()))?;
                 apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
                 Ok(json!({ "changed": n }))
+            },
+        ),
+        (
+            CommandSpec::new("data.database", "Design Database", Access::Edit)
+                .description("Gets or sets the SQLite file (relative to the crate root, created if missing) that the designer runs bound queries on, to show data while designing. Kept in ui/slint-project.json. The app opens its own database at run time with perox_ui::data::Database::open.")
+                .params(path_schema(json!({ "file": { "type": "string", "description": "e.g. data/app.db; omit to read" } }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+                let mut ui_settings = perox_slint::project::settings_for(&dir);
+                if let Some(f) = inv.args["file"].as_str() {
+                    let root = perox_designer::data::crate_root(&dir).ok_or_else(|| err("No Cargo.toml above the form."))?;
+                    let full = normalize(&root.join(f));
+                    if !full.starts_with(&root) {
+                        return Err(err("The database must be inside the project."));
+                    }
+                    if let Some(d) = full.parent() {
+                        std::fs::create_dir_all(d).map_err(|e| err(e.to_string()))?;
+                    }
+                    perox_ui::data::Database::open(&format!("sqlite:{}", full.display())).map_err(|e| err(e.to_string()))?;
+                    ui_settings.database = Some(f.to_owned());
+                    let file = perox_slint::project::find(&dir).unwrap_or_else(|| dir.join(perox_slint::project::FILE_NAME));
+                    let old = std::fs::read_to_string(&file).unwrap_or_default();
+                    std::fs::write(&file, perox_slint::project::write(&old, &ui_settings)).map_err(|e| err(e.to_string()))?;
+                    for d in s.docs.list.iter_mut() {
+                        if let Some(des) = d.designer.as_mut() {
+                            let _ = des.set_app_ui(&ui_settings);
+                        }
+                    }
+                }
+                Ok(json!({ "database": ui_settings.database }))
+            },
+        ),
+        (
+            CommandSpec::new("data.query", "Query Design Database", Access::Read)
+                .description("Runs a SELECT on the design database (data.database) and returns its columns and up to 200 rows as text.")
+                .params(path_schema(json!({ "sql": { "type": "string" } }))),
+            |s, inv| {
+                let db = design_db(s, inv)?;
+                let t = db.query(inv.str_arg("sql")?).map_err(|e| err(e.to_string()))?;
+                let total = t.len();
+                Ok(json!({ "columns": t.columns, "rows": t.rows.into_iter().take(200).collect::<Vec<_>>(), "total": total }))
+            },
+        ),
+        (
+            CommandSpec::new("data.execute", "Change Design Database", Access::Execute)
+                .description("Runs SQL that changes the design database (CREATE TABLE, INSERT, …; several statements are fine) and returns the rows changed.")
+                .params(path_schema(json!({ "sql": { "type": "string" } }))),
+            |s, inv| {
+                let db = design_db(s, inv)?;
+                let n = db.execute(inv.str_arg("sql")?).map_err(|e| err(e.to_string()))?;
+                Ok(json!({ "changed": n }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.bind_query", "Bind to Query", Access::Edit)
+                .description("Binds a StandardTableView, StandardListView or ComboBox to a SQL query: exposes its data (<id>_rows / <id>_model), declares `<id>_query`, writes a table's columns from the query's, and turns on perox-ui's sqlite feature. The build then generates `<Window>::load_<id>(&db)`, which runs the query and fills the widget. The designer shows the rows from the design database.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "sql": { "type": "string" }
+                }))),
+            |s, inv| {
+                let (id, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let wpath = widget_path(&doc, &comp, inv.str_arg("widget")?)?;
+                let sql = inv.str_arg("sql")?;
+                let columns = design_db(s, inv).ok().and_then(|db| db.query(sql).ok()).map(|t| t.columns);
+                let new = perox_designer::data::bind(&text, &comp, &wpath, sql, columns.as_deref()).map_err(|e| err(e.to_string()))?;
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
+                let path = resolve(s, inv, "path")?;
+                let mut cargo = None;
+                if let Some(root) = perox_designer::data::crate_root(path.parent().unwrap_or(std::path::Path::new("."))) {
+                    let f = root.join("Cargo.toml");
+                    if let Ok(t) = std::fs::read_to_string(&f)
+                        && let Some(n) = perox_designer::data::with_sqlite_feature(&t)
+                    {
+                        std::fs::write(&f, n).map_err(|e| err(e.to_string()))?;
+                        cargo = Some("perox-ui feature sqlite turned on");
+                    }
+                }
+                let new_doc = perox_slint::parse(&new);
+                let b = new_doc.component(&comp).map(|c| perox_slint::data::bindings(c, Some(&new))).unwrap_or_default();
+                let bound = b.iter().find(|b| new_doc.component(&comp).and_then(|c| c.find(&b.id)) == Some(wpath.clone()));
+                Ok(json!({
+                    "query_property": bound.map(|b| &b.query_property),
+                    "data_property": bound.map(|b| &b.data_property),
+                    "load_method": bound.map(|b| format!("load_{}", b.id.replace('-', "_"))),
+                    "columns": columns,
+                    "cargo": cargo
+                }))
             },
         ),
         (
@@ -1542,6 +1637,22 @@ fn relayout_command(
 }
 
 /// Opens a `.slint` file (keeping the current view) and returns it with its text.
+/// The design database of the form at `path` (data.database).
+fn design_db(s: &mut AppState, inv: &Invocation) -> Result<perox_ui::data::Database, CommandError> {
+    let path = resolve(s, inv, "path")?;
+    let dir = path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    let db = perox_slint::project::settings_for(&dir)
+        .database
+        .ok_or_else(|| err("No design database: data.database first."))?;
+    let root = perox_designer::data::crate_root(&dir)
+        .ok_or_else(|| err("No Cargo.toml above the form."))?;
+    perox_ui::data::Database::open(&format!("sqlite:{}", root.join(db).display()))
+        .map_err(|e| err(e.to_string()))
+}
+
 fn form_text(s: &mut AppState, inv: &Invocation) -> Result<(DocId, String), CommandError> {
     let path = resolve(s, inv, "path")?;
     if !crate::docs::is_form(&path) {

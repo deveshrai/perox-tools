@@ -63,8 +63,8 @@ step_in, step_out, pause, stop, state, select_frame, variables, evaluate, consol
 toggle_breakpoint, breakpoints, clear_breakpoints),
 `git.*` (status, diff, stage, unstage, discard, commit, branches, switch, log, show, fetch, pull, push), `designer.*` (tree,
 add_widget, set_property, remove_widget, move_widget, set_handler, go_to_handler, expose,
-select, open_handler, break_layout, lay_out, screenshot, actions, set_action, use_action, resources, add_resource, app_style, make_translatable), `i18n.*` (strings, add_language,
-translate), `form.new` (a new window or dialog),
+select, open_handler, break_layout, lay_out, screenshot, actions, set_action, use_action, resources, add_resource, app_style, make_translatable, bind_query), `i18n.*` (strings, add_language,
+translate), `data.*` (database, query, execute), `form.new` (a new window or dialog),
 `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.
 
 Designer commands edit the open `.slint` document the same way the designer does. They

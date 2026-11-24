@@ -9,6 +9,7 @@
 
 pub mod actions;
 pub mod catalog;
+pub mod data;
 pub mod drop;
 pub mod free;
 pub mod keys;
@@ -125,6 +126,10 @@ pub struct Designer {
     pending_import: Option<(Option<String>, String)>,
     /// The Translations window.
     pub translations: translations::Editor,
+    /// Bound queries' results, for showing data while designing.
+    data_cache: data::Cache,
+    /// What the last Run in the Data section gave.
+    data_status: Option<String>,
     /// Preview the form in this language (`None`: as written).
     pub preview_lang: Option<String>,
     /// The app's style settings, and when they were read.
@@ -1025,6 +1030,130 @@ impl Designer {
     // ---- canvas ----
 
     /// The source with live (being-dragged) values applied, for the preview.
+    /// The app's design-time database file, if one is set.
+    fn database_file(&self) -> Option<PathBuf> {
+        let db = self.app_ui().database?;
+        Some(data::crate_root(&self.form_dir())?.join(db))
+    }
+
+    /// Results of the component's bound queries, as the preview shows them.
+    fn design_data(&mut self, source: &str) -> Vec<(String, String, Vec<Vec<String>>)> {
+        let comp = self.component_name();
+        let Some(db) = self.database_file() else {
+            return Vec::new();
+        };
+        data::design_rows(&mut self.data_cache, &db, source, &comp)
+    }
+
+    /// The Data section of a list, table or combo box: the database, the query, Run and
+    /// Bind.
+    fn data_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Component,
+        el: &Element,
+        path: &[usize],
+        source: &str,
+        actions: &mut Vec<Action>,
+    ) {
+        let bound = el.id.as_deref().and_then(|id| {
+            perox_slint::data::bindings(c, Some(source))
+                .into_iter()
+                .find(|b| b.id == id)
+        });
+        ui.horizontal(|ui| {
+            label_cell(ui, RichText::new("Database"))
+                .on_hover_text("A SQLite file the designer reads to show data while you design");
+            let shown = self
+                .app_ui()
+                .database
+                .clone()
+                .unwrap_or_else(|| "none".into());
+            ui.label(RichText::new(shown).monospace());
+            if ui.button("Choose…").clicked()
+                && let Some(root) = data::crate_root(&self.form_dir())
+                && let Some(file) = rfd::FileDialog::new()
+                    .add_filter("SQLite", &["db", "sqlite", "sqlite3"])
+                    .set_directory(&root)
+                    .pick_file()
+            {
+                match resources::relative(&root, &file) {
+                    Some(rel) => {
+                        let mut s = self.app_ui();
+                        s.database = Some(rel);
+                        if let Err(e) = self.set_app_ui(&s) {
+                            self.error = Some(e.to_string());
+                        }
+                    }
+                    None => self.error = Some("Pick a database inside the project".into()),
+                }
+            }
+        });
+        let key = format!("{path:?}/#sql");
+        let initial = bound
+            .as_ref()
+            .and_then(|b| b.sql.clone())
+            .unwrap_or_default();
+        let buf = self.buffers.entry(key.clone()).or_insert(initial);
+        ui.add(
+            egui::TextEdit::multiline(buf)
+                .code_editor()
+                .desired_rows(3)
+                .desired_width(f32::INFINITY)
+                .hint_text("SELECT name, email FROM people"),
+        );
+        let sql = buf.trim().to_owned();
+        ui.horizontal(|ui| {
+            let can = !sql.is_empty();
+            let run = ui.add_enabled(can, egui::Button::new("Run"));
+            let bind = ui
+                .add_enabled(can, egui::Button::new(if bound.is_some() { "Update" } else { "Bind" }))
+                .on_hover_text("Show this query's rows here: adds a load_<name>(&db) method to the window for your code");
+            let result = (run.clicked() || bind.clicked())
+                .then(|| match self.database_file() {
+                    Some(db) => self.data_cache.run(&db, &sql),
+                    None => Err("Choose a database first".into()),
+                });
+            if let Some(r) = &result {
+                self.data_status = Some(match r {
+                    Ok(t) => format!("{} rows: {}", t.len(), t.columns.join(", ")),
+                    Err(e) => e.clone(),
+                });
+            }
+            if bind.clicked() {
+                let cols = result.as_ref().and_then(|r| r.as_ref().ok()).map(|t| t.columns.clone());
+                let r = data::bind(source, &c.name, path, &sql, cols.as_deref());
+                if self.apply_text(actions, source, r) {
+                    self.buffers.remove(&key);
+                    self.enable_sqlite();
+                }
+            }
+        });
+        if let Some(s) = &self.data_status {
+            ui.weak(s);
+        }
+        if let Some(b) = &bound {
+            ui.weak(format!(
+                "In code: ui.load_{}(&db) fills it (perox_ui::data::Database).",
+                b.id.replace('-', "_")
+            ));
+        }
+    }
+
+    /// Turns on perox-ui's `sqlite` feature in the project's Cargo.toml.
+    fn enable_sqlite(&mut self) {
+        let Some(root) = data::crate_root(&self.form_dir()) else {
+            return;
+        };
+        let file = root.join("Cargo.toml");
+        if let Ok(text) = std::fs::read_to_string(&file)
+            && let Some(new) = data::with_sqlite_feature(&text)
+            && let Err(e) = std::fs::write(&file, new)
+        {
+            self.error = Some(format!("Couldn't update Cargo.toml: {e}"));
+        }
+    }
+
     /// The language menu: preview in a translation, open the Translations window, make
     /// the form's text translatable.
     fn language_menu(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
@@ -1289,6 +1418,7 @@ impl Designer {
         };
         let style = self.style();
         let dark = self.preview_dark(ui.visuals().dark_mode);
+        self.preview.design_data = self.design_data(&shown);
         self.preview.language = self.preview_lang.as_ref().map(|l| {
             let (dir, domain) = translations::location(&self.form_dir());
             (dir.join(perox_slint::i18n::DIR), domain, l.clone())
@@ -1926,6 +2056,11 @@ impl Designer {
 
         self.menu_buttons(ui, &el, &path, source, actions);
         self.action_rows(ui, &c, &el, &path, source, actions);
+        if perox_slint::data::target(&el.kind).is_some() {
+            egui::CollapsingHeader::new("Data")
+                .default_open(true)
+                .show(ui, |ui| self.data_rows(ui, &c, &el, &path, source, actions));
+        }
         let known: Vec<PropSpec> = spec.map(|k| k.props.to_vec()).unwrap_or_default();
         ui.add_space(4.0);
         if !known.is_empty() {

@@ -123,6 +123,17 @@ fn dialog_exec(c: &Component) -> String {
 /// Handlers trait and `connect` for one component (and `exec` for a dialog); `None` if
 /// there's nothing to generate.
 pub fn component_handlers(c: &Component) -> Option<String> {
+    let handlers = callback_handlers(c);
+    let loaders = crate::data::loaders(c);
+    match (handlers, loaders) {
+        (None, None) => None,
+        (Some(h), None) => Some(h),
+        (None, Some(l)) => Some(l),
+        (Some(h), Some(l)) => Some(format!("{h}\n{l}")),
+    }
+}
+
+fn callback_handlers(c: &Component) -> Option<String> {
     let dialog = (c.root.kind == "Dialog").then(|| dialog_exec(c));
     if c.callbacks.is_empty() {
         return dialog;
