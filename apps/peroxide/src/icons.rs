@@ -65,6 +65,7 @@ pub fn for_command(id: &str) -> Icon {
         "designer.actions" => Icon::ListChecks,
         "designer.resources" => Icon::FileImage,
         "designer.app_style" => Icon::Paintbrush,
+        "designer.tab_order" => Icon::Keyboard,
         "designer.bind_query" => Icon::Table,
         "data.database" => Icon::Table,
         "data.query" => Icon::Table,

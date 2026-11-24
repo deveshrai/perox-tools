@@ -689,6 +689,42 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             },
         ),
         (
+            CommandSpec::new("designer.tab_order", "Tab Order", Access::Edit)
+                .description("The focusable widgets in tab order (Slint uses the order of the .slint file), or with `widget` and `move` (\"earlier\" / \"later\"), moves one a place. Moving works within a freely placed container (nothing moves on screen); in a layout the tab order is the layout's order, so it says so instead.")
+                .params(path_schema(json!({
+                    "component": { "type": "string" },
+                    "widget": json!({ "type": "string", "description": "Element id, or a path like #0.1 (# is the component root)" }),
+                    "move": { "type": "string", "enum": ["earlier", "later"] },
+                    "show": { "type": "boolean", "description": "Number the widgets on the designer's canvas (or stop)" }
+                }))),
+            |s, inv| {
+                let (id, mut text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                if let (Some(w), Some(m)) = (inv.args["widget"].as_str(), inv.args["move"].as_str()) {
+                    let path = widget_path(&doc, &comp, w)?;
+                    let (new, _) = perox_designer::taborder::step(&text, &comp, &path, m == "earlier").map_err(err)?;
+                    apply_form_edits(s, id, perox_slint::edit::diff(&text, &new));
+                    text = new;
+                }
+                if let Some(show) = inv.args["show"].as_bool()
+                    && let Some(d) = s.docs.get_mut(id).and_then(|d| d.designer.as_mut())
+                {
+                    d.show_tab_order = show;
+                }
+                let doc = perox_slint::parse(&text);
+                let c = doc.component(&comp).ok_or_else(|| err("No such component."))?;
+                let order: Vec<_> = perox_designer::taborder::order(c)
+                    .iter()
+                    .map(|p| {
+                        let el = c.at(p);
+                        json!({ "path": path_key(p), "id": el.and_then(|e| e.id.clone()), "kind": el.map(|e| e.kind.clone()) })
+                    })
+                    .collect();
+                Ok(json!({ "order": order }))
+            },
+        ),
+        (
             CommandSpec::new("designer.resources", "Form Resources", Access::Read)
                 .description("Images in a .slint file's folder (paths for @image-url, relative to the file) and the fonts it imports, with their family names.")
                 .params(path_schema(json!({}))),

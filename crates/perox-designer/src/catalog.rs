@@ -563,6 +563,23 @@ pub fn slint_type(spec: &PropSpec) -> Option<&'static str> {
     })
 }
 
+/// The Slint enum a choice property takes (`input-type` → `InputType`), for writing a
+/// value qualified when a bare one would name an element instead.
+pub fn enum_type(prop: &str) -> Option<&'static str> {
+    Some(match prop {
+        "input-type" => "InputType",
+        "horizontal-alignment" => "TextHorizontalAlignment",
+        "vertical-alignment" => "TextVerticalAlignment",
+        "wrap" => "TextWrap",
+        "overflow" => "TextOverflow",
+        "image-fit" => "ImageFit",
+        "alignment" => "LayoutAlignment",
+        "mouse-cursor" => "MouseCursor",
+        "kind" => "StandardButtonKind",
+        _ => return None,
+    })
+}
+
 /// Properties Slint lets you bind but not alias with `<=>` (`Path.commands`): using them
 /// from code means binding them to a root property instead.
 pub fn binding_only(kind: &str, prop: &str) -> bool {

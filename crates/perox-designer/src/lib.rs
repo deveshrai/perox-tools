@@ -15,6 +15,7 @@ pub mod free;
 pub mod keys;
 pub mod preview;
 pub mod resources;
+pub mod taborder;
 pub mod translations;
 
 use std::collections::HashMap;
@@ -136,6 +137,8 @@ pub struct Designer {
     data_cache: data::Cache,
     /// What the last Run in the Data section gave.
     data_status: Option<String>,
+    /// Number the focusable widgets in tab order on the canvas.
+    pub show_tab_order: bool,
     /// Preview the form in this language (`None`: as written).
     pub preview_lang: Option<String>,
     /// The app's style settings, and when they were read.
@@ -702,6 +705,19 @@ impl Designer {
             };
             if icon_button(ui, icon, tip).clicked() {
                 self.dark = Some(!dark);
+            }
+            let r = ui
+                .add(
+                    egui::Button::image(if self.show_tab_order {
+                        Icon::Keyboard.image(ui)
+                    } else {
+                        Icon::Keyboard.faded(ui)
+                    })
+                    .selected(self.show_tab_order),
+                )
+                .on_hover_text("Tab order: number the widgets in the order Tab moves through them");
+            if r.clicked() {
+                self.show_tab_order = !self.show_tab_order;
             }
             self.app_style_menu(ui);
             self.language_menu(ui, source, actions);
@@ -1522,6 +1538,9 @@ impl Designer {
             self.layout.window = Some(window);
 
             self.overlays(ui, content, &c, &rects);
+            if self.show_tab_order {
+                tab_badges(ui, &c, &rects);
+            }
             self.pointer(ui, content, &rects);
             self.drop_onto(ui, content, &rects, source, actions);
             self.resize_widget(ui, source, actions);
@@ -2124,6 +2143,33 @@ impl Designer {
 
         self.menu_buttons(ui, &el, &path, source, actions);
         self.action_rows(ui, &c, &el, &path, source, actions);
+        if taborder::focusable(&el.kind) {
+            let list = taborder::order(&c);
+            if let Some(i) = list.iter().position(|p| *p == path) {
+                ui.horizontal(|ui| {
+                    label_cell(ui, RichText::new("Tab order")).on_hover_text(
+                        "Where Tab brings this widget: the order of the .slint file",
+                    );
+                    ui.label(format!("{} of {}", i + 1, list.len()));
+                    for (up, icon, tip) in [
+                        (true, Icon::ArrowUp, "Earlier in the tab order"),
+                        (false, Icon::ArrowDown, "Later in the tab order"),
+                    ] {
+                        if small_icon_button(ui, icon, tip).clicked() {
+                            match taborder::step(source, &c.name, &path, up) {
+                                Ok((text, new)) => {
+                                    if self.apply_text(actions, source, Ok(text)) {
+                                        self.selected = Some(new);
+                                        self.show_tab_order = true;
+                                    }
+                                }
+                                Err(e) => self.error = Some(e),
+                            }
+                        }
+                    }
+                });
+            }
+        }
         if perox_slint::data::target(&el.kind).is_some() {
             egui::CollapsingHeader::new("Data")
                 .default_open(true)
@@ -2404,7 +2450,14 @@ impl Designer {
                     r.on_hover_text(spec.help);
                 }
                 self.expose_toggle(ui, comp, el, path, spec, source, actions);
-                if let Some(v) = self.value_editor(ui, path, spec, value.as_ref()) {
+                if let Some(mut v) = self.value_editor(ui, path, spec, value.as_ref()) {
+                    // `password` would name an element called `password`: qualify it.
+                    if matches!(spec.kind, PropKind::Choice(_))
+                        && let Some(ty) = catalog::enum_type(&spec.name)
+                        && self.current().is_some_and(|c| c.find(&v).is_some())
+                    {
+                        v = format!("{ty}.{v}");
+                    }
                     match self.pending_import.take() {
                         // A new font: the property and its `import` in one undo step.
                         Some((name, from)) => {
@@ -3163,6 +3216,27 @@ pub fn unique_id(c: &Component, base: &str) -> String {
         .map(|n| format!("{base}{n}"))
         .find(|id| c.find(id).is_none())
         .unwrap_or_else(|| base.to_owned())
+}
+
+/// Numbered badges on the focusable widgets, in tab order.
+fn tab_badges(ui: &egui::Ui, c: &Component, rects: &[(Vec<usize>, Rect)]) {
+    let accent = ui.visuals().selection.bg_fill;
+    let font = egui::FontId::proportional(11.0);
+    for (n, path) in taborder::order(c).iter().enumerate() {
+        let Some((_, r)) = rects.iter().find(|(p, _)| p == path) else {
+            continue;
+        };
+        let center = r.left_top() + vec2(9.0, 9.0);
+        ui.painter()
+            .circle(center, 8.5, accent, Stroke::new(1.0, Color32::WHITE));
+        ui.painter().text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            (n + 1).to_string(),
+            font.clone(),
+            Color32::WHITE,
+        );
+    }
 }
 
 /// An element of the base form in the Objects tree: shown, not selectable.

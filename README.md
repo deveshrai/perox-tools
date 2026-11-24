@@ -101,6 +101,13 @@ component's own properties and events, so the new form passes the base's on as
 
 ![A form inheriting MainWindow, with a label of its own](docs/screenshots/inherited-form.png)
 
+**Tab order.** The keyboard button in the designer's toolbar numbers the widgets in the
+order Tab moves through them, which in Slint is the order of the `.slint` file. A selected
+widget's *Tab order* row moves it earlier or later. In a freely placed window that changes
+nothing on screen; in a layout the order *is* the layout, so the designer says so instead.
+
+![Tab order numbers on a login form](docs/screenshots/tab-order.png)
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`
