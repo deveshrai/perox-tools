@@ -1,0 +1,296 @@
+import { Button, HorizontalBox, LineEdit, VerticalBox, Spinner, StandardTableView } from "std-widgets.slint";
+import { WatchRow } from "parts/watch_row.slint";
+import { Segmented } from "parts/segmented.slint";
+import { Card } from "parts/card.slint";
+import { StatTile } from "parts/stat_tile.slint";
+
+// One row of the watchlist.
+export struct WatchItem { symbol: string, company: string, price: string, change: string, up: bool }
+
+// The main window. Design it in PeroxIDE (Design tab) or edit it here.
+export component MainWindow inherits Window {
+    title: "Stock Dashboard";
+    preferred-width: 1180px;
+    preferred-height: 780px;
+
+    // What the Rust code reads and writes.
+
+    callback about_clicked();
+    callback watch_clicked(index: int);
+    callback search_accepted(text: string);
+    callback range_picked(index: int);
+    callback link_clicked(index: int);
+    in-out property <[WatchItem]> watchlist: [{ symbol: "AAPL", company: "Apple", price: "351.72", change: "+2.64 (+0.76%)", up: true }, { symbol: "MSFT", company: "Microsoft", price: "497.81", change: "+5.31 (+1.08%)", up: true }, { symbol: "NVDA", company: "NVIDIA", price: "151.34", change: "-13.71 (-8.31%)", up: false }];
+    in-out property <int> selected: -1;
+    in-out property <string> company: "Pick a stock";
+    in-out property <string> meta: "Search a ticker or choose one from the watchlist";
+    in-out property <string> price: "";
+    in-out property <string> change: "";
+    in-out property <bool> up: true;
+    in-out property <string> status: "";
+    in-out property <bool> busy: false;
+    in-out property <string> chart_line: "";
+    in-out property <string> chart_area: "";
+    in-out property <string> chart_low: "";
+    in-out property <string> chart_high: "";
+    in-out property <string> open_text: "—";
+    in-out property <string> day_range: "—";
+    in-out property <string> year_range: "—";
+    in-out property <string> volume: "—";
+    in-out property <string> details: "";
+    in-out property <[bool]> links: [false, false, false, false];
+    in-out property <[[StandardListViewItem]]> history_rows <=> history.rows;
+    background: #0e1117;
+
+    shell := HorizontalLayout {
+        sidebar := Rectangle {
+            background: #12151c;
+            border-width: 0px;
+            width: 260px;
+            side := VerticalLayout {
+                padding: 18px;
+                spacing: 14px;
+                brand := HorizontalLayout {
+                    alignment: start;
+                    spacing: 10px;
+                    logo := Image {
+                        colorize: #4c8dff;
+                        height: 24px;
+                        source: @image-url("images/chart-candlestick.svg");
+                        width: 24px;
+                    }
+                    Text {
+                        color: #e8ebf1;
+                        font-size: 19px;
+                        font-weight: 700;
+                        text: "Markets";
+                        vertical-alignment: center;
+                    }
+                }
+                search := LineEdit { placeholder-text: "Search a ticker, e.g. NVDA"; accepted(text) => { root.search_accepted(text); } }
+                Text {
+                    color: #6b7487;
+                    font-size: 11px;
+                    font-weight: 700;
+                    text: "WATCHLIST";
+                }
+                watch := VerticalLayout {
+                    alignment: start;
+                    spacing: 4px;
+                    vertical-stretch: 1;
+                    for item[i] in root.watchlist : watch_row := WatchRow {
+                        change: item.change;
+                        company: item.company;
+                        price: item.price;
+                        selected: i == root.selected;
+                        symbol: item.symbol;
+                        up: item.up;
+                        clicked => { root.watch_clicked(i); }
+                    }
+                }
+                about := Button { text: "About"; clicked => { root.about_clicked(); } }
+            }
+        }
+        main := VerticalLayout {
+            horizontal-stretch: 1;
+            padding: 26px;
+            spacing: 18px;
+            header := HorizontalLayout {
+                alignment: space-between;
+                spacing: 16px;
+                title_block := VerticalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    company_label := Text {
+                        color: #e8ebf1;
+                        font-size: 26px;
+                        font-weight: 700;
+                        text: root.company;
+                    }
+                    meta_label := Text {
+                        color: #8b95a7;
+                        font-size: 13px;
+                        text: root.meta;
+                    }
+                }
+                price_block := VerticalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    price_label := Text {
+                        color: #e8ebf1;
+                        font-size: 32px;
+                        font-weight: 700;
+                        horizontal-alignment: right;
+                        text: root.price;
+                    }
+                    pill_row := HorizontalLayout {
+                        alignment: end;
+                        change_pill := Rectangle {
+                            background: root.up ? #3ecf8e26 : #f26d6d26;
+                            border-radius: 8px;
+                            border-width: 0px;
+                            visible: root.change != "";
+                            horizontal_layout1 := HorizontalLayout {
+                                padding-bottom: 4px;
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                padding-top: 4px;
+                                change_label := Text {
+                                    color: root.up ? #3ecf8e : #f26d6d;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    text: root.change;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            toolbar := HorizontalLayout {
+                spacing: 14px;
+                range := Segmented { current: 2; picked(index) => { root.range_picked(index); } }
+                spinner := Spinner {
+                    indeterminate: true;
+                    visible: root.busy;
+                    width: 22px;
+                }
+                status_label := Text {
+                    color: #6b7487;
+                    font-size: 12px;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    text: root.status;
+                    vertical-alignment: center;
+                }
+            }
+            chart_card := Card {
+                title: "CLOSING PRICE";
+                vertical-stretch: 2;
+                chart := Rectangle {
+                    border-width: 0px;
+                    min-height: 200px;
+                    vertical-stretch: 1;
+                    chart_fill := Path {
+                        commands: root.chart_area;
+                        fill: @linear-gradient(180deg, #4c8dff59 0%, #4c8dff00 100%);
+                        height: parent.height;
+                        stroke-width: 0px;
+                        viewbox-height: 100;
+                        viewbox-width: 1000;
+                        width: parent.width;
+                        fit: fill;
+                    }
+                    chart_stroke := Path {
+                        commands: root.chart_line;
+                        height: parent.height;
+                        stroke: #4c8dff;
+                        stroke-width: 2px;
+                        viewbox-height: 100;
+                        viewbox-width: 1000;
+                        width: parent.width;
+                        fit: fill;
+                    }
+                }
+                chart_scale := HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        color: #6b7487;
+                        font-size: 11px;
+                        text: root.chart_low;
+                    }
+                    Text {
+                        color: #6b7487;
+                        font-size: 11px;
+                        text: root.chart_high;
+                    }
+                }
+            }
+            stats := HorizontalLayout {
+                spacing: 12px;
+                stat_tile1 := StatTile {
+                    horizontal-stretch: 1;
+                    label: "Open";
+                    value: root.open_text;
+                }
+                stat_tile2 := StatTile {
+                    horizontal-stretch: 1;
+                    label: "Day range";
+                    value: root.day_range;
+                }
+                stat_tile3 := StatTile {
+                    horizontal-stretch: 1;
+                    label: "52-week range";
+                    value: root.year_range;
+                }
+                stat_tile4 := StatTile {
+                    horizontal-stretch: 1;
+                    label: "Volume";
+                    value: root.volume;
+                }
+            }
+            bottom := HorizontalLayout {
+                spacing: 16px;
+                vertical-stretch: 3;
+                history_card := Card {
+                    horizontal-stretch: 4;
+                    title: "DAILY HISTORY";
+                    history := StandardTableView {
+                        columns: [{ title: "Date", min-width: 96px }, { title: "Open", min-width: 66px }, { title: "High", min-width: 66px }, { title: "Low", min-width: 66px }, { title: "Close", min-width: 66px }, { title: "Volume", min-width: 84px }];
+                        rows: [];
+                        vertical-stretch: 1;
+                    }
+                }
+                company_card := Card {
+                    horizontal-stretch: 2;
+                    title: "COMPANY";
+                    details_label := Text {
+                        color: #c5ccd8;
+                        font-size: 13px;
+                        text: root.details;
+                        vertical-stretch: 1;
+                        wrap: word-wrap;
+                    }
+                    link_grid := GridLayout {
+                        spacing: 8px;
+                        yahoo_link := Button {
+                            col: 0;
+                            colorize-icon: true;
+                            enabled: root.links[0];
+                            icon: @image-url("images/external-link.svg");
+                            row: 0;
+                            text: "Yahoo Finance";
+                            clicked => { root.link_clicked(0); }
+                        }
+                        sec_link := Button {
+                            col: 1;
+                            colorize-icon: true;
+                            enabled: root.links[1];
+                            icon: @image-url("images/external-link.svg");
+                            row: 0;
+                            text: "SEC filings";
+                            clicked => { root.link_clicked(1); }
+                        }
+                        report_link := Button {
+                            col: 0;
+                            colorize-icon: true;
+                            enabled: root.links[2];
+                            icon: @image-url("images/external-link.svg");
+                            row: 1;
+                            text: "Annual report";
+                            clicked => { root.link_clicked(2); }
+                        }
+                        site_link := Button {
+                            col: 1;
+                            colorize-icon: true;
+                            enabled: root.links[3];
+                            icon: @image-url("images/external-link.svg");
+                            row: 1;
+                            text: "Website";
+                            clicked => { root.link_clicked(3); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

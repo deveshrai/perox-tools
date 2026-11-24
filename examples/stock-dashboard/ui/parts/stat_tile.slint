@@ -1,0 +1,24 @@
+import { VerticalBox } from "std-widgets.slint";
+
+// A reusable part: drop it on any form from the designer's palette (This project).
+export component StatTile inherits Rectangle {
+    in property <string> label: "Label";
+    in property <string> value: "—";
+    background: #171b23;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: #ffffff12;
+    // What forms set on it.
+
+    VerticalBox {
+        padding: 14px;
+        spacing: 4px;
+        Text { text: root.label; color: #8b95a7; font-size: 12px; }
+        Text {
+            color: #e8ebf1;
+            font-size: 18px;
+            font-weight: 600;
+            text: root.value;
+        }
+    }
+}

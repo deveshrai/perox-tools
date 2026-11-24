@@ -1,0 +1,10 @@
+{
+  "edition": "1.19",
+  "main": "app.slint",
+  "metadata": {
+    "peroxide": {
+      "color-scheme": "dark",
+      "style": "fluent"
+    }
+  }
+}

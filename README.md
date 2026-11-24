@@ -9,7 +9,7 @@ Targets: **milestone 1 is desktop: macOS, Linux and Windows.** Android comes lat
 At that point the IDE itself will run on Android tablets and build installable APKs on
 the device.
 
-> Status: **Phases 1, 2 and 3 are done; forms use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
+> Status: **Phases 1 to 4 are done; forms use [Slint](https://slint.dev)** ([ADR 0011](docs/adr/0011-slint-for-user-apps.md)).
 > A real Rust IDE with rust-analyzer, a form designer for `.slint` files, a debugger, a
 > Test Explorer, full git, and clippy and rustfmt built in. **File → New GUI App** gives
 > you a native-looking window to design, a button wired to Rust code, an About dialog,
@@ -175,6 +175,23 @@ cargo run -p stock-viewer -- MSFT
 ```
 
 ![Stock Viewer, a sample built in PeroxIDE](examples/stock-viewer/docs/app-aapl.png)
+
+## Sample app: Stock Dashboard
+
+[examples/stock-dashboard](examples/stock-dashboard) is the same idea redesigned the way
+Slint apps usually look: a dark window with a sidebar watchlist of live prices, a
+gradient-filled chart, stat tiles and rounded cards. It's built from four components made
+in the designer (Card, StatTile, a segmented range picker, a watchlist row) and dropped
+onto the window from the palette, again by Claude Code over MCP using only the IDE's
+tools. Building it found seven gaps in the designer (components taking content, `for` and
+`if`, declaring properties and callbacks, handlers with code, and more), each fixed in
+PeroxIDE first. [BUILDING.md](examples/stock-dashboard/BUILDING.md) has the record.
+
+```sh
+cargo run -p stock-dashboard
+```
+
+![Stock Dashboard, a sample built in PeroxIDE](examples/stock-dashboard/docs/app-aapl.png)
 
 ## Build and run
 

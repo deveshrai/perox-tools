@@ -120,7 +120,7 @@ Every part is checked three ways before it's ticked: automated tests, a live run
 driven over MCP (with screenshots), and CI. The Windows CI job is paused for now, so the
 CI leg covers macOS and Linux; Windows needs another pass before a Windows release.
 
-### Phase 4: RAD depth
+### Phase 4: RAD depth ✅ (2026-11-24)
 Third-party components and the preview host, non-visual components, menus, actions and
 toolbars, resources, themes, i18n, model/view and data-aware controls (sqlx), form
 inheritance, tab order. Each part uses what Slint 1.19 already has, so the result is plain
@@ -138,7 +138,14 @@ inheritance, tab order. Each part uses what Slint 1.19 already has, so the resul
 | Form inheritance: new form from an existing one; inherited elements shown, not editable; base properties settable; base events and properties passed on to Rust | `inherits` | ✅ |
 | Tab order: show the focus order on the canvas and change it | element order | ✅ |
 | Component libraries: New Component…, the project's own components and `.slint` libraries in the palette, their properties in the inspector | `import`, library paths | ✅ |
-| Windows pass: CI back on, fixes | | |
+| Windows pass: CI back on (macOS, Linux and Windows green), paths without `\\?\` for git and cargo, CRLF-safe edits | | ✅ |
+
+Then a second sample: [Stock Dashboard](../examples/stock-dashboard), the Stock Viewer
+redesigned the way Slint apps usually look, built by Claude Code over MCP with the IDE's
+tools only ([how](../examples/stock-dashboard/BUILDING.md)). It found seven gaps, all fixed:
+components taking content (`@children`), `for` and `if` elements, setting a component's
+own properties, declaring and removing properties and callbacks, handlers with `.slint`
+code, `fit` for paths, and expressions shown as empty values in the inspector.
 
 Components written in `.slint` run in the designer's own preview. Components with Rust code
 behind them (the out-of-process preview host of [ADR 0008](adr/0008-preview-host.md)) are

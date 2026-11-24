@@ -1,0 +1,21 @@
+import { VerticalBox } from "std-widgets.slint";
+
+// A reusable part: drop it on any form from the designer's palette (This project).
+export component Card inherits Rectangle {
+    // What forms set on it.
+    in property <string> title: "";
+    background: #171b23;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: #ffffff12;
+    drop-shadow-blur: 20px;
+    drop-shadow-color: #00000050;
+    drop-shadow-offset-y: 4px;
+
+    VerticalBox {
+        padding: 18px;
+        spacing: 12px;
+        if root.title != "" : Text { text: root.title; color: #8b95a7; font-size: 12px; font-weight: 600; }
+        @children
+    }
+}
