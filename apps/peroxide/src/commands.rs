@@ -70,7 +70,15 @@ impl AppState {
             tree: None,
             docs: Docs::default(),
             active_doc: None,
-            lsp: Lsp::new(ctx.clone()),
+            lsp: {
+                let mut lsp = Lsp::new(ctx.clone());
+                lsp.check_command = if settings.plain_check_on_save {
+                    "check"
+                } else {
+                    "clippy"
+                };
+                lsp
+            },
             build: BuildState::default(),
             debug: Default::default(),
             recency: Recency::default(),

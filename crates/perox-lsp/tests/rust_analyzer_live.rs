@@ -49,7 +49,7 @@ fn completes_methods_and_auto_imports() {
     let src = "fn main() {\n    let v: Vec<u8> = Vec::new();\n    v.\n    let m = HashMa\n}\n";
     std::fs::write(dir.join("src/main.rs"), src).unwrap();
 
-    let (ra, events) = perox_lsp::rust_analyzer::start(&ra, &dir, &[], || {}).unwrap();
+    let (ra, events) = perox_lsp::rust_analyzer::start(&ra, &dir, &[], "check", || {}).unwrap();
     assert!(ra.utf32, "rust-analyzer should accept utf-32 positions");
     let doc = uri::from_path(&dir.join("src/main.rs"));
     ra.client.notify(

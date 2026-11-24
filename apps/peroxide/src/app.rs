@@ -310,6 +310,22 @@ impl PeroxApp {
                     actions.push("editor.toggle_format_on_save");
                     ui.close();
                 }
+                let label = if self.state.settings.plain_check_on_save {
+                    "Lint with Clippy on Save"
+                } else {
+                    "Plain cargo check on Save"
+                };
+                if ui
+                    .add(perox_icons::button(ui, Icon::ShieldCheck, label, ""))
+                    .on_hover_text("What rust-analyzer runs when you save")
+                    .clicked()
+                {
+                    actions.push("editor.toggle_clippy_on_save");
+                    ui.close();
+                }
+                ui.separator();
+                item(ui, actions, "build.clippy_fix");
+                item(ui, actions, "build.fmt");
             });
             ui.menu_button("View", |ui| {
                 item(ui, actions, "view.command_palette");
@@ -325,6 +341,9 @@ impl PeroxApp {
                 item(ui, actions, "build.run");
                 item(ui, actions, "build.test");
                 item(ui, actions, "build.clippy");
+                item(ui, actions, "build.clippy_fix");
+                item(ui, actions, "build.fmt");
+                item(ui, actions, "build.fmt_check");
                 ui.separator();
                 item(ui, actions, "build.stop");
             });

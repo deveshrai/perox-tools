@@ -57,7 +57,7 @@ Agents get four tools that reach every IDE command they're allowed to use:
 Commands so far, by area: `project.*` (open, info, files), `file.*` (open, read, write,
 save, close), `editor.*` (replace, type, completions, accept_completion, cursor, goto_line,
 references, rename, code_actions, apply_code_action, format), `build.*`
-(check, build, run, test, clippy, stop, status, output), `problems.list`, `lsp.*`,
+(check, build, run, test, clippy, clippy_fix, fmt, fmt_check, stop, status, output), `problems.list`, `lsp.*`,
 `terminal.run`, `terminal.read`, `test.*` (discover, list, run, results, go_to), `debug.*` (start, continue, step_over,
 step_in, step_out, pause, stop, state, select_frame, variables, evaluate, console, watch,
 toggle_breakpoint, breakpoints, clear_breakpoints),

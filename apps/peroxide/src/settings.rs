@@ -17,6 +17,8 @@ pub struct Settings {
     pub recent_projects: Vec<PathBuf>,
     /// Run rustfmt (through rust-analyzer) when saving Rust files.
     pub format_on_save: bool,
+    /// rust-analyzer runs plain `cargo check` on save instead of clippy (off: clippy).
+    pub plain_check_on_save: bool,
     /// Open files per project root, restored when the project opens again.
     pub sessions: std::collections::BTreeMap<PathBuf, Session>,
     /// The debug adapter to use instead of the lldb-dap PeroxIDE finds (ADR 0012).

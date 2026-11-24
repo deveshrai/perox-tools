@@ -962,6 +962,35 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         (build("build.run", "Run", "Runs `cargo run`: builds and starts the program. Its output appears in Output."), |s, _| start_build(s, Kind::Run)),
         (build("build.test", "Run Tests", "Runs `cargo test`; results also go to the Test Explorer (test.results)."), |s, _| crate::testing::run(s, crate::testing::Scope::All)),
         (build("build.clippy", "Clippy", "Runs `cargo clippy` for lints."), |s, _| start_build(s, Kind::Clippy)),
+        (
+            build("build.clippy_fix", "Apply Clippy Fixes", "Saves all files and runs `cargo clippy --fix`, which applies the lints' machine-applicable suggestions to the files. Review the result with git.diff."),
+            |s, _| {
+                let args: Vec<String> = ["--fix", "--allow-dirty", "--allow-staged"].map(String::from).to_vec();
+                start_build_with(s, Kind::Clippy, &args)
+            },
+        ),
+        (
+            build("build.fmt", "Format Project", "Saves all files and runs `cargo fmt --all` (rustfmt on every file); open files reload with the result."),
+            |s, _| start_build_with(s, Kind::Fmt, &["--all".into()]),
+        ),
+        (
+            build("build.fmt_check", "Check Formatting", "Runs `cargo fmt --all -- --check`: lists the files rustfmt would change, with the diff, and changes nothing."),
+            |s, _| start_build_with(s, Kind::Fmt, &["--all".into(), "--".into(), "--check".into()]),
+        ),
+        (
+            CommandSpec::new("editor.toggle_clippy_on_save", "Clippy on Save", Access::Edit)
+                .description("Switches what rust-analyzer runs on save between clippy (lints, with quick fixes) and plain cargo check (faster). Restarts rust-analyzer."),
+            |s, _| {
+                s.settings.plain_check_on_save = !s.settings.plain_check_on_save;
+                s.settings.save();
+                s.lsp.check_command = if s.settings.plain_check_on_save { "check" } else { "clippy" };
+                if let Some(root) = s.project.as_ref().map(|p| p.root.clone()) {
+                    s.lsp.start(&root);
+                }
+                s.status = format!("On save: cargo {}", s.lsp.check_command);
+                Ok(json!({ "on_save": s.lsp.check_command }))
+            },
+        ),
         (build("build.stop", "Stop", "Stops the running cargo command and the program it started."), |s, _| {
             match &mut s.build.job {
                 Some(job) => {

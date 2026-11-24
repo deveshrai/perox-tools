@@ -107,7 +107,7 @@ including designer operations and form screenshots.
 | Test Explorer: discovery, tree by target and module, run all / failed / module / one, failure output, `test.*` over MCP | ✅ |
 | Debugger: lldb-dap over DAP, gutter breakpoints, stepping, call stack, variables with Rust formatters, watches, console, stop on panic, debug a test, `debug.*` over MCP ([ADR 0012](adr/0012-debugger.md)) | ✅ |
 | Full git: stage, unstage, discard (confirmed), branches, history, commit view, Diff pane, fetch / pull / push, `git.*` over MCP | ✅ |
-| clippy and rustfmt integration | |
+| clippy and rustfmt: clippy lints as you save (rust-analyzer, with quick fixes; switchable to plain check), Apply Clippy Fixes, Format Project, Check Formatting | ✅ |
 | Form screenshots over MCP | |
 
 Every part is checked three ways before it's ticked: automated tests, a live run of the IDE

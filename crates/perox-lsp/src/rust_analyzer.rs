@@ -75,7 +75,8 @@ pub const TOKEN_MODIFIERS: &[&str] = &[
     "library",
 ];
 
-pub fn initialize_params(root: &Path) -> Value {
+/// `check_command`: what rust-analyzer runs on save, `"clippy"` or `"check"`.
+pub fn initialize_params(root: &Path, check_command: &str) -> Value {
     let root_uri = uri::from_path(root);
     json!({
         "processId": std::process::id(),
@@ -141,7 +142,7 @@ pub fn initialize_params(root: &Path) -> Value {
             "experimental": { "serverStatusNotification": true }
         },
         "initializationOptions": {
-            "check": { "command": "check" },
+            "check": { "command": check_command },
             "checkOnSave": true,
             "cargo": { "buildScripts": { "enable": true } },
             "procMacro": { "enable": true },
@@ -199,13 +200,14 @@ pub fn start(
     program: &Path,
     root: &Path,
     env: &[(String, String)],
+    check_command: &str,
     wake: impl Fn() + Send + Sync + 'static,
 ) -> Result<(RustAnalyzer, Receiver<Event>), String> {
     let (client, events) = Client::spawn(program, &[], root, env, wake)
         .map_err(|e| format!("couldn't start rust-analyzer: {e}"))?;
     let init = client.request_blocking(
         "initialize",
-        initialize_params(root),
+        initialize_params(root, check_command),
         Duration::from_secs(60),
     )?;
     client.notify("initialized", json!({}));

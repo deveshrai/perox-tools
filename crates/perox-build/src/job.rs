@@ -16,6 +16,8 @@ pub enum Kind {
     Run,
     Test,
     Clippy,
+    /// `cargo fmt` (rustfmt over the whole project).
+    Fmt,
 }
 
 impl Kind {
@@ -26,6 +28,7 @@ impl Kind {
             Kind::Run => "run",
             Kind::Test => "test",
             Kind::Clippy => "clippy",
+            Kind::Fmt => "fmt",
         }
     }
 }
@@ -112,8 +115,11 @@ impl Job {
     ) -> std::io::Result<Self> {
         let (reader, writer) = std::io::pipe()?;
         let mut cmd = Command::new(cargo);
-        cmd.arg(kind.verb())
-            .arg("--message-format=json-diagnostic-rendered-ansi");
+        cmd.arg(kind.verb());
+        if kind != Kind::Fmt {
+            // cargo fmt has no JSON output; it prints diffs and file names.
+            cmd.arg("--message-format=json-diagnostic-rendered-ansi");
+        }
         cmd.args(args)
             .current_dir(root)
             .env("CARGO_TERM_COLOR", "never")
@@ -302,6 +308,53 @@ mod tests {
         assert!(
             matches!(&a[..], [Event::Artifact(x)] if x.kind == "bin" && x.executable == Path::new("/t/debug/app"))
         );
+    }
+
+    #[test]
+    fn real_cargo_fmt_checks_and_formats() {
+        let Some(cargo) = crate::tools::cargo() else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("perox-fmt-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"f\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("src/main.rs"),
+            "fn main(){let x=1;println!(\"{x}\");}\n",
+        )
+        .unwrap();
+        let run = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            let mut job = Job::start_with(&cargo, &dir, Kind::Fmt, &args, || {}).unwrap();
+            let mut events = Vec::new();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while !events.iter().any(|e| matches!(e, Event::Finished { .. }))
+                && std::time::Instant::now() < deadline
+            {
+                events.extend(job.poll());
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            events
+        };
+        let check = run(&["--all", "--", "--check"]);
+        assert!(
+            check.contains(&Event::Finished { success: false }),
+            "{check:?}"
+        );
+        assert!(
+            check
+                .iter()
+                .any(|e| matches!(e, Event::Line(l) if l.contains("let x = 1;")))
+        );
+        let fmt = run(&["--all"]);
+        assert!(fmt.contains(&Event::Finished { success: true }), "{fmt:?}");
+        let text = std::fs::read_to_string(dir.join("src/main.rs")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(text.contains("    let x = 1;"), "{text}");
     }
 
     #[test]

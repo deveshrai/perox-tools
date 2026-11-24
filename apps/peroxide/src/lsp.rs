@@ -111,6 +111,8 @@ pub enum Effect {
 }
 
 pub struct Lsp {
+    /// What rust-analyzer runs on save: `clippy` (lints as you save) or `check`.
+    pub check_command: &'static str,
     state: State,
     pending: HashMap<i64, Pending>,
     /// Open documents and the version last sent.
@@ -229,6 +231,7 @@ fn kind(n: Option<u64>, label: &str) -> Kind {
 impl Lsp {
     pub fn new(ctx: egui::Context) -> Self {
         Self {
+            check_command: "clippy",
             state: State::Off,
             pending: HashMap::new(),
             opened: HashMap::new(),
@@ -257,10 +260,11 @@ impl Lsp {
         let (tx, rx) = mpsc::channel();
         let root = root.to_owned();
         let ctx = self.ctx.clone();
+        let check = self.check_command;
         std::thread::spawn(move || {
             let wake_ctx = ctx.clone();
             let env = perox_build::tools::env();
-            let result = perox_lsp::rust_analyzer::start(&program, &root, &env, move || {
+            let result = perox_lsp::rust_analyzer::start(&program, &root, &env, check, move || {
                 wake_ctx.request_repaint()
             });
             let _ = tx.send(result);
@@ -1159,7 +1163,8 @@ mod tests {
         let initial = fixture.replace("CASE", "");
         std::fs::write(&file, &initial).unwrap();
         let (ra, events) =
-            perox_lsp::rust_analyzer::start(&ra, &dir, &perox_build::tools::env(), || {}).unwrap();
+            perox_lsp::rust_analyzer::start(&ra, &dir, &perox_build::tools::env(), "check", || {})
+                .unwrap();
         let uri = uri::from_path(&file);
         ra.client.notify("textDocument/didOpen", json!({ "textDocument": { "uri": uri, "languageId": "rust", "version": 0, "text": initial } }));
         let wait = |id: i64| -> Value {
