@@ -45,6 +45,9 @@ const PALETTE_COLORS: &[&str] = &[
     "border",
 ];
 
+/// A base form: the component and its file.
+type Base = (Component, PathBuf);
+
 const DEFAULT_SIZE: Vec2 = Vec2::new(480.0, 320.0);
 const TITLE_BAR: f32 = 28.0;
 const CANVAS_MARGIN: f32 = 24.0;
@@ -128,7 +131,7 @@ pub struct Designer {
     pub translations: translations::Editor,
     /// The component the designed one inherits, if it's one of ours, and when it was
     /// looked up.
-    base: Option<(std::time::Instant, u64, Option<(Component, PathBuf)>)>,
+    base: Option<(std::time::Instant, u64, Option<Base>)>,
     /// Bound queries' results, for showing data while designing.
     data_cache: data::Cache,
     /// What the last Run in the Data section gave.
