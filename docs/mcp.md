@@ -61,7 +61,7 @@ references, rename, code_actions, apply_code_action, format), `build.*`
 `terminal.run`, `terminal.read`, `test.*` (discover, list, run, results, go_to), `debug.*` (start, continue, step_over,
 step_in, step_out, pause, stop, state, select_frame, variables, evaluate, console, watch,
 toggle_breakpoint, breakpoints, clear_breakpoints),
-`git.*` (status, diff, commit), `designer.*` (tree,
+`git.*` (status, diff, stage, unstage, discard, commit, branches, switch, log, show, fetch, pull, push), `designer.*` (tree,
 add_widget, set_property, remove_widget, move_widget, set_handler, go_to_handler, expose,
 select, open_handler, break_layout, lay_out), `form.new` (a new window or dialog),
 `view.screenshot`, `app.info`, `activity.recent`. File access is limited to the open project.

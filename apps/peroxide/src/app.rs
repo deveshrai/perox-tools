@@ -43,6 +43,7 @@ impl PeroxApp {
         ide::register(&mut bus);
         crate::testing::register(&mut bus);
         crate::debug::register(&mut bus);
+        crate::git::register(&mut bus);
         let (mcp, calls) = McpController::new(bus.specs().cloned().collect(), ctx.clone());
         let mut state = AppState::new(Settings::load(), mcp, ctx.clone());
         if state.settings.mcp.start_on_launch {
@@ -565,7 +566,7 @@ impl eframe::App for PeroxApp {
                 recent: &s.settings.recent_projects,
                 references: &s.references,
                 terminal: s.terminal.as_mut(),
-                git: &s.git,
+                git: &mut s.git,
                 commit_message: &mut s.commit_message,
                 active_doc: s.active_doc,
                 actions: Vec::new(),

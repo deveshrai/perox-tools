@@ -807,7 +807,7 @@ fn frame_from(f: &Value) -> Frame {
         path: f["source"]["path"]
             .as_str()
             // Frames without source get names like `target/debug/app`main`: not a file.
-            .filter(|p| Path::new(p).is_absolute() && !p.contains('`'))
+            .filter(|p| (Path::new(p).is_absolute() || p.starts_with('/')) && !p.contains('`'))
             .map(PathBuf::from),
         line: f["line"].as_u64().unwrap_or(0) as usize,
         column: f["column"].as_u64().unwrap_or(0) as usize,

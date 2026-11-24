@@ -29,6 +29,7 @@ pub enum Pane {
     Tests,
     Debug,
     DebugConsole,
+    Diff,
 }
 
 /// Explorer on the left; editors above, Problems / Output / Activity below.
@@ -132,7 +133,7 @@ pub struct PaneUi<'a> {
     pub recent: &'a [std::path::PathBuf],
     pub references: &'a [(std::path::PathBuf, usize, usize, String)],
     pub terminal: Option<&'a mut perox_terminal::Terminal>,
-    pub git: &'a crate::git::Git,
+    pub git: &'a mut crate::git::Git,
     pub commit_message: &'a mut String,
     pub active_doc: Option<DocId>,
     /// Commands to run after drawing.
@@ -173,6 +174,7 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                 .map_or("Terminal".to_owned(), |t| t.title.clone())
                 .into(),
             Pane::Debug => "Debug".into(),
+            Pane::Diff => "Diff".into(),
             Pane::DebugConsole => "Debug Console".into(),
             Pane::Tests => match self.build.tests.counts().1 {
                 0 => "Tests".into(),
@@ -257,6 +259,7 @@ impl egui_tiles::Behavior<Pane> for PaneUi<'_> {
                         Pane::Tests => self.tests_ui(ui),
                         Pane::Debug => self.debug_ui(ui),
                         Pane::DebugConsole => crate::debug::console(ui, self.debug),
+                        Pane::Diff => crate::git::diff_pane(ui, self.git),
                         Pane::Editor(_) | Pane::Terminal => {}
                     }
                 });
@@ -390,9 +393,8 @@ impl PaneUi<'_> {
                         egui::Atoms::new((
                             icon.image(ui),
                             match state {
-                                Some(st) => {
-                                    egui::RichText::new(node.name.as_str()).color(git_color(ui, st))
-                                }
+                                Some(st) => egui::RichText::new(node.name.as_str())
+                                    .color(crate::git::color(ui, st)),
                                 None => egui::RichText::new(node.name.as_str()),
                             },
                         )),
@@ -547,69 +549,8 @@ impl PaneUi<'_> {
     }
 
     fn source_control(&mut self, ui: &mut egui::Ui) {
-        if self.git.root.is_none() {
-            ui.weak("This project isn't in a git repository (or git isn't installed).");
-            return;
-        }
-        let st = &self.git.status;
-        ui.horizontal(|ui| {
-            ui.add(perox_icons::Icon::GitBranch.image(ui));
-            ui.strong(&st.branch);
-            if st.ahead + st.behind > 0 {
-                ui.weak(format!("{} ahead, {} behind", st.ahead, st.behind));
-            }
-        });
-        ui.add(
-            egui::TextEdit::multiline(self.commit_message)
-                .hint_text("Commit message")
-                .desired_rows(2)
-                .desired_width(f32::INFINITY),
-        );
-        let can = !st.files.is_empty() && !self.commit_message.trim().is_empty();
-        if ui
-            .add_enabled(
-                can,
-                egui::Button::image_and_text(
-                    perox_icons::Icon::GitCommitHorizontal.image(ui),
-                    "Commit All",
-                ),
-            )
-            .on_hover_text("Saves all files, stages every change and commits")
-            .clicked()
-        {
-            self.actions.push((
-                "git.commit",
-                json!({ "message": self.commit_message.clone() }),
-            ));
-        }
-        ui.separator();
-        if st.files.is_empty() {
-            ui.weak("No changes.");
-            return;
-        }
-        let root = self.git.root.clone().unwrap_or_default();
-        egui::ScrollArea::vertical()
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                for (path, state) in &st.files {
-                    let shown = path
-                        .strip_prefix(&root)
-                        .unwrap_or(path)
-                        .display()
-                        .to_string();
-                    let resp = ui
-                        .horizontal(|ui| {
-                            ui.add(crate::icons::for_file(path).image(ui));
-                            let r = ui.add(egui::Label::new(&shown).sense(egui::Sense::click()));
-                            ui.colored_label(git_color(ui, *state), state.letter());
-                            r
-                        })
-                        .inner;
-                    if resp.clicked() && path.is_file() {
-                        self.actions.push(("file.open", json!({ "path": path })));
-                    }
-                }
-            });
+        let actions = crate::git::show(ui, self.git, self.commit_message);
+        self.actions.extend(actions);
     }
 
     fn tests_ui(&mut self, ui: &mut egui::Ui) {
@@ -759,19 +700,4 @@ fn activity(ui: &mut egui::Ui, log: &Activity) {
                 });
             }
         });
-}
-
-/// Colour for a file's git state (Explorer, Source Control).
-fn git_color(ui: &egui::Ui, state: crate::git::FileState) -> egui::Color32 {
-    use crate::git::FileState::*;
-    let dark = ui.visuals().dark_mode;
-    let c = |d: u32, l: u32| {
-        let h = if dark { d } else { l };
-        egui::Color32::from_rgb((h >> 16) as u8, (h >> 8) as u8, h as u8)
-    };
-    match state {
-        Modified | Renamed => c(0xe2c08d, 0x9a6700),
-        Added | Untracked => c(0x73c991, 0x1a7f37),
-        Deleted | Conflicted => c(0xf85149, 0xcf222e),
-    }
 }
