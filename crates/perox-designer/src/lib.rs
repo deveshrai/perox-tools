@@ -9,6 +9,7 @@
 
 pub mod actions;
 pub mod catalog;
+pub mod components;
 pub mod data;
 pub mod drop;
 pub mod free;
@@ -75,7 +76,8 @@ pub enum Action {
 /// What's being dragged.
 #[derive(Debug, Clone)]
 enum Drag {
-    New(&'static str),
+    /// A new element of this kind (a palette entry, or a project component).
+    New(String),
     Move(Vec<usize>),
 }
 
@@ -137,6 +139,8 @@ pub struct Designer {
     data_cache: data::Cache,
     /// What the last Run in the Data section gave.
     data_status: Option<String>,
+    /// Project and library components for the palette, and when they were listed.
+    offers: Option<(std::time::Instant, Vec<components::Offer>)>,
     /// Number the focusable widgets in tab order on the canvas.
     pub show_tab_order: bool,
     /// Preview the form in this language (`None`: as written).
@@ -159,6 +163,8 @@ pub struct DrawnLayout {
     pub tray: Vec<(Vec<usize>, Rect)>,
     /// The project's images in the palette (paths relative to the form).
     pub images: Vec<(String, Rect)>,
+    /// Project and library components in the palette.
+    pub components: Vec<(String, Rect)>,
     /// The window frame, title bar included.
     pub window: Option<Rect>,
 }
@@ -390,6 +396,7 @@ impl Designer {
         );
         let filter = self.palette_filter.to_lowercase();
         self.layout.palette.clear();
+        self.layout.components.clear();
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -409,7 +416,7 @@ impl Designer {
                         let r = palette_row(ui, k.icon, k.name);
                         self.layout.palette.push((k.name, r.rect));
                         if r.drag_started() {
-                            DragAndDrop::set_payload(ui.ctx(), Drag::New(k.name));
+                            DragAndDrop::set_payload(ui.ctx(), Drag::New(k.name.to_owned()));
                         }
                         if r.double_clicked() {
                             self.insert_at_selection(source, k.name, actions);
@@ -418,6 +425,37 @@ impl Designer {
                             "Drag onto the form, or double-click to add to the selection",
                         );
                     }
+                }
+                let offers = self.component_offers(source);
+                let mut group = String::new();
+                for o in offers {
+                    if !filter.is_empty() && !o.name.to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    if o.group != group {
+                        group = o.group.clone();
+                        ui.add_space(6.0);
+                        let title = if group == "Project" {
+                            "This project".to_owned()
+                        } else {
+                            format!("Library @{group}")
+                        };
+                        ui.label(RichText::new(title).small().weak()).on_hover_text(
+                            "Components written in .slint: this project's own, and its libraries (library-paths in ui/slint-project.json)",
+                        );
+                    }
+                    let r = palette_row(ui, Icon::Puzzle, &o.name);
+                    self.layout.components.push((o.name.clone(), r.rect));
+                    if r.drag_started() {
+                        DragAndDrop::set_payload(ui.ctx(), Drag::New(o.name.clone()));
+                    }
+                    if r.double_clicked() {
+                        self.insert_at_selection(source, &o.name, actions);
+                    }
+                    r.on_hover_text(match &o.from {
+                        Some(f) => format!("import {{ {} }} from \"{f}\";", o.name),
+                        None => "In this file".to_owned(),
+                    });
                 }
                 let images = self.project_images();
                 self.layout.images.clear();
@@ -433,7 +471,7 @@ impl Designer {
                         let r = palette_row(ui, Icon::FileImage, &name);
                         self.layout.images.push((rel.clone(), r.rect));
                         if r.drag_started() {
-                            DragAndDrop::set_payload(ui.ctx(), Drag::New("Image"));
+                            DragAndDrop::set_payload(ui.ctx(), Drag::New("Image".to_owned()));
                             self.drag_extra = vec![("source".into(), resources::image_url(&rel))];
                         }
                         if r.double_clicked() {
@@ -451,6 +489,28 @@ impl Designer {
                     }
                 }
             });
+    }
+
+    /// The project's and its libraries' components, listed again every few seconds.
+    fn component_offers(&mut self, source: &str) -> Vec<components::Offer> {
+        let fresh = self
+            .offers
+            .as_ref()
+            .is_some_and(|(t, _)| t.elapsed() < std::time::Duration::from_secs(3));
+        if !fresh {
+            let dir = self.form_dir();
+            let list = if dir.as_os_str().is_empty() {
+                Vec::new()
+            } else {
+                let (ui, _) = translations::location(&dir);
+                components::offers(&self.file, source, &self.component_name(), &ui)
+            };
+            self.offers = Some((std::time::Instant::now(), list));
+        }
+        self.offers
+            .as_ref()
+            .map(|(_, l)| l.clone())
+            .unwrap_or_default()
     }
 
     /// The folder of the `.slint` file being designed.
@@ -574,6 +634,11 @@ impl Designer {
             ),
         };
         let count = c.at(parent).map_or(0, |p| p.children.len());
+        let import_from = self
+            .offers
+            .as_ref()
+            .and_then(|(_, l)| l.iter().find(|o| o.name == kind))
+            .and_then(|o| o.from.clone());
         let mut work = source.to_owned();
         let result = free::step(
             &mut work,
@@ -581,6 +646,10 @@ impl Designer {
         )
         .map(|()| {
             free::import(&mut work, kind);
+            if let Some(from) = &import_from {
+                let e = edit::ensure_import(&work, kind, from);
+                work = edit::apply(&work, &e);
+            }
             work
         });
         if self.apply_text(actions, source, result) {
@@ -1021,7 +1090,7 @@ impl Designer {
             return;
         };
         let kind = match &*drag {
-            Drag::New(k) => (*k).to_owned(),
+            Drag::New(k) => k.clone(),
             Drag::Move(p) => self.element(p).map_or_else(String::new, |e| e.kind.clone()),
         };
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -1156,7 +1225,7 @@ impl Designer {
             egui::TextEdit::multiline(buf)
                 .code_editor()
                 .desired_rows(3)
-                .desired_width(f32::INFINITY)
+                .desired_width(ui.available_width())
                 .hint_text("SELECT name, email FROM people"),
         );
         let sql = buf.trim().to_owned();
@@ -1369,7 +1438,7 @@ impl Designer {
             }
         });
         let incoming = DragAndDrop::payload::<Drag>(ui.ctx()).and_then(|d| match &*d {
-            Drag::New(k) if catalog::is_non_visual(k) => Some(*k),
+            Drag::New(k) if catalog::is_non_visual(k) => Some(k.clone()),
             _ => None,
         });
         if items.is_empty() && incoming.is_none() {
@@ -1476,6 +1545,7 @@ impl Designer {
         let style = self.style();
         let dark = self.preview_dark(ui.visuals().dark_mode);
         self.preview.design_data = self.design_data(&shown);
+        self.preview.library_paths = components::library_paths(&self.form_dir());
         self.preview.language = self.preview_lang.as_ref().map(|l| {
             let (dir, domain) = translations::location(&self.form_dir());
             (dir.join(perox_slint::i18n::DIR), domain, l.clone())
@@ -1708,13 +1778,14 @@ impl Designer {
                 StrokeKind::Inside,
             );
             if ui.input(|i| i.pointer.any_released()) {
+                let k = k.clone();
                 DragAndDrop::clear_payload(ui.ctx());
-                self.add(source, k, &[], usize::MAX, &[], actions);
+                self.add(source, &k, &[], usize::MAX, &[], actions);
             }
             return;
         }
         let (kind, moving) = match &*drag {
-            Drag::New(k) => ((*k).to_owned(), None),
+            Drag::New(k) => (k.clone(), None),
             Drag::Move(p) => match c.at(p) {
                 Some(el) => (el.kind.clone(), Some(p.clone())),
                 None => return,
@@ -2116,6 +2187,33 @@ impl Designer {
             None
         };
         let spec = catalog::kind(&el.kind).or_else(|| base_kind.as_deref().and_then(catalog::kind));
+        // A project or library component: its own `in` properties.
+        let custom: Vec<PropSpec> = if spec.is_none() && !path.is_empty() {
+            components::definition(&self.file, source, &el.kind)
+                .map(|d| {
+                    d.properties
+                        .iter()
+                        .filter(|p| matches!(p.visibility.as_str(), "in" | "in-out"))
+                        .map(|p| PropSpec {
+                            name: p.name.clone().into(),
+                            kind: match p.ty.as_deref() {
+                                Some("string") => PropKind::Text,
+                                Some("length") => PropKind::Length,
+                                Some("int") => PropKind::Int,
+                                Some("float") => PropKind::Float,
+                                Some("bool") => PropKind::Bool,
+                                Some("color" | "brush") => PropKind::Color,
+                                Some("image") => PropKind::Image,
+                                _ => PropKind::Source,
+                            },
+                            help: "Declared by the component",
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let parent_kind = path
             .split_last()
             .and_then(|(_, p)| c.at(p))
@@ -2175,7 +2273,7 @@ impl Designer {
                 .default_open(true)
                 .show(ui, |ui| self.data_rows(ui, &c, &el, &path, source, actions));
         }
-        let known: Vec<PropSpec> = spec.map(|k| k.props.to_vec()).unwrap_or_default();
+        let known: Vec<PropSpec> = spec.map(|k| k.props.to_vec()).unwrap_or(custom);
         ui.add_space(4.0);
         if !known.is_empty() {
             egui::CollapsingHeader::new("Properties")
@@ -3044,8 +3142,9 @@ impl Designer {
         } else {
             egui::TextEdit::singleline(buf)
         };
-        // What's left of the row, less room for the reset button.
-        let width = (ui.available_width() - 24.0).max(60.0);
+        // What's left of the row, less room for the buttons after it (translate, reset):
+        // a row wider than the panel would widen the panel, every frame.
+        let width = (ui.available_width() - 52.0).max(60.0);
         let r = ui.add(edit.desired_width(width).id_salt(key));
         if r.has_focus() {
             return None;

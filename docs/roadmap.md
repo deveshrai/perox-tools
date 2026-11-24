@@ -137,8 +137,12 @@ inheritance, tab order. Each part uses what Slint 1.19 already has, so the resul
 | Model/view and data-aware controls: list and table models, SQLite queries bound to tables, lists and combo boxes, live data while designing | `VecModel`, `sqlx` in `perox-ui` | ✅ |
 | Form inheritance: new form from an existing one; inherited elements shown, not editable; base properties settable; base events and properties passed on to Rust | `inherits` | ✅ |
 | Tab order: show the focus order on the canvas and change it | element order | ✅ |
-| Component libraries: the project's own components and `.slint` libraries in the palette | `import`, library paths | |
+| Component libraries: New Component…, the project's own components and `.slint` libraries in the palette, their properties in the inspector | `import`, library paths | ✅ |
 | Windows pass: CI back on, fixes | | |
+
+Components written in `.slint` run in the designer's own preview. Components with Rust code
+behind them (the out-of-process preview host of [ADR 0008](adr/0008-preview-host.md)) are
+left for later: nothing in Slint's ecosystem needs it yet.
 
 ### Phase 5: ship
 Toolchain Sets per OS ([ADR 0005](adr/0005-toolchain-sets.md)), installers

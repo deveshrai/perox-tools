@@ -115,6 +115,45 @@ pub fn write(json: &str, s: &UiSettings) -> String {
     out
 }
 
+/// The project's component libraries (`"library-paths": { "widgets": "../lib/widgets.slint" }`),
+/// with paths resolved against `json_dir` (the project file's folder). Imported as
+/// `import { Card } from "@widgets";`.
+pub fn library_paths(json: &str, json_dir: &Path) -> Vec<(String, PathBuf)> {
+    let v: Value = serde_json::from_str(json).unwrap_or(Value::Null);
+    let mut out: Vec<(String, PathBuf)> = v["library-paths"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(k, p)| Some((k.clone(), json_dir.join(p.as_str()?))))
+        .collect();
+    out.sort();
+    out
+}
+
+/// Adds (or replaces) a component library in a project file's text.
+pub fn add_library(json: &str, name: &str, path: &str) -> String {
+    let mut v: Value = serde_json::from_str(json).unwrap_or_else(|_| Value::Object(Map::new()));
+    if !v.is_object() {
+        v = Value::Object(Map::new());
+    }
+    let root = v.as_object_mut().expect("an object");
+    if !root.contains_key("edition") {
+        root.insert("edition".into(), "1.19".into());
+    }
+    let libs = root
+        .entry("library-paths")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !libs.is_object() {
+        *libs = Value::Object(Map::new());
+    }
+    libs.as_object_mut()
+        .expect("an object")
+        .insert(name.into(), path.into());
+    let mut out = serde_json::to_string_pretty(&v).unwrap_or_default();
+    out.push('\n');
+    out
+}
+
 /// The project file that governs a `.slint` file in `dir`: the nearest
 /// `slint-project.json` in `dir` or above, stopping at the crate root (`Cargo.toml`).
 pub fn find(dir: &Path) -> Option<PathBuf> {
@@ -166,6 +205,20 @@ mod tests {
         // Unknown values are ignored.
         let odd = "{\"metadata\":{\"peroxide\":{\"style\":\"qt-plus\",\"color-scheme\":\"blue\"}}}";
         assert_eq!(read(odd), UiSettings::default());
+    }
+
+    #[test]
+    fn libraries() {
+        let j = add_library(TEMPLATE, "widgets", "../lib/widgets.slint");
+        assert!(j.contains("\"main\": \"app.slint\""), "{j}");
+        assert_eq!(
+            library_paths(&j, Path::new("/p/ui")),
+            vec![(
+                "widgets".to_owned(),
+                PathBuf::from("/p/ui/../lib/widgets.slint")
+            )]
+        );
+        assert!(library_paths(TEMPLATE, Path::new("/p")).is_empty());
     }
 
     #[test]

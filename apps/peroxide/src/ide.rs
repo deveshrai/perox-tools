@@ -465,6 +465,17 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 perox_designer::free::step(&mut work, perox_slint::edit::add_element(&text, &comp, &parent, index, kind, wid, &props))
                     .map_err(|e| err(e.to_string()))?;
                 perox_designer::free::import(&mut work, kind);
+                // A project or library component: import it, as the designer does.
+                let file = resolve(s, inv, "path")?;
+                let ui_dir = perox_designer::translations::location(file.parent().unwrap_or(std::path::Path::new("."))).0;
+                if let Some(from) = perox_designer::components::offers(&file, &text, &comp, &ui_dir)
+                    .into_iter()
+                    .find(|o| o.name == kind)
+                    .and_then(|o| o.from)
+                {
+                    let e = perox_slint::edit::ensure_import(&work, kind, &from);
+                    work = perox_slint::edit::apply(&work, &e);
+                }
                 if props.iter().any(|(_, v)| v.contains("Palette.")) {
                     let e = perox_slint::edit::ensure_import(&work, "Palette", perox_designer::catalog::STD_WIDGETS);
                     work = perox_slint::edit::apply(&work, &e);
@@ -722,6 +733,50 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     })
                     .collect();
                 Ok(json!({ "order": order }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.components", "Project Components", Access::Read)
+                .description("Components a form can use besides Slint's own: reusable components in this file, exported ones from the project's other .slint files, and its libraries' (library-paths in ui/slint-project.json). Each with what designer.add_widget imports it from.")
+                .params(path_schema(json!({ "component": { "type": "string" } }))),
+            |s, inv| {
+                let (_, text) = form_text(s, inv)?;
+                let doc = perox_slint::parse(&text);
+                let comp = component_name(&doc, inv)?;
+                let file = resolve(s, inv, "path")?;
+                let ui_dir = perox_designer::translations::location(file.parent().unwrap_or(std::path::Path::new("."))).0;
+                let list: Vec<_> = perox_designer::components::offers(&file, &text, &comp, &ui_dir)
+                    .into_iter()
+                    .map(|o| json!({ "name": o.name, "from": o.from, "group": o.group }))
+                    .collect();
+                Ok(json!({ "components": list }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.add_library", "Add Component Library", Access::Edit)
+                .description("Adds a .slint component library to the project (library-paths in ui/slint-project.json): a .slint file (import { X } from \"@name\") or a folder (import { X } from \"@name/file.slint\"). Its components appear in the palette and designer.components; the build and the preview find them.")
+                .params(path_schema(json!({
+                    "name": { "type": "string", "description": "Letters, digits, - and _" },
+                    "library": { "type": "string", "description": "The library's .slint file or folder (absolute, or relative to the project)" }
+                }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let name = inv.str_arg("name")?;
+                if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                    return Err(err("`name` is letters, digits, - and _."));
+                }
+                let root = s.project.as_ref().map(|p| p.root.clone()).ok_or_else(|| err("No project is open."))?;
+                let lib = normalize(&root.join(inv.str_arg("library")?));
+                if !lib.exists() {
+                    return Err(err(format!("{} doesn't exist.", lib.display())));
+                }
+                let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+                let file = perox_slint::project::find(&dir).unwrap_or_else(|| dir.join(perox_slint::project::FILE_NAME));
+                let json_dir = file.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+                let rel = pathdiff_rel(&lib, &json_dir);
+                let old = std::fs::read_to_string(&file).unwrap_or_default();
+                std::fs::write(&file, perox_slint::project::add_library(&old, name, &rel)).map_err(|e| err(e.to_string()))?;
+                Ok(json!({ "library": name, "path": rel, "import_from": format!("@{name}") }))
             },
         ),
         (
@@ -1057,7 +1112,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
             CommandSpec::new("form.new", "New Window or Dialog", Access::Edit)
                 .description("Adds a window or dialog to the project: writes a new .slint file (the type name comes from the file name: settings_dialog.slint → SettingsDialog), exports it from the main .slint file so Rust can use it, and opens it in the designer. Dialogs get OK and Cancel and an `exec` method in Rust.")
                 .params(path_schema(json!({
-                    "kind": { "type": "string", "enum": ["window", "dialog"], "description": "Default: dialog" },
+                    "kind": { "type": "string", "enum": ["window", "dialog", "component"], "description": "Default: dialog. A component is a reusable part for other forms (offered in the palette), not a window." },
                     "inherits": { "type": "string", "description": "Instead of a blank window or dialog: inherit this exported component (form inheritance). It starts with everything that form has; its own elements are added after them, and the base's properties can be set on it." }
                 }))),
             |s, inv| {
@@ -1067,6 +1122,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 }
                 let kind = match inv.args["kind"].as_str() {
                     Some("window") => crate::templates::FormKind::Window,
+                    Some("component") => crate::templates::FormKind::Component,
                     _ => crate::templates::FormKind::Dialog,
                 };
                 let name = match inv.args["inherits"].as_str() {
@@ -1091,6 +1147,10 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (CommandSpec::new("form.new_window_dialog", "New Window…", Access::Edit).ui_only(), |s, _| {
             s.new_form_requested = Some(crate::templates::FormKind::Window);
+            Ok(Value::Null)
+        }),
+        (CommandSpec::new("form.new_component_dialog", "New Component…", Access::Edit).ui_only(), |s, _| {
+            s.new_form_requested = Some(crate::templates::FormKind::Component);
             Ok(Value::Null)
         }),
         (CommandSpec::new("form.new_inherited_dialog", "New Inherited Form…", Access::Edit).ui_only(), |s, _| {
@@ -1696,6 +1756,21 @@ fn relayout_command(
 }
 
 /// Opens a `.slint` file (keeping the current view) and returns it with its text.
+/// `to` relative to the folder `from`, with `/` and `..`.
+fn pathdiff_rel(to: &std::path::Path, from: &std::path::Path) -> String {
+    let to: Vec<_> = to.components().collect();
+    let from: Vec<_> = from.components().collect();
+    let common = to.iter().zip(&from).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> =
+        std::iter::repeat_n("..".to_owned(), from.len() - common).collect();
+    parts.extend(
+        to[common..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
+    parts.join("/")
+}
+
 /// The design database of the form at `path` (data.database).
 fn design_db(s: &mut AppState, inv: &Invocation) -> Result<perox_ui::data::Database, CommandError> {
     let path = resolve(s, inv, "path")?;

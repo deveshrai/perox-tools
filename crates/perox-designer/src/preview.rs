@@ -80,6 +80,8 @@ pub struct Preview {
     /// Data shown while designing: `(property, widget kind, rows)`, set on the
     /// component's exposed data properties (bound queries' results).
     pub design_data: Vec<(String, String, Vec<Vec<String>>)>,
+    /// Component libraries for `@name` imports (`library-paths`).
+    pub library_paths: std::collections::HashMap<String, PathBuf>,
 }
 
 impl std::fmt::Debug for Preview {
@@ -116,6 +118,11 @@ impl Preview {
             &path.to_string_lossy(),
             &lang_key,
             &format!("{:?}", self.design_data),
+            &format!("{:?}", {
+                let mut l: Vec<_> = self.library_paths.iter().collect();
+                l.sort();
+                l
+            }),
         ]);
         if self.built.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
@@ -125,6 +132,9 @@ impl Preview {
         let mut compiler = slint_interpreter::Compiler::default();
         compiler.set_style(style.to_owned());
         compiler.set_edition((1, 19));
+        if !self.library_paths.is_empty() {
+            compiler.set_library_paths(self.library_paths.clone());
+        }
         if let Some((dir, domain, _)) = &self.language {
             compiler.set_translation_domain(domain.clone());
             compiler.set_bundled_translations_path(dir.clone());
@@ -379,6 +389,7 @@ pub fn render_component_in(
     let mut p = Preview {
         language,
         design_data,
+        library_paths: crate::components::library_paths(path.parent().unwrap_or(Path::new("."))),
         ..Default::default()
     };
     p.update(source, path, component, style, dark);

@@ -279,6 +279,7 @@ impl PeroxApp {
                 ui.separator();
                 item(ui, actions, "form.new_window_dialog");
                 item(ui, actions, "form.new_dialog_dialog");
+                item(ui, actions, "form.new_component_dialog");
                 item(ui, actions, "form.new_inherited_dialog");
                 ui.separator();
                 item(ui, actions, "file.save");
@@ -755,6 +756,10 @@ impl eframe::App for PeroxApp {
                     "New dialog: its file name becomes the type name",
                     "settings_dialog.slint",
                 ),
+                crate::templates::FormKind::Component => (
+                    "New component: its file name becomes the type name",
+                    "info_card.slint",
+                ),
             };
             let mut dialog = rfd::FileDialog::new()
                 .set_title(title)
@@ -767,6 +772,7 @@ impl eframe::App for PeroxApp {
                 let kind = match kind {
                     crate::templates::FormKind::Window => "window",
                     crate::templates::FormKind::Dialog => "dialog",
+                    crate::templates::FormKind::Component => "component",
                 };
                 self.run_user("form.new", json!({ "path": path, "kind": kind }));
             }

@@ -108,6 +108,14 @@ nothing on screen; in a layout the order *is* the layout, so the designer says s
 
 ![Tab order numbers on a login form](docs/screenshots/tab-order.png)
 
+**Your own components and libraries.** File → New Component… makes a reusable part (like a
+frame) in its own `.slint` file. The palette lists the project's components and those of
+any `.slint` library the project uses (`library-paths` in `ui/slint-project.json`, imported
+as `@name`). Drag one in and the import is added; the inspector shows the properties it
+declares.
+
+![A project component and a library component on a form](docs/screenshots/components.png)
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`

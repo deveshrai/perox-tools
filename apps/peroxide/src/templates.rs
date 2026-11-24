@@ -199,6 +199,9 @@ fn main() -> Result<(), slint::PlatformError> {
 pub enum FormKind {
     Window,
     Dialog,
+    /// A reusable part for other forms (like a frame): offered in the palette, not a
+    /// window of its own.
+    Component,
 }
 
 /// `settings_dialog` / `settings-dialog` → `SettingsDialog`.
@@ -266,6 +269,20 @@ export component {name} inherits Dialog {{
 }}
 "#
         ),
+        FormKind::Component => format!(
+            r#"import {{ VerticalBox }} from "std-widgets.slint";
+
+// A reusable part: drop it on any form from the designer's palette (This project).
+export component {name} inherits Rectangle {{
+    // What forms set on it.
+    in property <string> title: "{title}";
+
+    VerticalBox {{
+        Text {{ text: root.title; }}
+    }}
+}}
+"#
+        ),
     }
 }
 
@@ -284,7 +301,10 @@ fn main_slint(ui_dir: &Path) -> Option<std::path::PathBuf> {
 /// Writes a new form at `path` (a `.slint` file that doesn't exist yet) and exports it
 /// from the project's main `.slint` file, so Rust can use it. Returns the type name.
 pub fn add_form(path: &Path, kind: FormKind) -> Result<String, String> {
-    add_form_with(path, |name| form_source(name, kind))
+    // Components are imported where they're used; only windows are made from Rust.
+    add_form_with(path, kind != FormKind::Component, |name| {
+        form_source(name, kind)
+    })
 }
 
 /// Adds a form that inherits `base` (a component exported from `base_file`): it starts
@@ -295,7 +315,7 @@ pub fn add_inherited_form(path: &Path, base: &str, base_file: &Path) -> Result<S
     let base_src = std::fs::read_to_string(base_file).map_err(|e| e.to_string())?;
     let doc = perox_slint::parse(&base_src);
     let forwards = doc.component(base).map(base_forwards).unwrap_or_default();
-    add_form_with(path, |name| {
+    add_form_with(path, true, |name| {
         format!(
             "import {{ {base} }} from \"{rel}\";\n\n// {name}: a {base} with more on it. What {base} has is edited in {file}.\nexport component {name} inherits {base} {{\n{forwards}}}\n",
             file = base_file
@@ -420,7 +440,11 @@ fn relative_path(to: &Path, from: &Path) -> String {
     parts.join("/")
 }
 
-fn add_form_with(path: &Path, source: impl FnOnce(&str) -> String) -> Result<String, String> {
+fn add_form_with(
+    path: &Path,
+    export: bool,
+    source: impl FnOnce(&str) -> String,
+) -> Result<String, String> {
     if path.exists() {
         return Err(format!("{} already exists.", path.display()));
     }
@@ -433,6 +457,9 @@ fn add_form_with(path: &Path, source: impl FnOnce(&str) -> String) -> Result<Str
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     std::fs::write(path, source(&name)).map_err(|e| e.to_string())?;
+    if !export {
+        return Ok(name);
+    }
     // Export it from the main file (ui/app.slint), next to it or above it.
     let mut dir = path.parent();
     while let Some(d) = dir {
