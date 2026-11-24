@@ -28,6 +28,21 @@ use perox_slint::{Component, Document, Element, Value};
 
 use catalog::{PropKind, PropSpec};
 
+/// Colours of Slint's `Palette` (std-widgets): they follow the style and colour scheme.
+const PALETTE_COLORS: &[&str] = &[
+    "background",
+    "foreground",
+    "alternate-background",
+    "alternate-foreground",
+    "control-background",
+    "control-foreground",
+    "accent-background",
+    "accent-foreground",
+    "selection-background",
+    "selection-foreground",
+    "border",
+];
+
 const DEFAULT_SIZE: Vec2 = Vec2::new(480.0, 320.0);
 const TITLE_BAR: f32 = 28.0;
 const CANVAS_MARGIN: f32 = 24.0;
@@ -104,8 +119,11 @@ pub struct Designer {
     images: Option<(std::time::Instant, Vec<String>)>,
     /// Extra properties for the element a palette drag will add (an image's `source`).
     drag_extra: Vec<(String, String)>,
-    /// A font file to import along with the property edit being applied.
-    pending_import: Option<String>,
+    /// An import to add along with the property edit being applied: a font file
+    /// (`(None, "fonts/X.ttf")`) or a name (`(Some("Palette"), "std-widgets.slint")`).
+    pending_import: Option<(Option<String>, String)>,
+    /// The app's style settings, and when they were read.
+    app_ui: Option<(std::time::Instant, perox_slint::project::UiSettings)>,
     /// The last edit that couldn't be made.
     pub error: Option<String>,
     /// Where things were drawn last frame (for tests and agents).
@@ -160,10 +178,55 @@ impl Designer {
         self.current()?.at(path)
     }
 
+    /// The style the preview uses: picked in the toolbar, else the app's, else this OS's.
     pub fn style(&self) -> String {
         self.style
             .clone()
+            .or_else(|| self.app_ui().style)
             .unwrap_or_else(|| preview::native_style().into())
+    }
+
+    /// The app's style and colour scheme (`slint-project.json`), as last read.
+    pub fn app_ui(&self) -> perox_slint::project::UiSettings {
+        self.app_ui
+            .as_ref()
+            .map(|(_, s)| s.clone())
+            .unwrap_or_default()
+    }
+
+    /// Re-reads the app's style settings every few seconds (they can change on disk).
+    fn refresh_app_ui(&mut self) {
+        let fresh = self
+            .app_ui
+            .as_ref()
+            .is_some_and(|(t, _)| t.elapsed() < std::time::Duration::from_secs(3));
+        if !fresh {
+            let s = perox_slint::project::settings_for(&self.form_dir());
+            self.app_ui = Some((std::time::Instant::now(), s));
+        }
+    }
+
+    /// Sets the app's style and colour scheme in `slint-project.json` (made next to the
+    /// form if there's none), and previews them.
+    pub fn set_app_ui(&mut self, s: &perox_slint::project::UiSettings) -> std::io::Result<PathBuf> {
+        let file = perox_slint::project::find(&self.form_dir())
+            .unwrap_or_else(|| self.form_dir().join(perox_slint::project::FILE_NAME));
+        let old = std::fs::read_to_string(&file).unwrap_or_default();
+        std::fs::write(&file, perox_slint::project::write(&old, s))?;
+        self.app_ui = Some((std::time::Instant::now(), s.clone()));
+        self.style = None;
+        self.dark = None;
+        Ok(file)
+    }
+
+    /// Dark preview: toggled in the toolbar, else the app's fixed scheme, else the IDE's.
+    fn preview_dark(&self, ide_dark: bool) -> bool {
+        self.dark
+            .unwrap_or_else(|| match self.app_ui().color_scheme.as_deref() {
+                Some("dark") => true,
+                Some("light") => false,
+                _ => ide_dark,
+            })
     }
 
     fn sync(&mut self, source: &str) {
@@ -191,7 +254,9 @@ impl Designer {
         if self.file != path {
             self.file = path.to_owned();
             self.images = None;
+            self.app_ui = None;
         }
+        self.refresh_app_ui();
         if DragAndDrop::payload::<Drag>(ui.ctx()).is_none() {
             self.drag_extra.clear();
         }
@@ -508,7 +573,7 @@ impl Designer {
     // ---- toolbar and keys ----
 
     fn toolbar(&mut self, ui: &mut egui::Ui, source: &str, actions: &mut Vec<Action>) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if icon_button(ui, Icon::Undo2, "Undo (Cmd+Z)").clicked() {
                 actions.push(Action::Undo);
             }
@@ -611,16 +676,17 @@ impl Designer {
                     }
                 })
                 .response
-                .on_hover_text("Widget style for the preview. Apps use the native style of the OS they run on.");
-            let dark = self.dark.unwrap_or(ui.visuals().dark_mode);
+                .on_hover_text("Widget style for the preview (try others here). What the app uses is set in App Style.");
+            let dark = self.preview_dark(ui.visuals().dark_mode);
             let (icon, tip) = if dark {
-                (Icon::Moon, "Previewing the dark scheme; apps follow the OS. Click for light.")
+                (Icon::Moon, "Previewing the dark scheme. Click for light.")
             } else {
-                (Icon::Sun, "Previewing the light scheme; apps follow the OS. Click for dark.")
+                (Icon::Sun, "Previewing the light scheme. Click for dark.")
             };
             if icon_button(ui, icon, tip).clicked() {
                 self.dark = Some(!dark);
             }
+            self.app_style_menu(ui);
             let names: Vec<String> = self.doc.components.iter().map(|c| c.name.clone()).collect();
             if names.len() > 1 {
                 let current = self.component_name();
@@ -952,6 +1018,71 @@ impl Designer {
     // ---- canvas ----
 
     /// The source with live (being-dragged) values applied, for the preview.
+    /// The App Style menu: the style and colour scheme the app is built with.
+    fn app_style_menu(&mut self, ui: &mut egui::Ui) {
+        let current = self.app_ui();
+        let r = ui.menu_button(
+            RichText::new(format!(
+                "App: {}{}",
+                current.style.as_deref().unwrap_or("OS style"),
+                current
+                    .color_scheme
+                    .as_deref()
+                    .map(|c| format!(", {c}"))
+                    .unwrap_or_default()
+            )),
+            |ui| {
+                let mut next = current.clone();
+                ui.label(RichText::new("Style").small().weak());
+                if ui
+                    .radio(
+                        next.style.is_none(),
+                        "The OS's own (Cupertino on macOS, Fluent elsewhere)",
+                    )
+                    .clicked()
+                {
+                    next.style = None;
+                }
+                for st in perox_slint::project::STYLES {
+                    if ui.radio(next.style.as_deref() == Some(*st), *st).clicked() {
+                        next.style = Some((*st).to_owned());
+                    }
+                }
+                ui.separator();
+                ui.label(RichText::new("Colours").small().weak());
+                if ui
+                    .radio(
+                        next.color_scheme.is_none(),
+                        "Follow the system (light or dark)",
+                    )
+                    .clicked()
+                {
+                    next.color_scheme = None;
+                }
+                for c in perox_slint::project::COLOR_SCHEMES {
+                    if ui
+                        .radio(
+                            next.color_scheme.as_deref() == Some(*c),
+                            format!("Always {c}"),
+                        )
+                        .clicked()
+                    {
+                        next.color_scheme = Some((*c).to_owned());
+                    }
+                }
+                if next != current {
+                    match self.set_app_ui(&next) {
+                        Ok(_) => self.error = None,
+                        Err(e) => self.error = Some(format!("Couldn't save the app style: {e}")),
+                    }
+                }
+            },
+        );
+        r.response.on_hover_text(
+            "The style and colours the app is built with (ui/slint-project.json). Rebuild to see it in the running app.",
+        );
+    }
+
     /// Asks for an image or font file and brings it into the form's folder (`sub`:
     /// `images` or `fonts`). Returns its path relative to the form.
     fn choose_resource(&mut self, sub: &str) -> Option<String> {
@@ -1100,7 +1231,7 @@ impl Designer {
             path.to_owned()
         };
         let style = self.style();
-        let dark = self.dark.unwrap_or(ui.visuals().dark_mode);
+        let dark = self.preview_dark(ui.visuals().dark_mode);
         self.preview.update(&shown, &path, &c.name, &style, dark);
 
         let size = self.window_size();
@@ -1991,14 +2122,17 @@ impl Designer {
                 if let Some(v) = self.value_editor(ui, path, spec, value.as_ref()) {
                     match self.pending_import.take() {
                         // A new font: the property and its `import` in one undo step.
-                        Some(file) => {
+                        Some((name, from)) => {
                             let mut work = source.to_owned();
                             let result = free::step(
                                 &mut work,
                                 edit::set_property(source, comp, path, &spec.name, &v),
                             )
                             .map(|()| {
-                                let e = edit::ensure_file_import(&work, &file);
+                                let e = match &name {
+                                    Some(n) => edit::ensure_import(&work, n, &from),
+                                    None => edit::ensure_file_import(&work, &from),
+                                };
                                 edit::apply(&work, &e)
                             });
                             self.apply_text(actions, source, result);
@@ -2207,7 +2341,7 @@ impl Designer {
                         {
                             match resources::font_family(&self.form_dir().join(&rel)) {
                                 Some(family) => {
-                                    self.pending_import = Some(rel);
+                                    self.pending_import = Some((None, rel));
                                     picked = Some(perox_slint::syntax::quote(&family));
                                 }
                                 None => {
@@ -2305,19 +2439,54 @@ impl Designer {
                 ui.checkbox(&mut b, "").changed().then(|| b.to_string())
             }
             PropKind::Color => {
-                let mut c = match value {
-                    Some(Value::Color([r, g, b, a])) => {
-                        Color32::from_rgba_unmultiplied(*r, *g, *b, *a)
-                    }
-                    _ => ui.visuals().text_color(),
+                let palette = match value {
+                    Some(Value::Ident(i)) => i.strip_prefix("Palette.").map(str::to_owned),
+                    _ => None,
                 };
-                egui::color_picker::color_edit_button_srgba(
-                    ui,
-                    &mut c,
-                    egui::color_picker::Alpha::OnlyBlend,
-                )
-                .changed()
-                .then(|| Value::Color(c.to_srgba_unmultiplied()).to_source())
+                let mut picked = None;
+                if let Some(name) = &palette {
+                    // A theme colour: follows the style and light/dark.
+                    ui.label(RichText::new(name).italics())
+                        .on_hover_text(format!(
+                            "Palette.{name}: the style's colour, light or dark"
+                        ));
+                } else {
+                    let mut c = match value {
+                        Some(Value::Color([r, g, b, a])) => {
+                            Color32::from_rgba_unmultiplied(*r, *g, *b, *a)
+                        }
+                        _ => ui.visuals().text_color(),
+                    };
+                    if egui::color_picker::color_edit_button_srgba(
+                        ui,
+                        &mut c,
+                        egui::color_picker::Alpha::OnlyBlend,
+                    )
+                    .changed()
+                    {
+                        picked = Some(Value::Color(c.to_srgba_unmultiplied()).to_source());
+                    }
+                }
+                ui.menu_image_button(Icon::Paintbrush.image(ui), |ui| {
+                    ui.label(
+                        RichText::new("Theme colours: follow the style and light/dark")
+                            .small()
+                            .weak(),
+                    );
+                    for name in PALETTE_COLORS {
+                        if ui
+                            .selectable_label(palette.as_deref() == Some(*name), *name)
+                            .clicked()
+                        {
+                            self.pending_import =
+                                Some((Some("Palette".into()), catalog::STD_WIDGETS.into()));
+                            picked = Some(format!("Palette.{name}"));
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Use a theme colour");
+                picked
             }
             PropKind::Items => {
                 let current = match value {

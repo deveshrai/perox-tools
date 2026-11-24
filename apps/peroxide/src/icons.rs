@@ -64,6 +64,7 @@ pub fn for_command(id: &str) -> Icon {
         "designer.add_widget" => Icon::Plus,
         "designer.actions" => Icon::ListChecks,
         "designer.resources" => Icon::FileImage,
+        "designer.app_style" => Icon::Paintbrush,
         "designer.add_resource" => Icon::FileImage,
         "designer.set_action" => Icon::Zap,
         "designer.use_action" => Icon::Zap,

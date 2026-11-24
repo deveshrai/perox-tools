@@ -315,7 +315,22 @@ pub mod build {
     /// `slint-project.json`. Use with `perox_ui::include_ui!()`.
     pub fn compile(path: impl AsRef<Path>) {
         let path = path.as_ref();
-        if let Err(e) = slint_build::compile(path) {
+        // The app's style and colour scheme from slint-project.json (PeroxIDE's
+        // App Style), for the OS being built for.
+        let dir = if path.is_dir() {
+            path.to_owned()
+        } else {
+            path.parent().map(Path::to_path_buf).unwrap_or_default()
+        };
+        let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        let mut config = slint_build::CompilerConfiguration::new();
+        if let Some(style) = crate::project::settings_for(&dir).style_for(&os) {
+            config = config.with_style(style);
+        }
+        if let Some(p) = crate::project::find(&dir) {
+            println!("cargo:rerun-if-changed={}", p.display());
+        }
+        if let Err(e) = slint_build::compile_with_config(path, config) {
             panic!("Slint compile error in {}: {e}", path.display());
         }
         let main = main_file(path);

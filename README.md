@@ -66,6 +66,15 @@ The palette lists the project's images too: drag one onto the form. A font prope
 *Add a font file…* copies the font into `ui/fonts/`, adds `import "fonts/X.ttf";` and
 picks its family. Slint builds them into the app, so nothing needs installing.
 
+**App style and theme colours.** *App* in the designer's toolbar picks the style the app
+is built with (each OS's own, or Fluent, Cupertino, Material, Cosmic everywhere) and
+whether it follows the system's light or dark setting or always uses one. It's kept in
+`ui/slint-project.json` and applied by the `build.rs` helper. Colour properties can use a
+theme colour (`Palette.accent-background`, `Palette.foreground`…), which follows the style
+and light or dark.
+
+![Material, dark, with a theme colour](docs/screenshots/app-style.png)
+
 **Dialogs and message boxes.** File → New Dialog… adds a `.slint` dialog with OK and
 Cancel; in Rust, `SettingsDialog::new()?.exec(Some(ui.window()), |result| …)` shows it.
 For a quick question, `perox_ui::msgbox::confirm(ui, "Delete", "Delete this file?")`

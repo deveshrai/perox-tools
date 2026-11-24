@@ -17,6 +17,7 @@ build = ["dep:slint-build"]
 i-slint-compiler = { workspace = true }
 # Same rowan as i-slint-compiler: its syntax nodes deref to rowan nodes.
 rowan = "0.17"
+serde_json = { workspace = true }
 slint-build = { workspace = true, optional = true }
 
 [lints]

@@ -2,6 +2,7 @@
 
 pub mod codegen;
 pub mod edit;
+pub mod project;
 pub mod syntax;
 
 pub use syntax::{

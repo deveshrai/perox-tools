@@ -319,7 +319,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         ),
         (
             CommandSpec::new("designer.screenshot", "Form Screenshot", Access::Execute)
-                .description("Renders a .slint component (the file's main window by default) to a PNG, exactly as Slint draws it, at its natural size or `width`×`height` points. `style` (fluent, cupertino, material, cosmic; default: this OS's), `dark`, `scale` (pixels per point, default 2). Saved under target/peroxide/screenshots/ unless `out` (inside the project) is given; returns the path. Uses unsaved edits if the file is open.")
+                .description("Renders a .slint component (the file's main window by default) to a PNG, exactly as Slint draws it, at its natural size or `width`×`height` points. `style` (fluent, cupertino, material, cosmic; default: the app's, else this OS's), `dark` (default: the app's scheme, else light), `scale` (pixels per point, default 2). Saved under target/peroxide/screenshots/ unless `out` (inside the project) is given; returns the path. Uses unsaved edits if the file is open.")
                 .params(path_schema(json!({
                     "component": { "type": "string" }, "style": { "type": "string" },
                     "dark": { "type": "boolean" }, "scale": { "type": "number", "minimum": 0.5, "maximum": 4 },
@@ -337,11 +337,16 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 };
                 let doc = perox_slint::parse(&text);
                 let component = component_name(&doc, inv)?;
-                let style = inv.args["style"].as_str().unwrap_or(perox_designer::preview::native_style()).to_owned();
+                let app = perox_slint::project::settings_for(path.parent().unwrap_or(std::path::Path::new(".")));
+                let style = inv.args["style"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .or(app.style.clone())
+                    .unwrap_or_else(|| perox_designer::preview::native_style().to_owned());
                 if !perox_designer::preview::STYLES.contains(&style.as_str()) {
                     return Err(err(format!("`style` is one of {}", perox_designer::preview::STYLES.join(", "))));
                 }
-                let dark = inv.bool_arg("dark")?.unwrap_or(false);
+                let dark = inv.bool_arg("dark")?.unwrap_or(app.color_scheme.as_deref() == Some("dark"));
                 let scale = inv.args["scale"].as_f64().unwrap_or(2.0).clamp(0.5, 4.0) as f32;
                 let size = match (inv.args["width"].as_f64(), inv.args["height"].as_f64()) {
                     (Some(w), Some(h)) if w > 0.0 && h > 0.0 => Some(eframe::egui::vec2(w as f32, h as f32)),
@@ -457,6 +462,47 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 let mut path = parent;
                 path.push(index.min(count));
                 Ok(json!({ "added": path_key(&path), "id": wid }))
+            },
+        ),
+        (
+            CommandSpec::new("designer.app_style", "App Style", Access::Edit)
+                .description("Gets or sets the style and colour scheme the app is built with, kept in ui/slint-project.json (metadata.peroxide) and applied by perox_slint::build::compile. style: fluent, cupertino, material, cosmic, or null for each OS's own. color_scheme: light, dark, or null to follow the system. Omit both to just read them. Rebuild for the running app to change.")
+                .params(path_schema(json!({
+                    "style": { "type": ["string", "null"] },
+                    "color_scheme": { "type": ["string", "null"] }
+                }))),
+            |s, inv| {
+                let path = resolve(s, inv, "path")?;
+                let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+                let mut ui_settings = perox_slint::project::settings_for(&dir);
+                let obj = inv.args.as_object();
+                let has = |k: &str| obj.is_some_and(|o| o.contains_key(k));
+                if has("style") || has("color_scheme") {
+                    if has("style") {
+                        ui_settings.style = match inv.args["style"].as_str() {
+                            Some(st) if perox_slint::project::STYLES.contains(&st) => Some(st.to_owned()),
+                            Some(st) => return Err(err(format!("Unknown style `{st}`: one of {}", perox_slint::project::STYLES.join(", ")))),
+                            None => None,
+                        };
+                    }
+                    if has("color_scheme") {
+                        ui_settings.color_scheme = match inv.args["color_scheme"].as_str() {
+                            Some(c) if perox_slint::project::COLOR_SCHEMES.contains(&c) => Some(c.to_owned()),
+                            Some(c) => return Err(err(format!("Unknown colour scheme `{c}`: light or dark"))),
+                            None => None,
+                        };
+                    }
+                    let file = perox_slint::project::find(&dir).unwrap_or_else(|| dir.join(perox_slint::project::FILE_NAME));
+                    let old = std::fs::read_to_string(&file).unwrap_or_default();
+                    std::fs::write(&file, perox_slint::project::write(&old, &ui_settings)).map_err(|e| err(e.to_string()))?;
+                    // Open designers pick it up on their next read; make it now.
+                    for d in s.docs.list.iter_mut() {
+                        if let Some(des) = d.designer.as_mut() {
+                            let _ = des.set_app_ui(&ui_settings);
+                        }
+                    }
+                }
+                Ok(json!({ "style": ui_settings.style, "color_scheme": ui_settings.color_scheme }))
             },
         ),
         (
@@ -589,7 +635,13 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                     None => perox_slint::edit::remove_property(&text, &comp, &path, name),
                 }
                 .map_err(|e| err(e.to_string()))?;
-                apply_form_edits(s, id, edits);
+                // Theme colours need `Palette` imported, as the designer does.
+                let mut work = perox_slint::edit::apply(&text, &edits);
+                if inv.args["value"].as_str().is_some_and(|v| v.contains("Palette.")) {
+                    let e = perox_slint::edit::ensure_import(&work, "Palette", perox_designer::catalog::STD_WIDGETS);
+                    work = perox_slint::edit::apply(&work, &e);
+                }
+                apply_form_edits(s, id, perox_slint::edit::diff(&text, &work));
                 Ok(json!({ "ok": true }))
             },
         ),
