@@ -332,16 +332,13 @@ pub fn active_app(s: &AppState) -> Option<(PathBuf, perox_package::AppInfo)> {
     if has_package(&root) {
         return None;
     }
-    let dir = s
-        .active_doc
-        .and_then(|id| s.docs.get(id))
-        .and_then(|d| {
-            d.path
-                .ancestors()
-                .take_while(|a| a.starts_with(&root) && *a != root)
-                .find(|a| has_package(a))
-                .map(Path::to_path_buf)
-        })?;
+    let dir = s.active_doc.and_then(|id| s.docs.get(id)).and_then(|d| {
+        d.path
+            .ancestors()
+            .take_while(|a| a.starts_with(&root) && *a != root)
+            .find(|a| has_package(a))
+            .map(Path::to_path_buf)
+    })?;
     let info = perox_package::AppInfo::load(&dir, &root.join("target")).ok()?;
     Some((dir, info))
 }
