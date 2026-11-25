@@ -319,6 +319,55 @@ pub fn start_build_env(
     )
 }
 
+fn has_package(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join("Cargo.toml"))
+        .is_ok_and(|t| t.lines().any(|l| l.trim() == "[package]"))
+}
+
+/// In a workspace (no `[package]` of its own), the app of the file being edited: its
+/// folder and what its manifest says. `None` for a single-package project, or when the
+/// file being edited isn't in one of the workspace's packages.
+pub fn active_app(s: &AppState) -> Option<(PathBuf, perox_package::AppInfo)> {
+    let root = s.project.as_ref()?.root.clone();
+    if has_package(&root) {
+        return None;
+    }
+    let dir = s
+        .active_doc
+        .and_then(|id| s.docs.get(id))
+        .and_then(|d| {
+            d.path
+                .ancestors()
+                .take_while(|a| a.starts_with(&root) && *a != root)
+                .find(|a| has_package(a))
+                .map(Path::to_path_buf)
+        })?;
+    let info = perox_package::AppInfo::load(&dir, &root.join("target")).ok()?;
+    Some((dir, info))
+}
+
+/// `-p <package>` for the app being edited, in a workspace (else nothing: cargo's
+/// default).
+fn package_args(s: &AppState) -> Vec<String> {
+    active_app(s).map_or_else(Vec::new, |(_, i)| vec!["-p".into(), i.name])
+}
+
+/// Run: the app being edited, in a workspace; says so when it can't tell which.
+fn start_run(s: &mut AppState) -> Result<Value, CommandError> {
+    let args = package_args(s);
+    let workspace = s.project.as_ref().is_some_and(|p| !has_package(&p.root));
+    if workspace && args.is_empty() {
+        let msg = "This is a workspace of several apps: open a file of the one to run.";
+        s.status = msg.into();
+        return Err(err(msg));
+    }
+    let mut r = start_build_with(s, Kind::Run, &args)?;
+    if let Some(p) = args.get(1) {
+        r["package"] = json!(p);
+    }
+    Ok(r)
+}
+
 /// Build › Package App: a release build, then the packages (see [`package_built`]).
 fn start_package(
     s: &mut AppState,
@@ -330,25 +379,13 @@ fn start_package(
         .as_ref()
         .map(|p| p.root.clone())
         .ok_or_else(|| err("No project is open."))?;
-    let has_package = |dir: &Path| {
-        std::fs::read_to_string(dir.join("Cargo.toml"))
-            .is_ok_and(|t| t.lines().any(|l| l.trim() == "[package]"))
-    };
     // The app: the one named, else the project, else (in a workspace) the package of
     // the file being edited.
     let app = match app {
         Some(a) => a,
         None if has_package(&root) => root.clone(),
-        None => s
-            .active_doc
-            .and_then(|id| s.docs.get(id))
-            .and_then(|d| {
-                d.path
-                    .ancestors()
-                    .take_while(|a| a.starts_with(&root))
-                    .find(|a| has_package(a))
-                    .map(Path::to_path_buf)
-            })
+        None => active_app(s)
+            .map(|(dir, _)| dir)
             .ok_or_else(|| {
                 err("This is a workspace: open a file of the app to package (or pass `path`, its folder).")
             })?,
@@ -1814,7 +1851,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
         // ── build ──
         (build("build.check", "Check", "Runs `cargo check`: fast type checking without building."), |s, _| start_build(s, Kind::Check)),
         (build("build.build", "Build", "Runs `cargo build`."), |s, _| start_build(s, Kind::Build)),
-        (build("build.run", "Run", "Runs `cargo run`: builds and starts the program. Its output appears in Output."), |s, _| start_build(s, Kind::Run)),
+        (build("build.run", "Run", "Runs `cargo run`: builds and starts the program. Its output appears in Output. In a workspace, the app of the file being edited (`-p`)."), |s, _| start_run(s)),
         (build("build.test", "Run Tests", "Runs `cargo test`; results also go to the Test Explorer (test.results)."), |s, _| crate::testing::run(s, crate::testing::Scope::All)),
         (build("build.clippy", "Clippy", "Runs `cargo clippy` for lints."), |s, _| start_build(s, Kind::Clippy)),
         (
@@ -1839,7 +1876,7 @@ pub fn register(bus: &mut CommandBus<AppState>) {
                 if let Some(d) = inv.args.get("delay_ms").and_then(Value::as_u64) {
                     env.push(("PEROX_SNAPSHOT_DELAY".into(), d.to_string()));
                 }
-                let mut args = Vec::new();
+                let mut args = package_args(s);
                 if let Some(a) = inv.args.get("args").and_then(Value::as_array) {
                     args.push("--".to_owned());
                     args.extend(a.iter().filter_map(|v| v.as_str().map(str::to_owned)));

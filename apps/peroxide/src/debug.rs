@@ -134,8 +134,14 @@ fn start(s: &mut AppState, launch: Launch) -> Result<Value, CommandError> {
     let (kind, args) = match &launch {
         Launch::Program { target, .. } => {
             let mut args = Vec::new();
-            if let Some(t) = target {
-                args.extend(["--bin".to_owned(), t.clone()]);
+            match target {
+                Some(t) => args.extend(["--bin".to_owned(), t.clone()]),
+                // In a workspace: the app of the file being edited.
+                None => {
+                    if let Some((_, info)) = crate::ide::active_app(s) {
+                        args.extend(["-p".to_owned(), info.name, "--bin".to_owned(), info.bin]);
+                    }
+                }
             }
             (Kind::Build, args)
         }
