@@ -31,6 +31,7 @@ export component MainWindow inherits Window {
     callback bigger();
     callback smaller();
     callback toggle_console();
+    callback close_brace(offset: int);
     in-out property <string> code: "function greet(name) {\n  // Template strings, numbers, keywords\n  const year = 2026;\n  return `Hello, ${name}! It is ${year}.`;\n}\n\nconsole.log(greet(\"PeroxIDE\"));\n";
     in property <[Run]> runs: [];
     in property <[Run]> line_numbers: [{ row: 0, col: 0, text: "1", color: #5c6370 }];
@@ -52,7 +53,9 @@ export component MainWindow inherits Window {
     out property <length> line_h: measure.preferred-height - measure_one.preferred-height;
     out property <length> scroll_y: -scroll.content-y;
     out property <length> view_h: scroll.visible-height;
+    in property <bool> handled: false;
     background: #15171c;
+    forward-focus: code;
 
     MenuBar {
         Menu {
@@ -232,7 +235,7 @@ export component MainWindow inherits Window {
                         y: 8px;
                         edited => { root.code_edited(); }
                         cursor-position-changed(position) => { root.caret_x = position.x; root.caret_y = position.y; root.blink = true; if position.y + root.line_h + 24px > -scroll.content-y + scroll.visible-height { scroll.content-y = -(position.y + root.line_h + 24px - scroll.visible-height); } if position.y < -scroll.content-y { scroll.content-y = -position.y; } if position.x + 96px > -scroll.content-x + scroll.visible-width { scroll.content-x = -(position.x + 96px - scroll.visible-width); } if position.x < -scroll.content-x { scroll.content-x = -position.x; } root.caret_moved(self.cursor-position-byte-offset); }
-                        key-pressed(event) => { if event.text == Key.Tab && !event.modifiers.shift { root.indent(self.cursor-position-byte-offset); self.set-selection-offsets(root.caret_after, root.caret_after); return accept; } if event.text == Key.Return { root.newline(self.cursor-position-byte-offset); self.set-selection-offsets(root.caret_after, root.caret_after); return accept; } return reject; }
+                        key-pressed(event) => { if event.text == Key.Tab && !event.modifiers.shift { root.indent(self.cursor-position-byte-offset); self.set-selection-offsets(root.caret_after, root.caret_after); return accept; } if event.text == Key.Return { root.newline(self.cursor-position-byte-offset); self.set-selection-offsets(root.caret_after, root.caret_after); return accept; } if event.text == "}" { root.close_brace(self.cursor-position-byte-offset); if root.handled { self.set-selection-offsets(root.caret_after, root.caret_after); return accept; } } return reject; }
                     }
                     caret := Rectangle {
                         background: #ffcc66;

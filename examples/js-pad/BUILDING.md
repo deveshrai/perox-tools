@@ -1,7 +1,7 @@
 # Building JS Pad with PeroxIDE
 
 How this sample was made: by an AI agent (Claude Code) driving PeroxIDE over its MCP
-server, using only the IDE's own commands: 169 calls, from `project.new` to `build.fmt`.
+server, using only the IDE's own commands: 174 calls, from `project.new` to `build.fmt`.
 The brief was "a simple Notepad-style text editor with a monospaced font, a console, and
 highlighting for JavaScript". Three gaps turned up; each is below with its fix, made in
 PeroxIDE first.
@@ -111,8 +111,17 @@ The highlighting and the gutter came out as designed. Two things were off: the c
 didn't show its last lines (its scroll position was estimated in Rust; now the `changed`
 handler above does it exactly), and the run's header named `untitled.js` for an example.
 
-Typing, Tab, Return, the dialogs and the menus weren't driven by automation; the edits
-they make are the tested functions (`newline_text`, `row_col`).
+Later, with the screen unlocked, it was typed into for real (keystrokes sent to the
+running app: ⌘N, a function and a loop, ⌘R). Two things turned up:
+
+- The editor didn't have the keyboard at start: the first key went to the toolbar.
+  The window now forwards focus to it (`designer.set_property { widget: "#", name:
+  "forward-focus", value: "code" }`).
+- A `}` typed on a line of only indentation stayed indented, and the next line kept the
+  indent. It now steps back a level (`close_brace`, tested as `dedent_brace`).
+
+Then the typed program ran: `1 1`, `2 8`, `3 27`. The Open and Save dialogs weren't
+tried this way.
 
 ## 5. Finish
 

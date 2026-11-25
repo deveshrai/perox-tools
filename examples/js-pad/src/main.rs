@@ -63,6 +63,16 @@ pub fn newline_text(text: &str, offset: usize) -> String {
     format!("\n{indent}")
 }
 
+/// Typing `}` on a line that's only indentation: the line, one level less, and the `}`.
+/// `None` where `}` goes in as usual. Returns (where the line starts, its new text).
+pub fn dedent_brace(text: &str, offset: usize) -> Option<(usize, String)> {
+    let before = &text[..offset.min(text.len())];
+    let start = before.rfind('\n').map_or(0, |i| i + 1);
+    let line = &before[start..];
+    (line.len() >= 2 && line.chars().all(|c| c == ' '))
+        .then(|| (start, format!("{}}}", &line[2..])))
+}
+
 impl App {
     fn file_name(&self) -> String {
         self.path.as_ref().and_then(|p| p.file_name()).map_or_else(
@@ -204,6 +214,22 @@ impl MainWindowHandlers for App {
     fn newline(&mut self, ui: &MainWindow, offset: i32) {
         let text = newline_text(&ui.get_code(), offset.max(0) as usize);
         self.insert(ui, offset, &text);
+    }
+
+    fn close_brace(&mut self, ui: &MainWindow, offset: i32) {
+        let code = ui.get_code().to_string();
+        let offset = (offset.max(0) as usize).min(code.len());
+        match dedent_brace(&code, offset) {
+            Some((start, line)) => {
+                let mut code = code;
+                code.replace_range(start..offset, &line);
+                ui.set_caret_after((start + line.len()) as i32);
+                ui.set_code(code.into());
+                ui.set_handled(true);
+                self.code_edited(ui);
+            }
+            None => ui.set_handled(false),
+        }
     }
 
     fn scrolled(&mut self, ui: &MainWindow) {
@@ -390,6 +416,13 @@ mod tests {
         assert_eq!(newline_text("function f() {", 14), "\n  ");
         assert_eq!(newline_text("  if (a) {", 10), "\n    ");
         assert_eq!(newline_text("x", 1), "\n");
+    }
+
+    #[test]
+    fn a_closing_brace_steps_back() {
+        assert_eq!(dedent_brace("if (a) {\n    ", 13), Some((9, "  }".into())));
+        assert_eq!(dedent_brace("  x", 3), None);
+        assert_eq!(dedent_brace("", 0), None);
     }
 
     #[test]
