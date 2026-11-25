@@ -147,7 +147,10 @@ to the nearer edges.
 ![The surface](docs/app-3d.png)
 
 Dragging and zooming weren't driven by automation; they go through the same view
-functions the tests cover.
+functions the tests cover. Typing was, later, with the screen unlocked: the first key
+went nowhere, because nothing had the keyboard as the window opened. The window now
+forwards focus to the expression (`forward-focus: expr`), and `2^10 + sin 30` then Return
+gave 1024.5. (PeroxIDE's New GUI App template now does the same for its first field.)
 
 ## 6. Finish
 

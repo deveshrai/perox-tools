@@ -102,6 +102,8 @@ export component MainWindow inherits Window {{
     title: "{title}";
     preferred-width: 480px;
     preferred-height: 240px;
+    // Typing goes to the name field as the window opens.
+    forward-focus: name_edit;
 
     // What the Rust code reads and writes.
     in-out property <string> name <=> name_edit.text;

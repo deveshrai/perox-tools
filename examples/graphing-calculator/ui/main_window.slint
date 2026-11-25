@@ -47,6 +47,7 @@ export component MainWindow inherits Window {
     out property <length> plot_width: plot.width;
     out property <length> plot_height: plot.height;
     background: #0b0e13;
+    forward-focus: expr;
 
     horizontal_layout1 := HorizontalLayout {
         padding: 18px;
